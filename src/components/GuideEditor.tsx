@@ -111,16 +111,14 @@ function FileTreeNode({
         {isIncluded ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
       </button>
 
-      {/* 삭제 (guide.md는 제외) */}
-      {node.path !== "guide.md" && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete(node.path); }}
-          className="opacity-0 group-hover:opacity-100 shrink-0 text-red-400 hover:text-red-600 cursor-pointer transition-opacity duration-150"
-          aria-label="파일 삭제"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      )}
+      {/* 삭제 */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(node.path); }}
+        className="opacity-0 group-hover:opacity-100 shrink-0 text-red-400 hover:text-red-600 cursor-pointer transition-opacity duration-150"
+        aria-label="파일 삭제"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }
@@ -272,6 +270,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const [showImport, setShowImport] = useState(false);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [folderError, setFolderError] = useState("");
 
   const { color } = CHANNEL_COLORS[channel];
   const label = CHANNEL_LABELS[channel];
@@ -348,16 +347,25 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const handleCreateFolder = async () => {
     const name = newFolderName.trim().replace(/[/\\<>:"|?*]/g, "");
     if (!name) return;
+    setFolderError("");
     try {
-      await fetch(`/api/channels/${channel}/files/${name}/_keep`, {
+      const res = await fetch(`/api/channels/${channel}/files/${name}/_keep`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: "" }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "폴더 생성 실패" }));
+        setFolderError(err.error ?? "폴더 생성 실패");
+        return;
+      }
       setShowNewFolder(false);
       setNewFolderName("");
+      setFolderError("");
       await loadChannel();
-    } catch { /* ignore */ }
+    } catch {
+      setFolderError("네트워크 오류가 발생했습니다.");
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -464,15 +472,18 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
                   onChange={(e) => setNewFolderName(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleCreateFolder();
-                    if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); }
+                    if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); setFolderError(""); }
                   }}
                   placeholder="폴더명"
                   className="flex-1 text-xs px-2 py-1 rounded-lg border border-amber-200 focus:outline-none focus:ring-1 focus:ring-amber-400 bg-white"
                   autoFocus
                 />
                 <button onClick={handleCreateFolder} className="text-xs text-amber-700 font-semibold hover:text-amber-900 cursor-pointer px-1">확인</button>
-                <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); }} className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
+                <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); setFolderError(""); }} className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
               </div>
+              {folderError && (
+                <p className="text-[10px] text-red-600 mt-1.5 leading-tight">{folderError}</p>
+              )}
             </div>
           )}
 

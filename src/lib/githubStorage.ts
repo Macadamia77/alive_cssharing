@@ -5,7 +5,7 @@
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER = process.env.GITHUB_OWNER ?? "jademin";
-const GITHUB_REPO = process.env.GITHUB_REPO ?? "-cs-ai-";
+const GITHUB_REPO = process.env.GITHUB_REPO ?? "alive_cssharing";
 const GITHUB_BRANCH = process.env.GITHUB_BRANCH ?? "main";
 
 export function isVercelProd(): boolean {
@@ -25,7 +25,7 @@ async function getFileSha(repoPath: string): Promise<string | null> {
 
 /** 파일을 GitHub에 커밋합니다 (신규·수정 모두 처리) */
 export async function githubWrite(repoPath: string, content: string): Promise<void> {
-  if (!GITHUB_TOKEN) throw new Error("GITHUB_TOKEN 환경 변수가 설정되지 않았습니다.");
+  if (!GITHUB_TOKEN) throw new Error("파일 저장 실패: Vercel 대시보드 → Settings → Environment Variables에서 GITHUB_TOKEN을 추가해주세요.");
 
   const sha = await getFileSha(repoPath);
   const body: Record<string, string> = {
@@ -56,7 +56,7 @@ export async function githubWrite(repoPath: string, content: string): Promise<vo
 
 /** 파일을 GitHub에서 삭제합니다 */
 export async function githubDelete(repoPath: string): Promise<void> {
-  if (!GITHUB_TOKEN) throw new Error("GITHUB_TOKEN 환경 변수가 설정되지 않았습니다.");
+  if (!GITHUB_TOKEN) throw new Error("파일 저장 실패: Vercel 대시보드 → Settings → Environment Variables에서 GITHUB_TOKEN을 추가해주세요.");
 
   const sha = await getFileSha(repoPath);
   if (!sha) throw new Error("파일을 찾을 수 없습니다.");

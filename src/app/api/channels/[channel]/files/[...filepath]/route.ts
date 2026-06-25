@@ -58,9 +58,6 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const filePath = filepath.join("/");
-  if (filePath === "guide.md") {
-    return NextResponse.json({ error: "기본 가이드 파일은 삭제할 수 없습니다." }, { status: 400 });
-  }
 
   try {
     await deleteChannelFile(channel, filePath);

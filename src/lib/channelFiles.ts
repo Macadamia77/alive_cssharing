@@ -129,6 +129,17 @@ async function deleteGithubDirRecursive(repoPath: string, token?: string): Promi
   }
 }
 
+export async function moveChannelFile(
+  channel: ChannelKey,
+  sourcePath: string,
+  targetPath: string,
+  token?: string
+): Promise<void> {
+  const content = await readChannelFile(channel, sourcePath, token);
+  await writeChannelFile(channel, targetPath, content, token);
+  await deleteChannelFile(channel, sourcePath, token);
+}
+
 export async function deleteChannelFolder(channel: ChannelKey, folderPath: string, token?: string): Promise<void> {
   const safe = folderPath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
   if (isVercelProd()) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { type ChannelKey } from "@/lib/channels";
-import { readChannelFile, writeChannelFile, deleteChannelFile, deleteChannelFolder } from "@/lib/channelFiles";
+import { readChannelFile, writeChannelFile, deleteChannelFile, deleteChannelFolder, moveChannelFile } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "facebook", "linkedin", "magazine"];
@@ -50,6 +50,22 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     const { content = "" } = await req.json();
     const token = resolveGithubToken(req);
     await writeChannelFile(channel, filepath.join("/"), content, token);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+/** PATCH — 파일 이동 (드래그 앤 드롭) */
+export async function PATCH(req: NextRequest, { params }: RouteContext) {
+  const { channel, filepath } = await params;
+  if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  try {
+    const { moveTo } = await req.json();
+    if (!moveTo || typeof moveTo !== "string") return NextResponse.json({ error: "moveTo 경로가 필요합니다." }, { status: 400 });
+    const token = resolveGithubToken(req);
+    await moveChannelFile(channel, filepath.join("/"), moveTo, token);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

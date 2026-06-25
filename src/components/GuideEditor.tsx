@@ -9,29 +9,18 @@ import {
 import Link from "next/link";
 import { CHANNEL_LABELS, CHANNEL_COLORS, type ChannelKey } from "@/lib/channels";
 
-// ─── 모듈 변수로 드래그 소스 추적 (React state 타이밍 우회) ───
-// React state는 비동기 → onDrop 시점에 값 보장 불가
-// 모듈 변수는 동기 → dragstart에서 쓰고 drop에서 즉시 읽을 수 있음
-let _dragSrc: string | null = null;
-
 // ─── 타입 ──────────────────────────────────────────────────
 interface FileNode {
-  name: string;
-  path: string;
-  type: "file" | "dir";
-  children?: FileNode[];
-  included: boolean;
+  name: string; path: string; type: "file" | "dir";
+  children?: FileNode[]; included: boolean;
 }
 interface ChannelMeta {
-  label: string;
-  type: "single" | "multi";
-  description: string;
-  include: string[];
-  excluded_note?: string;
+  label: string; type: "single" | "multi"; description: string;
+  include: string[]; excluded_note?: string;
 }
 
 // ─── 마크다운 프리뷰 ────────────────────────────────────────
-function formatInline(t: string) {
+function fmt(t: string) {
   return t
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
@@ -41,14 +30,14 @@ function MarkdownPreview({ content }: { content: string }) {
   return (
     <div className="space-y-1 text-slate-700 text-sm leading-relaxed">
       {content.split("\n").map((line, i) => {
-        if (line.startsWith("# ")) return <h1 key={i} className="text-lg font-bold text-slate-900 mt-3 mb-1">{line.slice(2)}</h1>;
-        if (line.startsWith("## ")) return <h2 key={i} className="text-base font-bold text-slate-800 mt-3 mb-1 border-b border-slate-200 pb-1">{line.slice(3)}</h2>;
-        if (line.startsWith("### ")) return <h3 key={i} className="text-sm font-semibold text-slate-800 mt-2 mb-1">{line.slice(4)}</h3>;
-        if (line.startsWith("- ") || line.startsWith("* ")) return <div key={i} className="flex gap-2"><span className="text-blue-500 shrink-0">•</span><span dangerouslySetInnerHTML={{ __html: formatInline(line.slice(2)) }} /></div>;
-        if (/^\d+\.\s/.test(line)) { const m = line.match(/^(\d+)\.\s(.+)/); if (m) return <div key={i} className="flex gap-2"><span className="text-blue-600 font-semibold shrink-0">{m[1]}.</span><span dangerouslySetInnerHTML={{ __html: formatInline(m[2]) }} /></div>; }
-        if (line.startsWith("> ")) return <blockquote key={i} className="border-l-2 border-blue-300 pl-3 text-slate-600 italic">{line.slice(2)}</blockquote>;
+        if (line.startsWith("# ")) return <h1 key={i} className="text-lg font-bold mt-3 mb-1">{line.slice(2)}</h1>;
+        if (line.startsWith("## ")) return <h2 key={i} className="text-base font-bold mt-3 mb-1 border-b border-slate-200 pb-1">{line.slice(3)}</h2>;
+        if (line.startsWith("### ")) return <h3 key={i} className="text-sm font-semibold mt-2 mb-1">{line.slice(4)}</h3>;
+        if (line.startsWith("- ") || line.startsWith("* ")) return <div key={i} className="flex gap-2"><span className="text-blue-500 shrink-0">•</span><span dangerouslySetInnerHTML={{ __html: fmt(line.slice(2)) }} /></div>;
+        if (/^\d+\.\s/.test(line)) { const m = line.match(/^(\d+)\.\s(.+)/); if (m) return <div key={i} className="flex gap-2"><span className="text-blue-600 font-semibold shrink-0">{m[1]}.</span><span dangerouslySetInnerHTML={{ __html: fmt(m[2]) }} /></div>; }
+        if (line.startsWith("> ")) return <blockquote key={i} className="border-l-2 border-blue-300 pl-3 italic">{line.slice(2)}</blockquote>;
         if (line === "") return <div key={i} className="h-2" />;
-        return <p key={i} dangerouslySetInnerHTML={{ __html: formatInline(line) }} />;
+        return <p key={i} dangerouslySetInnerHTML={{ __html: fmt(line) }} />;
       })}
     </div>
   );
@@ -57,25 +46,19 @@ function MarkdownPreview({ content }: { content: string }) {
 // ─── 트리 유틸 ──────────────────────────────────────────────
 function extractFolders(nodes: FileNode[]): FileNode[] {
   const out: FileNode[] = [];
-  for (const n of nodes) {
-    if (n.type !== "dir") continue;
-    out.push(n);
-    if (n.children) out.push(...extractFolders(n.children));
-  }
+  for (const n of nodes) { if (n.type === "dir") { out.push(n); if (n.children) out.push(...extractFolders(n.children)); } }
   return out;
 }
 function removeNode(nodes: FileNode[], path: string): FileNode[] {
-  return nodes
-    .filter(n => n.path !== path)
-    .map(n => n.type === "dir" && n.children ? { ...n, children: removeNode(n.children, path) } : n);
+  return nodes.filter(n => n.path !== path).map(n => n.type === "dir" && n.children ? { ...n, children: removeNode(n.children, path) } : n);
 }
 function moveNode(nodes: FileNode[], src: string, dst: string, dstFolder: string): FileNode[] {
   let moved: FileNode | null = null;
   function rm(ns: FileNode[]): FileNode[] {
-    return ns.reduce<FileNode[]>((acc, n) => {
-      if (n.path === src) { moved = { ...n, path: dst, name: dst.split("/").pop()! }; }
-      else acc.push(n.type === "dir" && n.children ? { ...n, children: rm(n.children) } : n);
-      return acc;
+    return ns.reduce<FileNode[]>((a, n) => {
+      if (n.path === src) moved = { ...n, path: dst, name: dst.split("/").pop()! };
+      else a.push(n.type === "dir" && n.children ? { ...n, children: rm(n.children) } : n);
+      return a;
     }, []);
   }
   const without = rm(nodes);
@@ -91,68 +74,32 @@ function moveNode(nodes: FileNode[], src: string, dst: string, dstFolder: string
   return ins(without);
 }
 function firstFile(nodes: FileNode[]): string | null {
-  for (const n of nodes) {
-    if (n.type === "file") return n.path;
-    if (n.children) { const f = firstFile(n.children); if (f) return f; }
-  }
+  for (const n of nodes) { if (n.type === "file") return n.path; if (n.children) { const f = firstFile(n.children); if (f) return f; } }
   return null;
 }
 
 // ─── 파일 트리 노드 ────────────────────────────────────────
-interface NodeCbs {
-  dragging: string | null;
-  dropOn: string | null;
-  included: string[];
-  selected: string | null;
-  onSelect(p: string): void;
-  onToggle(p: string): void;
-  onDelete(p: string, isDir?: boolean): void;
-  onDragStart(p: string, e: React.DragEvent): void;
-  onDragEnd(): void;
-  setDropOn(p: string | null): void;
-  onDrop(targetFolder: string, src: string): void;
-}
-
-function TreeNode({ node, depth, cb }: { node: FileNode; depth: number; cb: NodeCbs }) {
+function TreeNode({ node, depth, dropOn, dragging, included, selected, onSelect, onToggle, onDelete, onPointerDown }: {
+  node: FileNode; depth: number; dropOn: string | null; dragging: string | null;
+  included: string[]; selected: string | null;
+  onSelect(p: string): void; onToggle(p: string): void; onDelete(p: string, isDir?: boolean): void;
+  onPointerDown(p: string, e: React.PointerEvent): void;
+}) {
   const [open, setOpen] = useState(true);
   const pl = `${8 + depth * 16}px`;
-  const isDropTarget = cb.dropOn === node.path;
-  const isDragging = cb.dragging === node.path;
+  const isDropTarget = dropOn === node.path;
+  const isDragging = dragging === node.path;
 
   if (node.type === "dir") {
     return (
       <div
-        className={`relative rounded-xl mx-1 ${isDropTarget ? "bg-blue-50" : ""}`}
-        onDragOver={(e) => {
-          // e.preventDefault()는 조건 없이 항상 호출 → 이게 없으면 onDrop이 절대 안 됨
-          e.preventDefault();
-          e.stopPropagation();
-          cb.setDropOn(node.path); // 시각 피드백
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-            cb.setDropOn(null);
-          }
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          // _dragSrc(모듈 변수)를 우선, 없으면 dataTransfer에서 백업
-          const src = _dragSrc || e.dataTransfer.getData("text/plain");
-          _dragSrc = null;
-          if (src) cb.onDrop(node.path, src);
-        }}
+        className={`relative rounded-xl mx-1 ${isDropTarget ? "bg-blue-50 ring-1 ring-blue-400" : ""}`}
+        data-drop-folder={node.path}   /* ← 드롭 감지에 사용 */
       >
-        {/* 드롭 테두리 */}
         {isDropTarget && (
           <div className="absolute inset-0 rounded-xl border-2 border-dashed border-blue-400 pointer-events-none z-10" />
         )}
-
-        {/* 헤더 */}
-        <div
-          className={`group flex items-center gap-1 rounded-lg transition-colors ${isDropTarget ? "bg-blue-100" : "hover:bg-slate-50"}`}
-          style={{ paddingLeft: pl, paddingRight: "4px" }}
-        >
+        <div className={`group flex items-center gap-1 rounded-lg transition-colors ${isDropTarget ? "bg-blue-100" : "hover:bg-slate-50"}`} style={{ paddingLeft: pl, paddingRight: "4px" }}>
           <button onClick={() => setOpen(v => !v)} className="flex items-center gap-1.5 flex-1 py-1.5 text-left text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer">
             {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
             <Folder className={`w-3 h-3 shrink-0 ${isDropTarget ? "text-blue-500" : "text-amber-400"}`} />
@@ -160,54 +107,43 @@ function TreeNode({ node, depth, cb }: { node: FileNode; depth: number; cb: Node
             {isDropTarget && <span className="ml-auto text-[10px] text-blue-600 font-medium pr-1">여기에 놓기</span>}
           </button>
           {!isDropTarget && (
-            <button
-              onClick={(e) => { e.stopPropagation(); cb.onDelete(node.path, true); }}
-              onMouseDown={(e) => e.stopPropagation()}
-              className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity shrink-0"
-              title="폴더 삭제"
-            ><Trash2 className="w-3 h-3" /></button>
+            <button onClick={e => { e.stopPropagation(); onDelete(node.path, true); }}
+              className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity shrink-0" title="폴더 삭제">
+              <Trash2 className="w-3 h-3" />
+            </button>
           )}
         </div>
-
         {open && node.children?.map(child => (
-          <TreeNode key={child.path} node={child} depth={depth + 1} cb={cb} />
+          <TreeNode key={child.path} node={child} depth={depth + 1}
+            dropOn={dropOn} dragging={dragging} included={included} selected={selected}
+            onSelect={onSelect} onToggle={onToggle} onDelete={onDelete} onPointerDown={onPointerDown} />
         ))}
       </div>
     );
   }
 
-  // 파일
-  const isSel = cb.selected === node.path;
-  const isInc = cb.included.includes(node.path);
+  const isSel = selected === node.path;
+  const isInc = included.includes(node.path);
   return (
     <div
-      draggable
-      onDragStart={(e) => cb.onDragStart(node.path, e)}
-      onDragEnd={cb.onDragEnd}
-      className={`group flex items-center gap-1 rounded-lg mx-1 transition-colors duration-100 select-none ${
-        isDragging ? "opacity-25" : isSel ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"
-      }`}
+      className={`group flex items-center gap-1 rounded-lg mx-1 transition-colors select-none ${isDragging ? "opacity-30" : isSel ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"}`}
       style={{ paddingLeft: pl, paddingRight: "4px", cursor: "grab" }}
+      onPointerDown={e => onPointerDown(node.path, e)}
     >
       <span className="opacity-0 group-hover:opacity-30 text-[10px] text-slate-400 pointer-events-none shrink-0">⠿</span>
       <FileText className="w-3 h-3 shrink-0 text-slate-400 pointer-events-none" />
-      <button className="flex-1 py-1.5 text-left text-xs truncate cursor-pointer" onClick={() => cb.onSelect(node.path)}>
+      <button className="flex-1 py-1.5 text-left text-xs truncate cursor-pointer" onClick={() => onSelect(node.path)}>
         {node.name}
       </button>
-      <button
-        onClick={(e) => { e.stopPropagation(); cb.onToggle(node.path); }}
-        onMouseDown={(e) => e.stopPropagation()}
+      <button onClick={e => { e.stopPropagation(); onToggle(node.path); }}
         title={isInc ? "AI에서 제외" : "AI에 포함"}
-        className={`opacity-0 group-hover:opacity-100 p-0.5 shrink-0 cursor-pointer transition-opacity ${isInc ? "text-emerald-500" : "text-slate-300"}`}
-      >
+        className={`opacity-0 group-hover:opacity-100 p-0.5 shrink-0 cursor-pointer transition-opacity ${isInc ? "text-emerald-500" : "text-slate-300"}`}>
         {isInc ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
       </button>
-      <button
-        onClick={(e) => { e.stopPropagation(); cb.onDelete(node.path); }}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity shrink-0"
-        title="파일 삭제"
-      ><Trash2 className="w-3 h-3" /></button>
+      <button onClick={e => { e.stopPropagation(); onDelete(node.path); }}
+        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity shrink-0" title="파일 삭제">
+        <Trash2 className="w-3 h-3" />
+      </button>
     </div>
   );
 }
@@ -216,34 +152,24 @@ function TreeNode({ node, depth, cb }: { node: FileNode; depth: number; cb: Node
 function ImportModal({ channel, folders, onDone, onClose }: {
   channel: ChannelKey; folders: FileNode[]; onDone: () => Promise<void>; onClose: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [body, setBody] = useState("");
-  const [folder, setFolder] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const [name, setName] = useState(""); const [body, setBody] = useState(""); const [folder, setFolder] = useState("");
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
-
   const readFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    setName(f.name);
+    const f = e.target.files?.[0]; if (!f) return; setName(f.name);
     const r = new FileReader(); r.onload = ev => setBody(ev.target?.result as string ?? ""); r.readAsText(f, "utf-8");
   };
-
   const save = async () => {
     const n = name.trim(); if (!n || !body.trim()) { setErr("파일명과 내용을 입력해주세요."); return; }
     const safe = n.endsWith(".md") ? n : `${n}.md`;
     const path = folder ? `${folder}/${safe}` : safe;
     setBusy(true); setErr("");
     try {
-      const res = await fetch(`/api/channels/${channel}/files/${path}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: body }),
-      });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? `HTTP ${res.status}`); }
+      const r = await fetch(`/api/channels/${channel}/files/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: body }) });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error ?? `HTTP ${r.status}`); }
       onClose(); void onDone();
-    } catch (e) { setErr(e instanceof Error ? e.message : "저장 실패"); }
-    finally { setBusy(false); }
+    } catch (e) { setErr(e instanceof Error ? e.message : "저장 실패"); } finally { setBusy(false); }
   };
-
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
@@ -256,9 +182,7 @@ function ImportModal({ channel, folders, onDone, onClose }: {
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일에서 불러오기</label>
             <div className="flex gap-2">
               <input ref={fileRef} type="file" accept=".md,.txt" className="hidden" onChange={readFile} />
-              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">
-                <Upload className="w-4 h-4" />파일 선택
-              </button>
+              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer"><Upload className="w-4 h-4" />파일 선택</button>
               {name && <span className="text-sm text-slate-500 self-center truncate">{name}</span>}
             </div>
           </div>
@@ -301,23 +225,21 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const [meta, setMeta] = useState<ChannelMeta | null>(null);
   const [tree, setTree] = useState<FileNode[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [content, setContent] = useState("");
-  const [saved, setSaved] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [fileBusy, setFileBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "ok" | "err">("idle");
+  const [content, setContent] = useState(""); const [saved, setSaved] = useState("");
+  const [loading, setLoading] = useState(true); const [fileBusy, setFileBusy] = useState(false);
+  const [saving, setSaving] = useState(false); const [saveStatus, setSaveStatus] = useState<"idle" | "ok" | "err">("idle");
   const [view, setView] = useState<"edit" | "split" | "preview">("split");
-  const [showAdd, setShowAdd] = useState(false);
-  const [showFolder, setShowFolder] = useState(false);
-  const [folderName, setFolderName] = useState("");
-  const [folderErr, setFolderErr] = useState("");
+  const [showAdd, setShowAdd] = useState(false); const [showFolder, setShowFolder] = useState(false);
+  const [folderName, setFolderName] = useState(""); const [folderErr, setFolderErr] = useState("");
   const [globalErr, setGlobalErr] = useState<string | null>(null);
   const [ghOk, setGhOk] = useState<boolean | null>(null);
 
-  // DnD 시각 상태 (로직은 _dragSrc 모듈 변수 사용)
+  // 드래그 시각 상태
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropOn, setDropOn] = useState<string | null>(null);
+
+  // execMove를 ref로 보관 → 포인터 이벤트 클로저에서 항상 최신 버전 사용
+  const execMoveRef = useRef<(src: string, dst: string) => Promise<void>>(async () => {});
 
   const { color } = CHANNEL_COLORS[channel];
   const label = CHANNEL_LABELS[channel];
@@ -333,7 +255,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
       const d = await r.json();
       setMeta(d.meta); setTree(d.tree);
       setSelected(prev => prev ?? firstFile(d.tree));
-    } catch { /* silent */ } finally { setLoading(false); }
+    } catch { } finally { setLoading(false); }
   }, [channel]);
 
   const loadFile = useCallback(async (p: string) => {
@@ -356,21 +278,18 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     if (!dirty || saving || !selected) return;
     setSaving(true); setSaveStatus("idle");
     try {
-      const r = await fetch(`/api/channels/${channel}/files/${selected}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }),
-      });
+      const r = await fetch(`/api/channels/${channel}/files/${selected}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) });
       if (!r.ok) throw new Error();
-      setSaved(content); setSaveStatus("ok");
-      setTimeout(() => setSaveStatus("idle"), 3000);
+      setSaved(content); setSaveStatus("ok"); setTimeout(() => setSaveStatus("idle"), 3000);
     } catch { setSaveStatus("err"); } finally { setSaving(false); }
   };
 
   // ─── 토글 ────────────────────────────────────────────────
   const handleToggle = async (fp: string) => {
     if (!meta) return;
-    const newInc = meta.include.includes(fp) ? meta.include.filter(p => p !== fp) : [...meta.include, fp];
-    setMeta({ ...meta, include: newInc });
-    await fetch(`/api/channels/${channel}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ include: newInc }) }).catch(() => {});
+    const inc = meta.include.includes(fp) ? meta.include.filter(p => p !== fp) : [...meta.include, fp];
+    setMeta({ ...meta, include: inc });
+    await fetch(`/api/channels/${channel}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ include: inc }) }).catch(() => {});
     void reload();
   };
 
@@ -398,35 +317,16 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     const node: FileNode = { name: n, path: n, type: "dir", included: false, children: [] };
     setTree(p => [...p, node]);
     try {
-      const r = await fetch(`/api/channels/${channel}/files/${n}/_keep`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "" }),
-      });
+      const r = await fetch(`/api/channels/${channel}/files/${n}/_keep`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "" }) });
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error ?? "폴더 생성 실패"); }
       void reload();
     } catch (e) {
-      setTree(p => p.filter(x => x.path !== n));
-      setShowFolder(true); setFolderName(n);
+      setTree(p => p.filter(x => x.path !== n)); setShowFolder(true); setFolderName(n);
       setFolderErr(e instanceof Error ? e.message : "폴더 생성 실패");
     }
   };
 
-  // ─── 드래그 앤 드롭 ────────────────────────────────────────
-  // _dragSrc(모듈 변수)에 소스 경로 저장 → React state 타이밍 완전 우회
-
-  const onDragStart = useCallback((fp: string, e: React.DragEvent) => {
-    _dragSrc = fp;
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", fp);
-    setDragging(fp);
-  }, []);
-
-  const onDragEnd = useCallback(() => {
-    _dragSrc = null;
-    setDragging(null);
-    setDropOn(null);
-  }, []);
-
-  // 실제 이동 실행 - src와 targetFolder를 직접 인수로 받음
+  // ─── 파일 이동 ───────────────────────────────────────────
   const execMove = useCallback(async (src: string, targetFolder: string) => {
     const currentFolder = src.includes("/") ? src.split("/").slice(0, -1).join("/") : "";
     if (currentFolder === targetFolder) return;
@@ -435,7 +335,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     const dst = targetFolder ? `${targetFolder}/${fileName}` : fileName;
     if (dst === src) return;
 
-    // 낙관적 업데이트
     const snapTree = tree; const snapMeta = meta; const snapSel = selected;
     setTree(prev => moveNode(prev, src, dst, targetFolder));
     if (selected === src) setSelected(dst);
@@ -443,35 +342,94 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
     try {
       const r = await fetch(`/api/channels/${channel}/files/${src}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ moveTo: dst }),
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ moveTo: dst }),
       });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.error ?? `서버 오류 (${r.status})`);
-      }
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error ?? `서버 오류 (${r.status})`); }
       void reload();
     } catch (e) {
-      // 롤백
       setTree(snapTree); setMeta(snapMeta); setSelected(snapSel);
       setGlobalErr(e instanceof Error ? e.message : "파일 이동 실패");
     }
   }, [channel, tree, meta, selected, reload]);
 
-  // 폴더 위에 드롭될 때 호출 - src는 TreeNode의 onDrop에서 직접 전달
-  const onDropOnFolder = useCallback((targetFolder: string, src: string) => {
-    setDragging(null);
-    setDropOn(null);
-    if (src) void execMove(src, targetFolder);
-  }, [execMove]);
+  // ref 최신화 (포인터 클로저에서 사용)
+  useEffect(() => { execMoveRef.current = execMove; }, [execMove]);
 
-  const cb: NodeCbs = {
-    dragging, dropOn, included: meta?.include ?? [], selected,
-    onSelect: setSelected, onToggle: handleToggle, onDelete: handleDelete,
-    onDragStart, onDragEnd, setDropOn,
-    onDrop: onDropOnFolder,
-  };
+  // ─── 포인터 기반 드래그 앤 드롭 ─────────────────────────
+  // HTML5 DnD를 완전히 사용하지 않음. pointermove + elementFromPoint로 직접 구현.
+
+  const startDrag = useCallback((filePath: string, e: React.PointerEvent) => {
+    // 버튼 클릭 시 드래그 시작 방지
+    if ((e.target as HTMLElement).closest("button")) return;
+
+    e.preventDefault(); // 텍스트 선택 방지
+
+    setDragging(filePath);
+
+    // 고스트 엘리먼트 생성 (커서를 따라다님)
+    const ghost = document.createElement("div");
+    ghost.textContent = "📄 " + filePath.split("/").pop();
+    ghost.style.cssText = [
+      "position:fixed", "pointer-events:none", "z-index:9999",
+      "background:white", "border:1.5px solid #3b82f6", "border-radius:10px",
+      "padding:5px 12px", "font-size:12px", "font-weight:500", "color:#1e40af",
+      "box-shadow:0 4px 20px rgba(59,130,246,0.3)", "white-space:nowrap",
+      "transform:translate(-50%,-50%)", "transition:none",
+    ].join(";");
+    ghost.style.left = e.clientX + "px";
+    ghost.style.top = e.clientY + "px";
+    document.body.appendChild(ghost);
+
+    const onMove = (pe: PointerEvent) => {
+      // 고스트 이동
+      ghost.style.left = pe.clientX + "px";
+      ghost.style.top = pe.clientY + "px";
+
+      // 고스트 임시 숨기고 → 아래 요소 찾기 → 다시 보이기
+      ghost.style.display = "none";
+      const el = document.elementFromPoint(pe.clientX, pe.clientY);
+      ghost.style.display = "";
+
+      // data-drop-folder 속성을 가진 가장 가까운 조상 탐색
+      const target = el?.closest("[data-drop-folder]");
+      const folder = target ? target.getAttribute("data-drop-folder") : null;
+      setDropOn(folder);
+    };
+
+    const onUp = (pe: PointerEvent) => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("keydown", onKeyDown);
+      ghost.remove();
+      setDragging(null);
+      setDropOn(null);
+
+      // 최종 드롭 위치 계산
+      ghost.style.display = "none";
+      const el = document.elementFromPoint(pe.clientX, pe.clientY);
+      const target = el?.closest("[data-drop-folder]");
+      const targetFolder = target ? target.getAttribute("data-drop-folder") : null;
+
+      if (targetFolder !== null) {
+        void execMoveRef.current(filePath, targetFolder);
+      }
+    };
+
+    const onKeyDown = (ke: KeyboardEvent) => {
+      if (ke.key === "Escape") {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("keydown", onKeyDown);
+        ghost.remove();
+        setDragging(null);
+        setDropOn(null);
+      }
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("keydown", onKeyDown);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); void handleSave(); }
@@ -501,8 +459,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         <div className="flex items-center gap-2">
           <div className="flex bg-slate-100 rounded-xl p-1">
             {(["edit", "split", "preview"] as const).map(m => (
-              <button key={m} onClick={() => setView(m)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${view === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+              <button key={m} onClick={() => setView(m)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${view === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
                 {m === "edit" && <><Edit3 className="w-3 h-3 inline mr-1" />편집</>}
                 {m === "split" && "분할"}
                 {m === "preview" && <><Eye className="w-3 h-3 inline mr-1" />미리보기</>}
@@ -517,7 +474,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         </div>
       </div>
 
-      {/* 배너들 */}
+      {/* 배너 */}
       {ghOk === false && (
         <div className="mb-4 flex items-start justify-between gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3">
           <div className="flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -533,16 +490,8 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
           <button onClick={() => setGlobalErr(null)} className="text-red-400 hover:text-red-600 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
       )}
-      {saveStatus === "ok" && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
-          <CheckCircle className="w-4 h-4 shrink-0" />저장 완료
-        </div>
-      )}
-      {saveStatus === "err" && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-          <AlertCircle className="w-4 h-4 shrink-0" />저장 실패. 다시 시도해주세요.
-        </div>
-      )}
+      {saveStatus === "ok" && <div className="mb-4 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3"><CheckCircle className="w-4 h-4 shrink-0" />저장 완료</div>}
+      {saveStatus === "err" && <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3"><AlertCircle className="w-4 h-4 shrink-0" />저장 실패. 다시 시도해주세요.</div>}
 
       {/* 본문 */}
       <div className="flex gap-4 h-[72vh]">
@@ -576,32 +525,16 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
             </div>
           )}
 
-          {/* 드래그 힌트 배너 */}
           {dragging && (
             <div className="px-3 py-1 bg-blue-50 border-b border-blue-100 text-[10px] text-blue-600 font-medium text-center">
-              폴더 위에 놓아 이동 · 아래 빈 공간에 놓으면 루트로
+              폴더 위에 놓아 이동 · 빈 공간에 놓으면 루트로
             </div>
           )}
 
-          {/* 파일 트리 + 루트 드롭 존 */}
+          {/* 파일 트리 — data-drop-folder="" 로 루트 드롭 존 지정 */}
           <div
-            className={`flex-1 overflow-y-auto py-2 transition-colors ${dropOn === "" && dragging ? "bg-blue-50/50" : ""}`}
-            onDragOver={(e) => {
-              // 폴더가 stopPropagation → 여기 도달 = 빈 공간 = 루트 드롭 존
-              e.preventDefault(); // 조건 없이 호출 필수
-              setDropOn("");
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropOn(null);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const src = _dragSrc || e.dataTransfer.getData("text/plain");
-              _dragSrc = null;
-              setDragging(null);
-              setDropOn(null);
-              if (src) void execMove(src, "");
-            }}
+            className={`flex-1 overflow-y-auto py-2 transition-colors ${dropOn === "" && dragging ? "bg-blue-50/30" : ""}`}
+            data-drop-folder=""   /* ← 루트 드롭 존 */
           >
             {tree.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full px-4 text-center gap-3">
@@ -609,11 +542,16 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
                   <FileText className="w-5 h-5 text-slate-400" />
                 </div>
                 <p className="text-xs font-medium text-slate-500">파일이 없습니다</p>
-                <button onClick={() => setShowAdd(true)} className="text-xs text-blue-600 hover:text-blue-800 font-medium underline cursor-pointer">+ 첫 파일 추가하기</button>
+                <button onClick={() => setShowAdd(true)} className="text-xs text-blue-600 font-medium underline cursor-pointer">+ 첫 파일 추가하기</button>
               </div>
             ) : (
               <>
-                {tree.map(n => <TreeNode key={n.path} node={n} depth={0} cb={cb} />)}
+                {tree.map(n => (
+                  <TreeNode key={n.path} node={n} depth={0}
+                    dropOn={dropOn} dragging={dragging} included={meta?.include ?? []} selected={selected}
+                    onSelect={setSelected} onToggle={handleToggle} onDelete={handleDelete}
+                    onPointerDown={startDrag} />
+                ))}
                 {dropOn === "" && dragging && (
                   <div className="mx-2 mt-1 py-2 rounded-lg border-2 border-dashed border-blue-300 text-center text-[10px] text-blue-500 font-medium">
                     여기에 놓으면 루트로 이동
@@ -625,7 +563,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
           <div className="px-3 py-2 border-t border-slate-100 flex items-start gap-1.5">
             <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-slate-400 leading-tight">파일을 잡아 폴더로 드래그 · 호버 시 삭제 버튼 표시</p>
+            <p className="text-[10px] text-slate-400 leading-tight">파일을 길게 눌러 드래그 · 호버 시 삭제 버튼 표시</p>
           </div>
         </aside>
 

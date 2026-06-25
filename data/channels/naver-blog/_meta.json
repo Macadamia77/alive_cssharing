@@ -4,6 +4,6 @@
   "description": "SEO 최적화 블로그 포스트 생성",
   "include": [
     "guide.md",
-    "agents/assembler.md"
+    "image-maker.md"
   ]
 }

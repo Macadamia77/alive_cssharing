@@ -57,6 +57,57 @@ export async function githubWrite(repoPath: string, content: string, token?: str
   }
 }
 
+/** GitHub에서 파일 내용을 읽습니다 (Vercel 읽기용) */
+export async function githubRead(repoPath: string, token?: string): Promise<string> {
+  const tok = token ?? process.env.GITHUB_TOKEN;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "cs-ai-web",
+  };
+  if (tok) headers["Authorization"] = `token ${tok}`;
+
+  const res = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}?ref=${GITHUB_BRANCH}`,
+    { headers, cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`GitHub 읽기 실패 (${repoPath}): ${res.status}`);
+  const json = await res.json();
+  if (typeof json.content !== "string") throw new Error("GitHub 응답에 content가 없습니다.");
+  return Buffer.from(json.content, "base64").toString("utf-8");
+}
+
+export interface GithubDirEntry {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+}
+
+/** GitHub에서 디렉토리 목록을 가져옵니다 (Vercel 읽기용) */
+export async function githubListDir(repoPath: string, token?: string): Promise<GithubDirEntry[]> {
+  const tok = token ?? process.env.GITHUB_TOKEN;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "cs-ai-web",
+  };
+  if (tok) headers["Authorization"] = `token ${tok}`;
+
+  const res = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}?ref=${GITHUB_BRANCH}`,
+    { headers, cache: "no-store" }
+  );
+  if (!res.ok) {
+    if (res.status === 404) return [];
+    throw new Error(`GitHub 디렉토리 조회 실패 (${repoPath}): ${res.status}`);
+  }
+  const json = await res.json();
+  if (!Array.isArray(json)) return [];
+  return json.map((item: { name: string; path: string; type: string }) => ({
+    name: item.name,
+    path: item.path,
+    type: item.type as "file" | "dir",
+  }));
+}
+
 /** 파일을 GitHub에서 삭제합니다 */
 export async function githubDelete(repoPath: string, token?: string): Promise<void> {
   const tok = resolveToken(token);

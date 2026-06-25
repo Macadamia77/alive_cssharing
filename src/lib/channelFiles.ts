@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { type ChannelKey, CHANNELS } from "./channels";
-import { isVercelProd, githubWrite, githubDelete } from "./githubStorage";
+import { isVercelProd, githubWrite, githubDelete, githubRead, githubListDir } from "./githubStorage";
 
 const CHANNEL_DIR = path.join(process.cwd(), "data", "channels");
 
@@ -22,21 +22,48 @@ export interface FileNode {
 }
 
 export async function getChannelMeta(channel: ChannelKey): Promise<ChannelMeta> {
+  if (isVercelProd()) {
+    const raw = await githubRead(`data/channels/${channel}/_meta.json`);
+    return JSON.parse(raw.replace(/^﻿/, ""));
+  }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");
   const raw = await fs.readFile(metaPath, "utf-8");
-  // BOM 제거 (Windows PowerShell이 UTF-8 BOM으로 저장하는 경우)
   return JSON.parse(raw.replace(/^﻿/, ""));
 }
 
 export async function getChannelFileTree(channel: ChannelKey): Promise<FileNode[]> {
   const meta = await getChannelMeta(channel);
-  const root = path.join(CHANNEL_DIR, channel);
 
+  if (isVercelProd()) {
+    async function walkGithub(repoPath: string, relBase: string): Promise<FileNode[]> {
+      const entries = await githubListDir(repoPath);
+      const nodes: FileNode[] = [];
+      for (const entry of entries) {
+        if (entry.name.startsWith("_")) continue;
+        const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+        if (entry.type === "dir") {
+          const children = await walkGithub(entry.path, relPath);
+          nodes.push({ name: entry.name, path: relPath, type: "dir", included: false, children });
+        } else if (entry.name.endsWith(".md")) {
+          nodes.push({
+            name: entry.name,
+            path: relPath,
+            type: "file",
+            included: meta.include.includes(relPath),
+          });
+        }
+      }
+      return nodes;
+    }
+    return walkGithub(`data/channels/${channel}`, "");
+  }
+
+  const root = path.join(CHANNEL_DIR, channel);
   async function walk(dir: string, relBase: string): Promise<FileNode[]> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const nodes: FileNode[] = [];
     for (const entry of entries) {
-      if (entry.name.startsWith("_")) continue; // skip _meta.json
+      if (entry.name.startsWith("_")) continue;
       const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         const children = await walk(path.join(dir, entry.name), relPath);
@@ -52,11 +79,14 @@ export async function getChannelFileTree(channel: ChannelKey): Promise<FileNode[
     }
     return nodes;
   }
-
   return walk(root, "");
 }
 
 export async function readChannelFile(channel: ChannelKey, filePath: string): Promise<string> {
+  if (isVercelProd()) {
+    const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+    return githubRead(`data/channels/${channel}/${safe}`);
+  }
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const full = path.join(CHANNEL_DIR, channel, safe);
   return fs.readFile(full, "utf-8");

@@ -69,7 +69,7 @@ export async function writeChannelFile(
 ): Promise<void> {
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   if (isVercelProd()) {
-    await githubWrite(`app/data/channels/${channel}/${safe.replace(/\\/g, "/")}`, content);
+    await githubWrite(`data/channels/${channel}/${safe.replace(/\\/g, "/")}`, content);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -80,7 +80,7 @@ export async function writeChannelFile(
 export async function deleteChannelFile(channel: ChannelKey, filePath: string): Promise<void> {
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   if (isVercelProd()) {
-    await githubDelete(`app/data/channels/${channel}/${safe.replace(/\\/g, "/")}`);
+    await githubDelete(`data/channels/${channel}/${safe.replace(/\\/g, "/")}`);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -89,7 +89,7 @@ export async function deleteChannelFile(channel: ChannelKey, filePath: string): 
 
 export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta): Promise<void> {
   if (isVercelProd()) {
-    await githubWrite(`app/data/channels/${channel}/_meta.json`, JSON.stringify(meta, null, 2));
+    await githubWrite(`data/channels/${channel}/_meta.json`, JSON.stringify(meta, null, 2));
     return;
   }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");

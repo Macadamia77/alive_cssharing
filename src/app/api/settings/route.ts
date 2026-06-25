@@ -22,7 +22,7 @@ async function readConfig(): Promise<AIConfig> {
 
 async function writeConfig(config: AIConfig) {
   if (isVercelProd()) {
-    await githubWrite("app/data/ai-config.json", JSON.stringify(config, null, 2));
+    await githubWrite("data/ai-config.json", JSON.stringify(config, null, 2));
     return;
   }
   await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8");

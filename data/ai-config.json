@@ -1,5 +1,5 @@
 {
-  "activeProvider": "mock",
+  "activeProvider": "gemini",
   "providers": {
     "claude": {
       "apiKey": "",

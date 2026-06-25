@@ -12,11 +12,18 @@ function maskKey(key: string): string {
   return `${"*".repeat(Math.max(0, key.length - 4))}${key.slice(-4)}`;
 }
 
-/** GET — 현재 설정 반환 (쿠키/환경변수 우선) */
+/** GET — 현재 설정 반환 (쿠키/환경변수 우선, GitHub 폴백) */
 export async function GET(req: NextRequest) {
+  // GitHub 설정을 폴백으로 읽기
+  const ghConfig = await loadAIConfig().catch(() => null);
+
   const getInfo = (p: ProviderKey) => {
+    // 1순위: 쿠키 / 환경변수
     const pc = resolveProvider(req, p);
     if (pc) return { apiKeySet: true, apiKeyMasked: maskKey(pc.apiKey), model: pc.model };
+    // 2순위: GitHub 설정 파일 폴백
+    const ghPc = ghConfig?.providers[p];
+    if (ghPc?.apiKey) return { apiKeySet: true, apiKeyMasked: maskKey(ghPc.apiKey), model: ghPc.model };
     return { apiKeySet: false, apiKeyMasked: "", model: DEFAULT_MODELS[p] };
   };
 
@@ -26,8 +33,14 @@ export async function GET(req: NextRequest) {
       const pc = resolveProvider(req, cookie as ProviderKey);
       if (pc) return cookie;
     }
-    // 쿠키에 없으면 키가 설정된 첫 번째 provider
-    const first = PROVIDERS.find(p => !!resolveProvider(req, p));
+    // 쿠키에 없으면 키가 설정된 첫 번째 provider (쿠키 → GitHub 순)
+    const first = PROVIDERS.find(p => !!resolveProvider(req, p) || !!ghConfig?.providers[p]?.apiKey);
+    // GitHub에서 activeProvider가 설정되어 있으면 우선 사용
+    const ghActive = ghConfig?.activeProvider;
+    if (ghActive && ghActive !== "mock" && PROVIDERS.includes(ghActive as ProviderKey)) {
+      const ghPc = ghConfig?.providers[ghActive as ProviderKey];
+      if (ghPc?.apiKey) return ghActive;
+    }
     return first ?? "mock";
   })();
 

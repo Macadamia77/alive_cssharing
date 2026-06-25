@@ -20,7 +20,10 @@ function resolveToken(token?: string): string {
 async function getFileSha(repoPath: string, token: string): Promise<string | null> {
   const res = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}?ref=${GITHUB_BRANCH}`,
-    { headers: { Authorization: `token ${token}`, "User-Agent": "cs-ai-web" } }
+    {
+      headers: { Authorization: `token ${token}`, "User-Agent": "cs-ai-web" },
+      cache: "no-store", // Next.js fetch 캐시 무력화 — SHA는 항상 최신값이어야 함
+    }
   );
   if (!res.ok) return null;
   const data = await res.json();
@@ -48,6 +51,7 @@ export async function githubWrite(repoPath: string, content: string, token?: str
         "User-Agent": "cs-ai-web",
       },
       body: JSON.stringify(body),
+      cache: "no-store",
     }
   );
 
@@ -128,6 +132,7 @@ export async function githubDelete(repoPath: string, token?: string): Promise<vo
         sha,
         branch: GITHUB_BRANCH,
       }),
+      cache: "no-store",
     }
   );
 

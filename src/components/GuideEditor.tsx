@@ -110,7 +110,7 @@ interface NodeCbs {
   onDragStart(p: string, e: React.DragEvent): void;
   onDragEnd(): void;
   setDropOn(p: string | null): void;
-  onDrop(targetFolder: string): void;
+  onDrop(targetFolder: string, src: string): void;
 }
 
 function TreeNode({ node, depth, cb }: { node: FileNode; depth: number; cb: NodeCbs }) {
@@ -124,14 +124,12 @@ function TreeNode({ node, depth, cb }: { node: FileNode; depth: number; cb: Node
       <div
         className={`relative rounded-xl mx-1 ${isDropTarget ? "bg-blue-50" : ""}`}
         onDragOver={(e) => {
-          // _dragSrc가 있을 때만 내부 드래그로 처리
-          if (!_dragSrc) return;
+          // e.preventDefault()는 조건 없이 항상 호출 → 이게 없으면 onDrop이 절대 안 됨
           e.preventDefault();
-          e.stopPropagation(); // 부모/루트가 override 못하게
-          cb.setDropOn(node.path);
+          e.stopPropagation();
+          cb.setDropOn(node.path); // 시각 피드백
         }}
         onDragLeave={(e) => {
-          // 현재 폴더 요소(자식 포함)를 완전히 벗어났을 때만 초기화
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             cb.setDropOn(null);
           }
@@ -139,7 +137,10 @@ function TreeNode({ node, depth, cb }: { node: FileNode; depth: number; cb: Node
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          cb.onDrop(node.path);
+          // _dragSrc(모듈 변수)를 우선, 없으면 dataTransfer에서 백업
+          const src = _dragSrc || e.dataTransfer.getData("text/plain");
+          _dragSrc = null;
+          if (src) cb.onDrop(node.path, src);
         }}
       >
         {/* 드롭 테두리 */}
@@ -458,22 +459,11 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     }
   }, [channel, tree, meta, selected, reload]);
 
-  // 폴더 위에 드롭될 때 호출 (TreeNode에서 onDrop → 여기로)
-  const onDropOnFolder = useCallback((targetFolder: string) => {
-    const src = _dragSrc;
-    _dragSrc = null;
+  // 폴더 위에 드롭될 때 호출 - src는 TreeNode의 onDrop에서 직접 전달
+  const onDropOnFolder = useCallback((targetFolder: string, src: string) => {
     setDragging(null);
     setDropOn(null);
     if (src) void execMove(src, targetFolder);
-  }, [execMove]);
-
-  // 루트 영역에 드롭될 때
-  const onDropOnRoot = useCallback(() => {
-    const src = _dragSrc;
-    _dragSrc = null;
-    setDragging(null);
-    setDropOn(null);
-    if (src) void execMove(src, "");
   }, [execMove]);
 
   const cb: NodeCbs = {
@@ -597,16 +587,20 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
           <div
             className={`flex-1 overflow-y-auto py-2 transition-colors ${dropOn === "" && dragging ? "bg-blue-50/50" : ""}`}
             onDragOver={(e) => {
-              // 이 핸들러는 폴더가 stopPropagation 했을 때는 도달 안 함
-              // 즉, 여기 도달 = 파일이나 빈 공간 위 = 루트 드롭 존
-              if (_dragSrc) { e.preventDefault(); setDropOn(""); }
+              // 폴더가 stopPropagation → 여기 도달 = 빈 공간 = 루트 드롭 존
+              e.preventDefault(); // 조건 없이 호출 필수
+              setDropOn("");
             }}
             onDragLeave={(e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropOn(null);
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (_dragSrc) onDropOnRoot();
+              const src = _dragSrc || e.dataTransfer.getData("text/plain");
+              _dragSrc = null;
+              setDragging(null);
+              setDropOn(null);
+              if (src) void execMove(src, "");
             }}
           >
             {tree.length === 0 ? (

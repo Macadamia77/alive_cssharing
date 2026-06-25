@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   Wand2, Sparkles, BookOpen, AlertCircle, ChevronRight,
   Edit3, Check, Loader2, RefreshCw, ArrowLeft, LayoutList,
@@ -9,6 +9,16 @@ import ChannelResultCard, { type ChannelKey } from "@/components/ChannelResultCa
 import { CHANNELS, CHANNEL_LABELS, CHANNEL_COLORS } from "@/lib/channels";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
+
+// ── AI 제공사 정보 ────────────────────────────────────────────
+type AIProvider = "mock" | "claude" | "openai" | "gemini";
+
+const AI_PROVIDERS: { id: AIProvider; label: string; shortLabel: string; color: string; activeClass: string }[] = [
+  { id: "claude",  label: "Claude",  shortLabel: "Claude",  color: "text-orange-600", activeClass: "bg-orange-50 border-orange-300 text-orange-700" },
+  { id: "openai",  label: "OpenAI",  shortLabel: "OpenAI",  color: "text-emerald-600", activeClass: "bg-emerald-50 border-emerald-300 text-emerald-700" },
+  { id: "gemini",  label: "Gemini",  shortLabel: "Gemini",  color: "text-blue-600", activeClass: "bg-blue-50 border-blue-300 text-blue-700" },
+  { id: "mock",    label: "Mock",    shortLabel: "Mock",    color: "text-slate-500", activeClass: "bg-slate-100 border-slate-300 text-slate-700" },
+];
 
 // ── 타입 ────────────────────────────────────────────────────
 type Phase = "input" | "drafts" | "channels";
@@ -162,6 +172,10 @@ export default function HomePage() {
   const [phase, setPhase] = useState<Phase>("input");
   const [topic, setTopic] = useState("");
 
+  // AI 선택
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>("mock");
+  const [availableProviders, setAvailableProviders] = useState<AIProvider[]>(["mock"]);
+
   // 초안 단계
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -179,6 +193,34 @@ export default function HomePage() {
   const [resultChannels, setResultChannels] = useState<ChannelKey[]>([]);
 
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  // 사용 가능한 AI 제공사 목록 로드
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/settings");
+        const data = await res.json() as {
+          activeProvider: AIProvider;
+          providers: Record<string, { apiKeySet: boolean }>;
+        };
+        const available: AIProvider[] = [];
+        for (const p of ["claude", "openai", "gemini"] as const) {
+          if (data.providers[p]?.apiKeySet) available.push(p);
+        }
+        available.push("mock");
+        setAvailableProviders(available);
+
+        // 저장된 기본값 또는 첫 번째 실 API 제공사로 초기화
+        const defaultProvider = data.activeProvider && available.includes(data.activeProvider)
+          ? data.activeProvider
+          : available[0];
+        setSelectedProvider(defaultProvider);
+      } catch {
+        setAvailableProviders(["mock"]);
+        setSelectedProvider("mock");
+      }
+    })();
+  }, []);
 
   const toggleChannelForDraft = (draftIndex: number, ch: ChannelKey) => {
     setChannelMap(prev => {
@@ -201,7 +243,7 @@ export default function HomePage() {
       const res = await fetch("/api/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim() }),
+        body: JSON.stringify({ topic: topic.trim(), provider: selectedProvider }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "초안 생성 실패"); }
       const data = await res.json();
@@ -247,7 +289,7 @@ export default function HomePage() {
         const res = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic: topic.trim(), draft, channels }),
+          body: JSON.stringify({ topic: topic.trim(), draft, channels, provider: selectedProvider }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "생성 실패");
@@ -327,6 +369,32 @@ export default function HomePage() {
           {/* ─── Phase 1: 주제 입력 ───────────────────────── */}
           {(phase === "input" || phase === "drafts") && (
             <div className="glass-card rounded-3xl p-6 sm:p-8 mb-8 max-w-2xl mx-auto">
+
+              {/* AI 선택 바 */}
+              {availableProviders.length > 1 && (
+                <div className="mb-5">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">사용할 AI</p>
+                  <div className="flex flex-wrap gap-2">
+                    {AI_PROVIDERS.filter(p => availableProviders.includes(p.id)).map(p => {
+                      const isActive = selectedProvider === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedProvider(p.id)}
+                          disabled={phase === "drafts"}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-default ${
+                            isActive ? p.activeClass : "bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                          }`}
+                        >
+                          {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80" />}
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                 주제 또는 핵심 문구 입력
               </label>
@@ -360,7 +428,7 @@ export default function HomePage() {
                 <button onClick={() => void handleGetDrafts()} disabled={!topic.trim() || draftLoading}
                   className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
                   {draftLoading
-                    ? <><Loader2 className="w-5 h-5 animate-spin" />초안 추천 중...</>
+                    ? <><Loader2 className="w-5 h-5 animate-spin" />{AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}(으)로 초안 추천 중...</>
                     : <><Sparkles className="w-5 h-5" />초안 추천받기</>}
                 </button>
               ) : (
@@ -420,7 +488,7 @@ export default function HomePage() {
                     <button onClick={() => void handleGenerate()} disabled={generating}
                       className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
                       <Wand2 className="w-5 h-5" />
-                      {assignedChannels.length}개 채널 콘텐츠 생성하기
+                      {assignedChannels.length}개 채널 · {AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}로 생성
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>

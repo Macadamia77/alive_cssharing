@@ -1,27 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadAIConfig } from "@/lib/aiConfig";
+import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
 
-async function callAI(config: { provider: string; apiKey: string; model: string }, system: string, user: string): Promise<string> {
-  if (config.provider === "claude") {
+async function callAI(
+  provider: ProviderKey,
+  apiKey: string,
+  model: string,
+  system: string,
+  user: string
+): Promise<string> {
+  if (provider === "claude") {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": config.apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: config.model || "claude-sonnet-4-6", max_tokens: 3000, system, messages: [{ role: "user", content: user }] }),
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: model || "claude-sonnet-4-6",
+        max_tokens: 3000,
+        system,
+        messages: [{ role: "user", content: user }],
+      }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message ?? `Claude API 오류 (${res.status})`); }
     const d = await res.json();
-    return d.content?.[0]?.text ?? "";
+    return (d.content?.[0]?.text as string) ?? "";
   }
-  if (config.provider === "openai") {
+
+  if (provider === "openai") {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
-      body: JSON.stringify({ model: config.model || "gpt-4o", messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: model || "gpt-4o",
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message ?? `OpenAI API 오류 (${res.status})`); }
     const d = await res.json();
-    return d.choices?.[0]?.message?.content ?? "";
+    return (d.choices?.[0]?.message?.content as string) ?? "";
   }
+
+  if (provider === "gemini") {
+    const fullModel = model || "gemini-2.5-flash";
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${fullModel}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: user }] }],
+          generationConfig: { maxOutputTokens: 3000 },
+        }),
+      }
+    );
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message ?? `Gemini API 오류 (${res.status})`); }
+    const d = await res.json();
+    return (d.candidates?.[0]?.content?.parts?.[0]?.text as string) ?? "";
+  }
+
   throw new Error("mock");
 }
 
@@ -77,15 +116,13 @@ CS쉐어링은 ${topic}의 완벽한 해결책을 제공합니다. 지금 바로
 
 function parseDrafts(raw: string, topic: string): DraftItem[] {
   try {
-    // JSON 블록 추출 시도
     const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/) ?? raw.match(/(\[[\s\S]*\])/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[1]);
+      const parsed = JSON.parse(jsonMatch[1]) as DraftItem[];
       if (Array.isArray(parsed) && parsed.length >= 2) return parsed.slice(0, 3);
     }
   } catch { /* fall through */ }
 
-  // 구조화된 텍스트 파싱: "초안 1:" / "## 1" 등 패턴
   const sections = raw.split(/(?:초안\s*[1-3]|##\s*[1-3])[.:)]\s*/i).filter(Boolean);
   if (sections.length >= 2) {
     const angles = ["정보 전달형", "감성 스토리텔링형", "문제 해결형"];
@@ -102,12 +139,18 @@ function parseDrafts(raw: string, topic: string): DraftItem[] {
 
 export async function POST(req: NextRequest) {
   try {
-    const { topic } = await req.json();
+    const { topic, provider: providerOverride } = await req.json() as { topic: string; provider?: string };
     if (!topic?.trim()) return NextResponse.json({ error: "주제를 입력해주세요." }, { status: 400 });
 
     const config = await loadAIConfig();
+    const provider = (providerOverride ?? config.activeProvider) as Provider;
 
-    if (config.provider === "mock" || !config.apiKey) {
+    if (provider === "mock") {
+      return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
+    }
+
+    const pc = config.providers[provider as ProviderKey];
+    if (!pc?.apiKey) {
       return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
     }
 
@@ -122,7 +165,7 @@ export async function POST(req: NextRequest) {
     const user = `주제: "${topic.trim()}"\n\n위 주제로 마케팅 콘텐츠 초안 3가지를 JSON 형식으로 작성해주세요.`;
 
     try {
-      const raw = await callAI(config, system, user);
+      const raw = await callAI(provider as ProviderKey, pc.apiKey, pc.model, system, user);
       const drafts = parseDrafts(raw, topic.trim());
       return NextResponse.json({ drafts });
     } catch {

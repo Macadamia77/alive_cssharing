@@ -20,8 +20,15 @@ interface ChannelMeta {
 }
 
 // ─── 마크다운 프리뷰 ────────────────────────────────────────
-function fmt(t: string) {
+function escapeHtml(t: string) {
   return t
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function fmt(t: string) {
+  return escapeHtml(t)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, '<code class="bg-slate-100 px-1 rounded text-xs font-mono">$1</code>');

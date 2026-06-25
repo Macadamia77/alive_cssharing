@@ -76,6 +76,8 @@ function ProviderSection({ providerKey, state, onSaveSuccess }: {
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -99,6 +101,24 @@ function ProviderSection({ providerKey, state, onSaveSuccess }: {
       setSaveStatus("error");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setConfirmDelete(false);
+    try {
+      await fetch("/api/settings", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerKey }),
+      });
+      setApiKeyInput("");
+      setTestResult(null);
+      setSaveStatus("idle");
+      onSaveSuccess?.();
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -222,18 +242,43 @@ function ProviderSection({ providerKey, state, onSaveSuccess }: {
         </div>
       )}
 
+      {/* 삭제 확인 */}
+      {confirmDelete && (
+        <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-xl mb-3 bg-red-50 border border-red-200 text-red-700">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1">연결된 API 키를 삭제하시겠습니까?</span>
+          <button onClick={() => void handleDelete()}
+            className="px-2.5 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 cursor-pointer transition-colors">
+            삭제
+          </button>
+          <button onClick={() => setConfirmDelete(false)}
+            className="px-2.5 py-1 rounded-lg bg-white border border-red-200 text-red-600 hover:bg-red-50 cursor-pointer transition-colors">
+            취소
+          </button>
+        </div>
+      )}
+
       {/* 버튼 */}
       <div className="flex gap-2">
-        <button onClick={handleTest} disabled={testing || saving}
+        <button onClick={handleTest} disabled={testing || saving || deleting}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 cursor-pointer transition-colors">
           {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
           {testing ? "테스트 중..." : "연결 테스트"}
         </button>
-        <button onClick={handleSave} disabled={saving}
+        <button onClick={handleSave} disabled={saving || deleting}
           className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-900 disabled:opacity-50 cursor-pointer transition-colors">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           {saving ? "저장 중..." : "저장"}
         </button>
+        {state.apiKeySet && (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={deleting || confirmDelete}
+            className="p-2 rounded-xl border border-red-200 text-red-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 cursor-pointer transition-colors"
+            title="API 키 삭제">
+            {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          </button>
+        )}
       </div>
     </div>
   );

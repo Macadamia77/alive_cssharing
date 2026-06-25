@@ -96,6 +96,53 @@ export async function PUT(req: NextRequest) {
   }
 }
 
+/** DELETE — API 키 삭제 */
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json() as { provider?: string };
+    const p = body.provider as ProviderKey | undefined;
+
+    const response = NextResponse.json({ ok: true });
+
+    if (p && PROVIDERS.includes(p)) {
+      // 쿠키 만료로 삭제
+      const expired = { ...COOKIE_OPTS, maxAge: 0 };
+      response.cookies.set(`${p}_api_key`, "", expired);
+      response.cookies.set(`${p}_model`, "", expired);
+
+      // 이 provider가 activeProvider였으면 mock으로 초기화
+      const currentActive = resolveActiveProvider(req);
+      if (currentActive === p) {
+        // 다른 provider에 키가 있으면 그걸로, 없으면 mock
+        const next = PROVIDERS.find(other => other !== p && !!resolveProvider(req, other));
+        response.cookies.set("ai_active_provider", next ?? "mock", COOKIE_OPTS);
+      }
+    }
+
+    // GitHub 백업도 지우기 (best-effort)
+    try {
+      const token = resolveGithubToken(req);
+      if (token && p) {
+        const current = await loadAIConfig();
+        const updated: AIConfig = {
+          activeProvider: current.activeProvider === p ? "mock" : current.activeProvider,
+          providers: {
+            claude: { ...current.providers.claude },
+            openai: { ...current.providers.openai },
+            gemini: { ...current.providers.gemini },
+          },
+        };
+        updated.providers[p].apiKey = "";
+        await saveAIConfig(updated, token);
+      }
+    } catch { /* ignore */ }
+
+    return response;
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
 /** POST — API 연결 테스트 */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { provider?: string; apiKey?: string };

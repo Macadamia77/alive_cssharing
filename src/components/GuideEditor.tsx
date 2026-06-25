@@ -444,12 +444,17 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
       {/* GitHub 미설정 경고 */}
       {githubOk === false && (
-        <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" role="alert">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold">GitHub 연동이 설정되지 않아 파일 저장/삭제가 불가합니다.</p>
-            <p className="text-xs mt-1">Vercel 대시보드 → <strong>alive-cssharing</strong> 프로젝트 → Settings → <strong>Environment Variables</strong>에서 <code className="bg-amber-100 px-1 rounded font-mono">GITHUB_TOKEN</code> 값을 추가한 뒤 Redeploy 해주세요.</p>
+        <div className="mb-4 flex items-start justify-between gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" role="alert">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">GitHub 연동이 설정되지 않아 파일 저장/삭제가 불가합니다.</p>
+              <p className="text-xs mt-1">상단 메뉴 <strong>API 설정</strong> → <strong>GitHub 연동</strong> 섹션에서 토큰을 입력하면 즉시 해결됩니다.</p>
+            </div>
           </div>
+          <Link href="/settings" className="shrink-0 text-xs font-semibold text-amber-900 underline hover:text-amber-700 whitespace-nowrap cursor-pointer">
+            설정 바로가기 →
+          </Link>
         </div>
       )}
 

@@ -3,13 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Save, ArrowLeft, Eye, Edit3, CheckCircle, AlertCircle,
-  Loader2, Plus, Trash2, FileText, ChevronRight, ChevronDown,
-  Upload, X, ToggleLeft, ToggleRight, Info, FolderPlus, Folder,
+  Loader2, Trash2, FileText, ChevronRight, ChevronDown,
+  Upload, X, ToggleLeft, ToggleRight, Info, FolderPlus, Folder, FilePlus,
 } from "lucide-react";
 import Link from "next/link";
 import { CHANNEL_LABELS, CHANNEL_COLORS, type ChannelKey } from "@/lib/channels";
 
-// ─── 타입 ────────────────────────────────────────────────────
 interface FileNode {
   name: string;
   path: string;
@@ -25,7 +24,6 @@ interface ChannelMeta {
   excluded_note?: string;
 }
 
-// ─── 마크다운 간이 프리뷰 ──────────────────────────────────────
 function formatInline(text: string): string {
   return text
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -56,6 +54,35 @@ function MarkdownPreview({ content }: { content: string }) {
   );
 }
 
+function extractFolders(nodes: FileNode[]): FileNode[] {
+  const result: FileNode[] = [];
+  for (const n of nodes) {
+    if (n.type === "dir") {
+      result.push(n);
+      if (n.children) result.push(...extractFolders(n.children));
+    }
+  }
+  return result;
+}
+
+function removeNodeFromTree(nodes: FileNode[], targetPath: string): FileNode[] {
+  return nodes
+    .filter(n => n.path !== targetPath)
+    .map(n =>
+      n.type === "dir" && n.children
+        ? { ...n, children: removeNodeFromTree(n.children, targetPath) }
+        : n
+    );
+}
+
+function findFirstFile(nodes: FileNode[]): string | null {
+  for (const n of nodes) {
+    if (n.type === "file") return n.path;
+    if (n.children) { const f = findFirstFile(n.children); if (f) return f; }
+  }
+  return null;
+}
+
 // ─── 파일 트리 노드 ───────────────────────────────────────────
 function FileTreeNode({
   node, depth, selected, included, onSelect, onToggleInclude, onDelete,
@@ -66,24 +93,34 @@ function FileTreeNode({
   included: string[];
   onSelect: (p: string) => void;
   onToggleInclude: (p: string) => void;
-  onDelete: (p: string) => void;
+  onDelete: (p: string, isFolder?: boolean) => void;
 }) {
   const [open, setOpen] = useState(true);
   const isIncluded = included.includes(node.path);
   const isSelected = selected === node.path;
+  const pl = `${8 + depth * 16}px`;
 
   if (node.type === "dir") {
     return (
       <div>
-        <button
-          onClick={() => setOpen(!open)}
-          className="flex items-center gap-1.5 w-full px-2 py-1.5 text-left text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
-          style={{ paddingLeft: `${8 + depth * 16}px` }}
-        >
-          {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
-          <Folder className="w-3 h-3 shrink-0 text-amber-400" />
-          <span className="uppercase tracking-wider">{node.name}</span>
-        </button>
+        <div className="group flex items-center gap-1 mx-1 rounded-lg hover:bg-slate-50 transition-colors" style={{ paddingLeft: pl, paddingRight: "4px" }}>
+          <button
+            onClick={() => setOpen(!open)}
+            className="flex items-center gap-1.5 flex-1 py-1.5 text-left text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
+          >
+            {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+            <Folder className="w-3 h-3 shrink-0 text-amber-400" />
+            <span className="uppercase tracking-wider truncate">{node.name}</span>
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(node.path, true); }}
+            className="opacity-0 group-hover:opacity-100 shrink-0 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity"
+            aria-label="폴더 삭제"
+            title="폴더 삭제"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
         {open && node.children?.map(child => (
           <FileTreeNode key={child.path} node={child} depth={depth + 1} selected={selected} included={included} onSelect={onSelect} onToggleInclude={onToggleInclude} onDelete={onDelete} />
         ))}
@@ -93,46 +130,43 @@ function FileTreeNode({
 
   return (
     <div
-      className={`group flex items-center gap-1 px-2 py-1.5 rounded-lg mx-1 cursor-pointer transition-colors duration-150 ${isSelected ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"}`}
-      style={{ paddingLeft: `${8 + depth * 16}px` }}
+      className={`group flex items-center gap-1 rounded-lg mx-1 cursor-pointer transition-colors duration-150 ${isSelected ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"}`}
+      style={{ paddingLeft: pl, paddingRight: "4px" }}
     >
-      <FileText className="w-3 h-3 shrink-0 text-slate-400" aria-hidden="true" />
-      <button className="flex-1 text-left text-xs truncate cursor-pointer" onClick={() => onSelect(node.path)}>
+      <FileText className="w-3 h-3 shrink-0 text-slate-400" />
+      <button className="flex-1 py-1.5 text-left text-xs truncate cursor-pointer" onClick={() => onSelect(node.path)}>
         {node.name}
       </button>
-
-      {/* 포함 토글 */}
       <button
         onClick={(e) => { e.stopPropagation(); onToggleInclude(node.path); }}
-        title={isIncluded ? "시스템 프롬프트에서 제외" : "시스템 프롬프트에 포함"}
-        className={`opacity-0 group-hover:opacity-100 shrink-0 cursor-pointer transition-opacity duration-150 ${isIncluded ? "text-emerald-500" : "text-slate-300"}`}
-        aria-label={isIncluded ? "제외" : "포함"}
+        title={isIncluded ? "AI 프롬프트에서 제외" : "AI 프롬프트에 포함"}
+        className={`opacity-0 group-hover:opacity-100 shrink-0 cursor-pointer transition-opacity p-0.5 ${isIncluded ? "text-emerald-500" : "text-slate-300"}`}
       >
         {isIncluded ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
       </button>
-
-      {/* 삭제 */}
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(node.path); }}
-        className="opacity-0 group-hover:opacity-100 shrink-0 text-red-400 hover:text-red-600 cursor-pointer transition-opacity duration-150"
+        className="opacity-0 group-hover:opacity-100 shrink-0 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity"
         aria-label="파일 삭제"
       >
-        <Trash2 className="w-3.5 h-3.5" />
+        <Trash2 className="w-3 h-3" />
       </button>
     </div>
   );
 }
 
-// ─── MD 가져오기 패널 ─────────────────────────────────────────
+// ─── 파일 추가 패널 ──────────────────────────────────────────
 function ImportPanel({
-  channel, onImported, onClose,
+  channel, folders, onImported, onClose,
 }: {
   channel: ChannelKey;
+  folders: FileNode[];
   onImported: () => Promise<void>;
   onClose: () => void;
 }) {
   const [filename, setFilename] = useState("");
   const [content, setContent] = useState("");
+  const [targetFolder, setTargetFolder] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -150,10 +184,11 @@ function ImportPanel({
     const name = filename.trim();
     if (!name || !content.trim()) { setError("파일명과 내용을 입력해주세요."); return; }
     const safeName = name.endsWith(".md") ? name : `${name}.md`;
+    const fullPath = targetFolder ? `${targetFolder}/${safeName}` : safeName;
     setSaving(true);
     setError("");
     try {
-      const res = await fetch(`/api/channels/${channel}/files/${safeName}`, {
+      const res = await fetch(`/api/channels/${channel}/files/${fullPath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
@@ -162,8 +197,8 @@ function ImportPanel({
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(err.error ?? "저장 실패");
       }
-      onClose(); // 즉시 닫기
-      void onImported(); // 트리 백그라운드 갱신
+      onClose();
+      void onImported();
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장 실패");
     } finally {
@@ -172,59 +207,80 @@ function ImportPanel({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="MD 파일 가져오기">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">MD 파일 가져오기</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer text-slate-500 transition-colors"><X className="w-4 h-4" /></button>
+          <h2 className="font-semibold text-slate-900">파일 추가</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer text-slate-500"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-6 space-y-4">
+          {/* 파일 선택 */}
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일 직접 선택 (선택)</label>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일에서 불러오기</label>
             <div className="flex gap-2">
               <input ref={fileInputRef} type="file" accept=".md,.txt" className="hidden" onChange={handleFileRead} />
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer transition-colors"
               >
-                <Upload className="w-4 h-4" aria-hidden="true" />
-                파일 선택
+                <Upload className="w-4 h-4" />
+                파일 선택 (.md / .txt)
               </button>
-              <span className="text-sm text-slate-400 self-center">{filename || "선택된 파일 없음"}</span>
+              {filename && <span className="text-sm text-slate-500 self-center">{filename}</span>}
             </div>
           </div>
 
+          {/* 저장 위치 */}
+          {folders.length > 0 && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">저장 위치</label>
+              <select
+                value={targetFolder}
+                onChange={(e) => setTargetFolder(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="">/ 채널 루트</option>
+                {folders.map(f => (
+                  <option key={f.path} value={f.path}>📁 {f.path}/</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* 파일명 */}
           <div>
-            <label htmlFor="import-filename" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              저장할 파일명 <span className="text-red-400">*</span>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              파일명 <span className="text-red-400">*</span>
             </label>
-            <input
-              id="import-filename"
-              type="text"
-              value={filename}
-              onChange={(e) => setFilename(e.target.value)}
-              placeholder="예: instagram-guide.md"
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="flex items-center gap-2">
+              {targetFolder && <span className="text-sm text-slate-400 shrink-0">{targetFolder}/</span>}
+              <input
+                type="text"
+                value={filename}
+                onChange={(e) => setFilename(e.target.value)}
+                placeholder="guide.md"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
 
+          {/* MD 내용 */}
           <div>
-            <label htmlFor="import-content" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              MD 내용 붙여넣기 <span className="text-red-400">*</span>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              내용 <span className="text-red-400">*</span>
             </label>
             <textarea
-              id="import-content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="팀원에게 받은 MD 파일 내용을 여기에 붙여넣으세요..."
-              rows={10}
+              placeholder="파일 내용을 여기에 붙여넣거나, 위에서 파일을 선택하세요..."
+              rows={8}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2" role="alert">
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               {error}
             </div>
@@ -232,11 +288,11 @@ function ImportPanel({
         </div>
 
         <div className="px-6 pb-5 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors">취소</button>
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 cursor-pointer">취소</button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? "저장 중..." : "채널에 추가"}
@@ -245,24 +301,6 @@ function ImportPanel({
       </div>
     </div>
   );
-}
-
-function removeNodeFromTree(nodes: FileNode[], filePath: string): FileNode[] {
-  return nodes
-    .filter(n => n.path !== filePath)
-    .map(n =>
-      n.type === "dir" && n.children
-        ? { ...n, children: removeNodeFromTree(n.children, filePath) }
-        : n
-    );
-}
-
-function findFirstFile(nodes: FileNode[]): string | null {
-  for (const n of nodes) {
-    if (n.type === "file") return n.path;
-    if (n.children) { const f = findFirstFile(n.children); if (f) return f; }
-  }
-  return null;
 }
 
 // ─── 메인 GuideEditor ────────────────────────────────────────
@@ -287,6 +325,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const { color } = CHANNEL_COLORS[channel];
   const label = CHANNEL_LABELS[channel];
   const isDirty = content !== savedContent;
+  const folders = extractFolders(tree);
 
   const loadChannel = useCallback(async () => {
     setLoading(true);
@@ -296,11 +335,10 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
       const data = await res.json();
       setMeta(data.meta);
       setTree(data.tree);
-      // selectedFile을 closure로 읽지 않고 함수형 업데이트로 처리 → 무한루프 방지
       setSelectedFile(prev => prev ?? findFirstFile(data.tree));
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [channel]); // selectedFile 제거 → loadChannel이 안정적으로 유지됨
+  }, [channel]);
 
   const loadFile = useCallback(async (filePath: string) => {
     setFileLoading(true);
@@ -352,21 +390,26 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     await loadChannel();
   };
 
-  const handleDelete = async (filePath: string) => {
-    if (!confirm(`"${filePath}" 파일을 삭제하시겠습니까?`)) return;
+  const handleDelete = async (filePath: string, isFolder = false) => {
+    const target = isFolder ? `"${filePath}" 폴더와 그 안의 모든 파일` : `"${filePath}" 파일`;
+    if (!confirm(`${target}을 삭제하시겠습니까?`)) return;
     setGlobalError(null);
 
-    // 낙관적 UI: 즉시 트리에서 제거
     const prevTree = tree;
     const prevMeta = meta;
+    // 낙관적 UI 업데이트
     setTree(prev => removeNodeFromTree(prev, filePath));
-    if (selectedFile === filePath) setSelectedFile(null);
-    if (meta?.include.includes(filePath)) {
+    if (!isFolder && selectedFile === filePath) setSelectedFile(null);
+    if (!isFolder && meta?.include.includes(filePath)) {
       setMeta(prev => prev ? { ...prev, include: prev.include.filter(p => p !== filePath) } : prev);
     }
 
+    const url = isFolder
+      ? `/api/channels/${channel}/files/${filePath}?type=folder`
+      : `/api/channels/${channel}/files/${filePath}`;
+
     try {
-      const res = await fetch(`/api/channels/${channel}/files/${filePath}`, { method: "DELETE" });
+      const res = await fetch(url, { method: "DELETE" });
       if (!res.ok) {
         setTree(prevTree);
         setMeta(prevMeta);
@@ -374,7 +417,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         setGlobalError(err.error ?? "삭제에 실패했습니다.");
         return;
       }
-      void loadChannel(); // 백그라운드에서 GitHub 상태 동기화
+      void loadChannel();
     } catch {
       setTree(prevTree);
       setMeta(prevMeta);
@@ -387,7 +430,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     if (!name) return;
     setFolderError("");
 
-    // 낙관적 UI: 즉시 폴더 추가
     const newFolderNode: FileNode = { name, path: name, type: "dir", included: false, children: [] };
     setTree(prev => [...prev, newFolderNode]);
     setShowNewFolder(false);
@@ -407,7 +449,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         setFolderError(err.error ?? "폴더 생성 실패");
         return;
       }
-      void loadChannel(); // 백그라운드 동기화
+      void loadChannel();
     } catch {
       setTree(prev => prev.filter(n => n.path !== name));
       setShowNewFolder(true);
@@ -422,8 +464,8 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto glass-card rounded-2xl p-8 text-center" role="status">
-        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-blue-500" aria-hidden="true" />
+      <div className="max-w-6xl mx-auto glass-card rounded-2xl p-8 text-center">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-blue-500" />
         <span className="text-slate-500 text-sm">가이드 불러오는 중...</span>
       </div>
     );
@@ -432,14 +474,14 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   return (
     <div className="max-w-7xl mx-auto">
       {showImport && (
-        <ImportPanel channel={channel} onImported={loadChannel} onClose={() => setShowImport(false)} />
+        <ImportPanel channel={channel} folders={folders} onImported={loadChannel} onClose={() => setShowImport(false)} />
       )}
 
       {/* Top bar */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Link href="/guides" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 transition-colors cursor-pointer">
-            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+            <ArrowLeft className="w-4 h-4" />
             가이드 목록
           </Link>
           <span className="text-slate-300">/</span>
@@ -448,28 +490,20 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* View mode */}
           <div className="flex bg-slate-100 rounded-xl p-1">
             {(["edit", "split", "preview"] as const).map((mode) => (
               <button key={mode} onClick={() => setViewMode(mode)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer ${viewMode === mode ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
-                aria-pressed={viewMode === mode}>
-                {mode === "edit" && <><Edit3 className="w-3 h-3 inline mr-1" aria-hidden="true" />편집</>}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer ${viewMode === mode ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                {mode === "edit" && <><Edit3 className="w-3 h-3 inline mr-1" />편집</>}
                 {mode === "split" && "분할"}
-                {mode === "preview" && <><Eye className="w-3 h-3 inline mr-1" aria-hidden="true" />미리보기</>}
+                {mode === "preview" && <><Eye className="w-3 h-3 inline mr-1" />미리보기</>}
               </button>
             ))}
           </div>
 
-          <button onClick={() => setShowImport(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 cursor-pointer transition-colors">
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            MD 가져오기
-          </button>
-
           <button onClick={handleSave} disabled={!isDirty || saving || !selectedFile}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Save className="w-4 h-4" aria-hidden="true" />}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? "저장 중..." : "저장"}
           </button>
         </div>
@@ -477,7 +511,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
       {/* GitHub 미설정 경고 */}
       {githubOk === false && (
-        <div className="mb-4 flex items-start justify-between gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" role="alert">
+        <div className="mb-4 flex items-start justify-between gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3">
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
@@ -491,24 +525,22 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         </div>
       )}
 
-      {/* 전역 에러 (삭제 실패 등) */}
       {globalError && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3" role="alert">
+        <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="flex-1">{globalError}</span>
           <button onClick={() => setGlobalError(null)} className="shrink-0 text-red-400 hover:text-red-600 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
       )}
 
-      {/* Status */}
       {saveStatus === "success" && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 fade-in" role="status">
+        <div className="mb-4 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
           <CheckCircle className="w-4 h-4 shrink-0" />
           저장 완료 — 다음 콘텐츠 생성부터 즉시 반영됩니다.
         </div>
       )}
       {saveStatus === "error" && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3" role="alert">
+        <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
           <AlertCircle className="w-4 h-4 shrink-0" />
           저장에 실패했습니다. 다시 시도해주세요.
         </div>
@@ -517,27 +549,33 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
       {/* Main layout */}
       <div className="flex gap-4 h-[72vh]">
         {/* File sidebar */}
-        <aside className="w-56 shrink-0 glass-card rounded-2xl overflow-hidden flex flex-col">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">파일 목록</span>
-            <div className="flex items-center gap-1">
+        <aside className="w-60 shrink-0 glass-card rounded-2xl overflow-hidden flex flex-col">
+          {/* 헤더 + 액션 버튼 */}
+          <div className="px-3 pt-3 pb-2 border-b border-slate-100">
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">파일 목록</p>
+            <div className="flex gap-1.5">
               <button
-                onClick={() => { setShowNewFolder(true); setNewFolderName(""); }}
-                className="p-1 rounded-lg hover:bg-slate-100 cursor-pointer text-slate-400 hover:text-amber-500 transition-colors"
-                aria-label="폴더 만들기"
-                title="새 폴더"
+                onClick={() => setShowImport(true)}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 cursor-pointer transition-colors"
+              >
+                <FilePlus className="w-3.5 h-3.5" />
+                파일 추가
+              </button>
+              <button
+                onClick={() => { setShowNewFolder(true); setNewFolderName(""); setFolderError(""); }}
+                className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 cursor-pointer transition-colors"
+                title="새 폴더 만들기"
               >
                 <FolderPlus className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => setShowImport(true)} className="p-1 rounded-lg hover:bg-slate-100 cursor-pointer text-slate-400 hover:text-blue-600 transition-colors" aria-label="파일 추가">
-                <Plus className="w-3.5 h-3.5" />
+                폴더
               </button>
             </div>
           </div>
 
+          {/* 폴더 생성 입력 */}
           {showNewFolder && (
             <div className="px-3 py-2 border-b border-slate-100 bg-amber-50">
-              <p className="text-[10px] text-amber-700 font-medium mb-1.5">새 폴더 이름</p>
+              <p className="text-[10px] text-amber-700 font-semibold mb-1.5">새 폴더 이름</p>
               <div className="flex items-center gap-1.5">
                 <input
                   type="text"
@@ -547,44 +585,56 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
                     if (e.key === "Enter") handleCreateFolder();
                     if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); setFolderError(""); }
                   }}
-                  placeholder="폴더명"
+                  placeholder="폴더명 입력"
                   className="flex-1 text-xs px-2 py-1 rounded-lg border border-amber-200 focus:outline-none focus:ring-1 focus:ring-amber-400 bg-white"
                   autoFocus
                 />
                 <button onClick={handleCreateFolder} className="text-xs text-amber-700 font-semibold hover:text-amber-900 cursor-pointer px-1">확인</button>
-                <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); setFolderError(""); }} className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
+                <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); setFolderError(""); }} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-              {folderError && (
-                <p className="text-[10px] text-red-600 mt-1.5 leading-tight">{folderError}</p>
-              )}
+              {folderError && <p className="text-[10px] text-red-600 mt-1.5">{folderError}</p>}
             </div>
           )}
 
+          {/* 파일 트리 */}
           <div className="flex-1 overflow-y-auto py-2">
-            {tree.map(node => (
-              <FileTreeNode
-                key={node.path} node={node} depth={0}
-                selected={selectedFile} included={meta?.include ?? []}
-                onSelect={setSelectedFile}
-                onToggleInclude={handleToggleInclude}
-                onDelete={handleDelete}
-              />
-            ))}
+            {tree.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full px-4 text-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-slate-400" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">파일이 없습니다</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">파일 추가 버튼으로 시작하세요</p>
+                </div>
+                <button
+                  onClick={() => setShowImport(true)}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium underline cursor-pointer"
+                >
+                  + 첫 파일 추가하기
+                </button>
+              </div>
+            ) : (
+              tree.map(node => (
+                <FileTreeNode
+                  key={node.path} node={node} depth={0}
+                  selected={selectedFile} included={meta?.include ?? []}
+                  onSelect={setSelectedFile}
+                  onToggleInclude={handleToggleInclude}
+                  onDelete={handleDelete}
+                />
+              ))
+            )}
           </div>
 
-          {/* Include hint */}
           <div className="px-3 py-2 border-t border-slate-100 flex items-start gap-1.5">
-            <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
+            <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
             <p className="text-[10px] text-slate-400 leading-tight">
-              토글 아이콘으로 AI 시스템 프롬프트 포함 여부 조절
+              토글로 AI 프롬프트 포함 여부 조절 · 호버 시 삭제 버튼 표시
             </p>
           </div>
-
-          {meta?.excluded_note && (
-            <div className="px-3 py-2 bg-amber-50 border-t border-amber-100">
-              <p className="text-[10px] text-amber-700 leading-tight">{meta.excluded_note}</p>
-            </div>
-          )}
         </aside>
 
         {/* Editor / Preview */}
@@ -594,7 +644,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
               <div className="glass-card rounded-2xl overflow-hidden flex flex-col">
                 <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Edit3 className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
+                    <Edit3 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                     <span className="text-xs font-medium text-slate-700 truncate">{selectedFile}</span>
                   </div>
                   <span className="text-xs text-slate-400 shrink-0 ml-2">Ctrl+S 저장</span>
@@ -608,7 +658,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
                     onKeyDown={handleKeyDown}
                     className="flex-1 p-4 text-sm font-mono text-slate-800 bg-white resize-none focus:outline-none leading-relaxed"
                     spellCheck={false}
-                    aria-label={`${selectedFile} 편집`}
                   />
                 )}
               </div>
@@ -616,7 +665,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
             {(viewMode === "preview" || viewMode === "split") && (
               <div className="glass-card rounded-2xl overflow-hidden flex flex-col">
                 <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
-                  <Eye className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                  <Eye className="w-3.5 h-3.5 text-slate-500" />
                   <span className="text-xs font-medium text-slate-700">미리보기</span>
                 </div>
                 <div className="flex-1 p-4 overflow-y-auto">
@@ -626,8 +675,21 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
             )}
           </div>
         ) : (
-          <div className="flex-1 glass-card rounded-2xl flex items-center justify-center text-slate-400 text-sm">
-            왼쪽 목록에서 파일을 선택하세요
+          <div className="flex-1 glass-card rounded-2xl flex flex-col items-center justify-center gap-4 text-center p-8">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center">
+              <FileText className="w-6 h-6 text-blue-400" />
+            </div>
+            <div>
+              <p className="text-slate-600 font-medium">파일을 선택하거나 추가하세요</p>
+              <p className="text-sm text-slate-400 mt-1">왼쪽 목록에서 파일을 클릭하면 편집할 수 있습니다</p>
+            </div>
+            <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 cursor-pointer"
+            >
+              <FilePlus className="w-4 h-4" />
+              파일 추가하기
+            </button>
           </div>
         )}
       </div>

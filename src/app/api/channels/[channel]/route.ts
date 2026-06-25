@@ -15,16 +15,17 @@ function isValid(ch: string): ch is ChannelKey {
 
 /** GET /api/channels/[channel] — 메타 + 파일 트리 */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ channel: string }> }
 ) {
   const { channel } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
+    const token = resolveGithubToken(req);
     const [meta, tree] = await Promise.all([
-      getChannelMeta(channel),
-      getChannelFileTree(channel),
+      getChannelMeta(channel, token),
+      getChannelFileTree(channel, token),
     ]);
     return NextResponse.json({ channel, meta, tree });
   } catch (e) {
@@ -43,7 +44,7 @@ export async function PUT(
   try {
     const body = await req.json();
     const token = resolveGithubToken(req);
-    const meta = await getChannelMeta(channel);
+    const meta = await getChannelMeta(channel, token);
     if (Array.isArray(body.include)) meta.include = body.include;
     await updateChannelMeta(channel, meta, token);
     return NextResponse.json({ ok: true });

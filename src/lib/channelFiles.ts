@@ -15,15 +15,15 @@ export interface ChannelMeta {
 
 export interface FileNode {
   name: string;
-  path: string;       // relative to channel root
+  path: string;
   type: "file" | "dir";
   children?: FileNode[];
-  included: boolean;  // whether it's in the system prompt
+  included: boolean;
 }
 
-export async function getChannelMeta(channel: ChannelKey): Promise<ChannelMeta> {
+export async function getChannelMeta(channel: ChannelKey, token?: string): Promise<ChannelMeta> {
   if (isVercelProd()) {
-    const raw = await githubRead(`data/channels/${channel}/_meta.json`);
+    const raw = await githubRead(`data/channels/${channel}/_meta.json`, token);
     return JSON.parse(raw.replace(/^﻿/, ""));
   }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");
@@ -31,12 +31,12 @@ export async function getChannelMeta(channel: ChannelKey): Promise<ChannelMeta> 
   return JSON.parse(raw.replace(/^﻿/, ""));
 }
 
-export async function getChannelFileTree(channel: ChannelKey): Promise<FileNode[]> {
-  const meta = await getChannelMeta(channel);
+export async function getChannelFileTree(channel: ChannelKey, token?: string): Promise<FileNode[]> {
+  const meta = await getChannelMeta(channel, token);
 
   if (isVercelProd()) {
     async function walkGithub(repoPath: string, relBase: string): Promise<FileNode[]> {
-      const entries = await githubListDir(repoPath);
+      const entries = await githubListDir(repoPath, token);
       const nodes: FileNode[] = [];
       for (const entry of entries) {
         if (entry.name.startsWith("_")) continue;
@@ -82,10 +82,10 @@ export async function getChannelFileTree(channel: ChannelKey): Promise<FileNode[
   return walk(root, "");
 }
 
-export async function readChannelFile(channel: ChannelKey, filePath: string): Promise<string> {
+export async function readChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
   if (isVercelProd()) {
     const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
-    return githubRead(`data/channels/${channel}/${safe}`);
+    return githubRead(`data/channels/${channel}/${safe}`, token);
   }
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -118,6 +118,27 @@ export async function deleteChannelFile(channel: ChannelKey, filePath: string, t
   await fs.unlink(full);
 }
 
+async function deleteGithubDirRecursive(repoPath: string, token?: string): Promise<void> {
+  const entries = await githubListDir(repoPath, token);
+  for (const entry of entries) {
+    if (entry.type === "file") {
+      await githubDelete(entry.path, token);
+    } else if (entry.type === "dir") {
+      await deleteGithubDirRecursive(entry.path, token);
+    }
+  }
+}
+
+export async function deleteChannelFolder(channel: ChannelKey, folderPath: string, token?: string): Promise<void> {
+  const safe = folderPath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  if (isVercelProd()) {
+    await deleteGithubDirRecursive(`data/channels/${channel}/${safe}`, token);
+    return;
+  }
+  const full = path.join(CHANNEL_DIR, channel, safe.replace(/\//g, path.sep));
+  await fs.rm(full, { recursive: true, force: true });
+}
+
 export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, token?: string): Promise<void> {
   if (isVercelProd()) {
     await githubWrite(`data/channels/${channel}/_meta.json`, JSON.stringify(meta, null, 2), token);
@@ -127,14 +148,13 @@ export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, 
   await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf-8");
 }
 
-/** 채널의 시스템 프롬프트를 포함 파일들을 합쳐서 빌드 */
-export async function buildSystemPrompt(channel: ChannelKey): Promise<string> {
-  const meta = await getChannelMeta(channel);
+export async function buildSystemPrompt(channel: ChannelKey, token?: string): Promise<string> {
+  const meta = await getChannelMeta(channel, token);
   const parts: string[] = [];
 
   for (const relPath of meta.include) {
     try {
-      const content = await readChannelFile(channel, relPath);
+      const content = await readChannelFile(channel, relPath, token);
       parts.push(`\n\n${"=".repeat(60)}\n# 가이드 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);
     } catch {
       // 파일이 없으면 스킵

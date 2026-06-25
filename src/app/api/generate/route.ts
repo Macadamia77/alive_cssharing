@@ -3,6 +3,7 @@ import fs from "fs/promises";
 import path from "path";
 import { CHANNELS, type ChannelKey } from "@/lib/channels";
 import { buildSystemPrompt } from "@/lib/channelFiles";
+import { resolveGithubToken } from "@/lib/resolveToken";
 
 // ─── AI 설정 로드 ──────────────────────────────────────────────
 const CONFIG_PATH = path.join(process.cwd(), "data", "ai-config.json");
@@ -204,9 +205,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "채널을 하나 이상 선택해주세요." }, { status: 400 });
     }
 
+    const token = resolveGithubToken(req);
     const results = await Promise.all(
       targetChannels.map(async (channel) => {
-        const systemPrompt = await buildSystemPrompt(channel);
+        const systemPrompt = await buildSystemPrompt(channel, token);
         const content = await generateContent(channel, topic.trim(), systemPrompt);
         return { channel, content };
       })

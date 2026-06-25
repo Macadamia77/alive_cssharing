@@ -5,6 +5,7 @@ import {
   getChannelFileTree,
   updateChannelMeta,
 } from "@/lib/channelFiles";
+import { resolveGithubToken } from "@/lib/resolveToken";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "facebook", "linkedin", "magazine"];
 
@@ -41,9 +42,10 @@ export async function PUT(
 
   try {
     const body = await req.json();
+    const token = resolveGithubToken(req);
     const meta = await getChannelMeta(channel);
     if (Array.isArray(body.include)) meta.include = body.include;
-    await updateChannelMeta(channel, meta);
+    await updateChannelMeta(channel, meta, token);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

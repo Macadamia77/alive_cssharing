@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { isVercelProd, githubWrite } from "@/lib/githubStorage";
+import { resolveGithubToken } from "@/lib/resolveToken";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "ai-config.json");
 
@@ -20,9 +21,9 @@ async function readConfig(): Promise<AIConfig> {
   }
 }
 
-async function writeConfig(config: AIConfig) {
+async function writeConfig(config: AIConfig, token?: string) {
   if (isVercelProd()) {
-    await githubWrite("data/ai-config.json", JSON.stringify(config, null, 2));
+    await githubWrite("data/ai-config.json", JSON.stringify(config, null, 2), token);
     return;
   }
   await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8");
@@ -44,6 +45,7 @@ export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
     const current = await readConfig();
+    const token = resolveGithubToken(req);
 
     const updated: AIConfig = {
       provider: body.provider ?? current.provider,
@@ -52,7 +54,7 @@ export async function PUT(req: NextRequest) {
       apiKey: body.apiKey !== undefined && body.apiKey !== "" ? body.apiKey : current.apiKey,
     };
 
-    await writeConfig(updated);
+    await writeConfig(updated, token);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

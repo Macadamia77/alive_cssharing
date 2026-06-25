@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { type ChannelKey } from "@/lib/channels";
 import { readChannelFile, writeChannelFile, deleteChannelFile } from "@/lib/channelFiles";
+import { resolveGithubToken } from "@/lib/resolveToken";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "facebook", "linkedin", "magazine"];
 
@@ -31,7 +32,8 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
   try {
     const { content } = await req.json();
     if (typeof content !== "string") return NextResponse.json({ error: "content 필드가 없습니다." }, { status: 400 });
-    await writeChannelFile(channel, filepath.join("/"), content);
+    const token = resolveGithubToken(req);
+    await writeChannelFile(channel, filepath.join("/"), content, token);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -45,7 +47,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
   try {
     const { content = "" } = await req.json();
-    await writeChannelFile(channel, filepath.join("/"), content);
+    const token = resolveGithubToken(req);
+    await writeChannelFile(channel, filepath.join("/"), content, token);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -53,14 +56,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 }
 
 /** DELETE — 파일 삭제 */
-export async function DELETE(_req: NextRequest, { params }: RouteContext) {
+export async function DELETE(req: NextRequest, { params }: RouteContext) {
   const { channel, filepath } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const filePath = filepath.join("/");
-
   try {
-    await deleteChannelFile(channel, filePath);
+    const token = resolveGithubToken(req);
+    await deleteChannelFile(channel, filepath.join("/"), token);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

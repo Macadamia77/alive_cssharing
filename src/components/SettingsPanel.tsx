@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Save, CheckCircle, AlertCircle, Loader2, Zap, Eye, EyeOff, ExternalLink,
+  Save, CheckCircle, AlertCircle, Loader2, Zap, Eye, EyeOff, ExternalLink, Github, Trash2,
 } from "lucide-react";
 
 type Provider = "mock" | "claude" | "openai";
@@ -60,6 +60,13 @@ export default function SettingsPanel() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
+  // GitHub 토큰 상태
+  const [githubToken, setGithubToken] = useState("");
+  const [githubStatus, setGithubStatus] = useState<{ ok: boolean; source: string | null } | null>(null);
+  const [githubSaving, setGithubSaving] = useState(false);
+  const [githubResult, setGithubResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showGithubToken, setShowGithubToken] = useState(false);
+
   const fetchSettings = useCallback(async () => {
     try {
       const res = await fetch("/api/settings");
@@ -69,7 +76,46 @@ export default function SettingsPanel() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchSettings(); }, [fetchSettings]);
+  const fetchGithubStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/github");
+      const data = await res.json();
+      setGithubStatus(data);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchSettings(); fetchGithubStatus(); }, [fetchSettings, fetchGithubStatus]);
+
+  const handleSaveGithubToken = async () => {
+    if (!githubToken.trim()) return;
+    setGithubSaving(true);
+    setGithubResult(null);
+    try {
+      const res = await fetch("/api/settings/github", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: githubToken.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGithubResult({ ok: false, message: data.error ?? "저장 실패" });
+      } else {
+        setGithubResult({ ok: true, message: "GitHub 토큰이 저장되었습니다. 파일 저장/삭제가 가능합니다." });
+        setGithubToken("");
+        await fetchGithubStatus();
+      }
+    } catch {
+      setGithubResult({ ok: false, message: "네트워크 오류가 발생했습니다." });
+    } finally {
+      setGithubSaving(false);
+    }
+  };
+
+  const handleRemoveGithubToken = async () => {
+    await fetch("/api/settings/github", { method: "DELETE" });
+    setGithubResult(null);
+    await fetchGithubStatus();
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -222,6 +268,76 @@ export default function SettingsPanel() {
           </div>
         </div>
       )}
+
+      {/* GitHub 연동 */}
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Github className="w-4 h-4 text-slate-700" />
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">GitHub 연동</h2>
+          </div>
+          {githubStatus?.ok && (
+            <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
+              <CheckCircle className="w-3.5 h-3.5" />
+              연동됨 {githubStatus.source === "env" ? "(서버 설정)" : "(직접 입력)"}
+            </span>
+          )}
+          {githubStatus && !githubStatus.ok && (
+            <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
+              <AlertCircle className="w-3.5 h-3.5" />
+              미연동 — 파일 저장 불가
+            </span>
+          )}
+        </div>
+
+        <p className="text-xs text-slate-500">
+          파일 저장·삭제·업로드를 사용하려면 GitHub Personal Access Token이 필요합니다.
+          <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener noreferrer"
+            className="ml-1 text-blue-600 hover:underline inline-flex items-center gap-0.5">
+            토큰 발급 <ExternalLink className="w-3 h-3" />
+          </a>
+          (repo 권한만 체크)
+        </p>
+
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type={showGithubToken ? "text" : "password"}
+              value={githubToken}
+              onChange={(e) => setGithubToken(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSaveGithubToken()}
+              placeholder={githubStatus?.ok ? "새 토큰으로 교체하려면 입력" : "ghp_xxxxxxxxxxxx"}
+              className="w-full pr-10 px-3 py-2.5 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            />
+            <button onClick={() => setShowGithubToken(!showGithubToken)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
+              {showGithubToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <button
+            onClick={handleSaveGithubToken}
+            disabled={githubSaving || !githubToken.trim()}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 text-white text-sm font-medium hover:bg-slate-900 disabled:opacity-40 cursor-pointer transition-colors"
+          >
+            {githubSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            저장
+          </button>
+          {githubStatus?.source === "cookie" && (
+            <button onClick={handleRemoveGithubToken}
+              className="p-2.5 rounded-xl border border-red-200 text-red-400 hover:text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+              title="토큰 삭제">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {githubResult && (
+          <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-xl ${githubResult.ok ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-600 border border-red-100"}`}>
+            {githubResult.ok ? <CheckCircle className="w-3.5 h-3.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+            {githubResult.message}
+          </div>
+        )}
+      </div>
 
       {/* 연결 흐름 안내 */}
       <div className="glass-card rounded-2xl p-5">

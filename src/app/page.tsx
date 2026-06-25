@@ -101,7 +101,10 @@ function DraftCard({
           </div>
         ) : (
           <div>
-            <pre className="text-sm text-slate-600 whitespace-pre-wrap font-[inherit] leading-relaxed line-clamp-4">
+            <pre
+              className="text-sm text-slate-600 whitespace-pre-wrap font-[inherit] leading-relaxed max-h-44 overflow-y-auto pr-1 scrollbar-thin"
+              style={{ scrollbarWidth: "thin", scrollbarColor: "#cbd5e1 transparent" }}
+            >
               {body}
             </pre>
             <button
@@ -356,6 +359,25 @@ export default function HomePage() {
               <div className="text-center mb-6">
                 <h2 className="text-lg font-bold text-slate-900 mb-1">AI가 추천한 초안 3가지</h2>
                 <p className="text-sm text-slate-500">원하는 방향의 초안을 선택하거나 직접 수정한 후 채널 콘텐츠를 생성하세요</p>
+              </div>
+
+              {/* 채널 선택 */}
+              <div className="glass-card rounded-2xl px-5 py-4 mb-6 max-w-2xl mx-auto">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">적용할 채널 선택</p>
+                <div className="flex flex-wrap gap-2">
+                  {CHANNELS.map(ch => {
+                    const { bgColor, color, borderColor } = CHANNEL_COLORS[ch];
+                    const isActive = activeChannels.has(ch);
+                    return (
+                      <button key={ch} onClick={() => toggleChannel(ch)}
+                        className={`relative px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer select-none ${isActive ? `${bgColor} ${color} ${borderColor} shadow-sm` : "bg-slate-100 text-slate-400 border-slate-200 opacity-50 hover:opacity-70"}`}>
+                        {CHANNEL_LABELS[ch]}
+                        {isActive && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-2">{selectedChannels.length}개 선택됨</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">

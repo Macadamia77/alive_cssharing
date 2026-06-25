@@ -27,9 +27,9 @@ const EXAMPLE_TOPICS = [
 ];
 
 const ANGLE_COLORS: Record<string, string> = {
-  "정보 전달형":     "bg-blue-50 text-blue-700 border-blue-200",
+  "정보 전달형":      "bg-blue-50 text-blue-700 border-blue-200",
   "감성 스토리텔링형": "bg-rose-50 text-rose-700 border-rose-200",
-  "문제 해결형":     "bg-emerald-50 text-emerald-700 border-emerald-200",
+  "문제 해결형":      "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 function angleBadge(angle: string) {
   return ANGLE_COLORS[angle] ?? "bg-slate-100 text-slate-600 border-slate-200";
@@ -37,39 +37,40 @@ function angleBadge(angle: string) {
 
 // ── 초안 카드 ────────────────────────────────────────────────
 function DraftCard({
-  draft, index, selected, onSelect, onChange,
+  draft, index, channelMap, onToggleChannel, onChange,
 }: {
-  draft: DraftItem; index: number; selected: boolean;
-  onSelect(): void; onChange(body: string): void;
+  draft: DraftItem;
+  index: number;
+  // 전체 채널→초안 배정 맵 (undefined = 미배정)
+  channelMap: Partial<Record<ChannelKey, number>>;
+  onToggleChannel(ch: ChannelKey): void;
+  onChange(body: string): void;
 }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(draft.body);
 
-  const commitEdit = () => {
-    onChange(body);
-    setEditing(false);
-  };
+  const myChannels = CHANNELS.filter(c => channelMap[c] === index);
+  const hasChannels = myChannels.length > 0;
+
+  const commitEdit = () => { onChange(body); setEditing(false); };
 
   return (
     <div
-      className={`relative rounded-2xl border-2 transition-all duration-200 ${
-        selected
+      className={`relative rounded-2xl border-2 transition-all duration-200 flex flex-col ${
+        hasChannels
           ? "border-blue-500 shadow-md shadow-blue-100"
           : "border-slate-200 hover:border-slate-300"
       }`}
     >
-      {/* 선택 체크 */}
-      {selected && (
-        <div className="absolute -top-3 -right-3 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center shadow-md z-10">
-          <Check className="w-4 h-4 text-white" />
+      {/* 활성 뱃지 */}
+      {hasChannels && (
+        <div className="absolute -top-3 -right-3 min-w-7 h-7 px-2 rounded-full bg-blue-600 flex items-center justify-center shadow-md z-10">
+          <span className="text-white text-[10px] font-bold">{myChannels.length}</span>
         </div>
       )}
 
       {/* 헤더 */}
-      <div
-        className={`px-5 pt-5 pb-3 cursor-pointer select-none`}
-        onClick={() => !editing && onSelect()}
-      >
+      <div className="px-5 pt-5 pb-3">
         <div className="flex items-start justify-between gap-3 mb-2">
           <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border ${angleBadge(draft.angle)}`}>
             {draft.angle}
@@ -80,7 +81,7 @@ function DraftCard({
       </div>
 
       {/* 본문 */}
-      <div className="px-5 pb-4">
+      <div className="px-5 pb-3 flex-1">
         {editing ? (
           <div>
             <textarea
@@ -102,7 +103,7 @@ function DraftCard({
         ) : (
           <div>
             <pre
-              className="text-sm text-slate-600 whitespace-pre-wrap font-[inherit] leading-relaxed max-h-44 overflow-y-auto pr-1 scrollbar-thin"
+              className="text-sm text-slate-600 whitespace-pre-wrap font-[inherit] leading-relaxed max-h-44 overflow-y-auto pr-1"
               style={{ scrollbarWidth: "thin", scrollbarColor: "#cbd5e1 transparent" }}
             >
               {body}
@@ -117,18 +118,40 @@ function DraftCard({
         )}
       </div>
 
-      {/* 선택 버튼 */}
-      <div className="px-5 pb-5">
-        <button
-          onClick={() => !editing && onSelect()}
-          className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-            selected
-              ? "bg-blue-600 text-white"
-              : "bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-700"
-          }`}
-        >
-          {selected ? "✓ 선택됨" : "이 초안 선택"}
-        </button>
+      {/* 채널 배정 토글 */}
+      <div className="px-5 pb-5 pt-3 border-t border-slate-100">
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">적용할 채널</p>
+        <div className="flex flex-wrap gap-1.5">
+          {CHANNELS.map(ch => {
+            const assignedTo = channelMap[ch];
+            const isMine = assignedTo === index;
+            const isTaken = assignedTo !== undefined && !isMine;
+            const { bgColor, color, borderColor } = CHANNEL_COLORS[ch];
+
+            return (
+              <button
+                key={ch}
+                onClick={() => onToggleChannel(ch)}
+                title={isTaken ? `초안 ${(assignedTo ?? 0) + 1}에 배정됨` : undefined}
+                className={`relative px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer select-none ${
+                  isMine
+                    ? `${bgColor} ${color} ${borderColor} shadow-sm`
+                    : isTaken
+                    ? "bg-slate-50 text-slate-300 border-slate-100 line-through"
+                    : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600"
+                }`}
+              >
+                {isMine && <Check className="inline w-2.5 h-2.5 mr-0.5 -mt-px" />}
+                {CHANNEL_LABELS[ch]}
+                {isTaken && (
+                  <span className="ml-1 text-[9px] text-slate-300 no-underline font-normal">
+                    ({(assignedTo ?? 0) + 1})
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -136,17 +159,16 @@ function DraftCard({
 
 // ── 메인 페이지 ─────────────────────────────────────────────
 export default function HomePage() {
-  // ── 상태 ──
   const [phase, setPhase] = useState<Phase>("input");
   const [topic, setTopic] = useState("");
-  const [activeChannels, setActiveChannels] = useState<Set<ChannelKey>>(new Set(CHANNELS));
 
   // 초안 단계
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftItem[]>([]);
   const [draftBodies, setDraftBodies] = useState<string[]>([]);
-  const [selectedDraft, setSelectedDraft] = useState<number | null>(null);
+  // 채널 → 초안 인덱스 (undefined = 미배정)
+  const [channelMap, setChannelMap] = useState<Partial<Record<ChannelKey, number>>>({});
 
   // 채널 생성 단계
   const [generating, setGenerating] = useState(false);
@@ -154,18 +176,22 @@ export default function HomePage() {
   const [results, setResults] = useState<Record<ChannelKey, ChannelResult>>(
     Object.fromEntries(CHANNELS.map(c => [c, { status: "idle" }])) as Record<ChannelKey, ChannelResult>
   );
+  const [resultChannels, setResultChannels] = useState<ChannelKey[]>([]);
 
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  const toggleChannel = (ch: ChannelKey) => {
-    setActiveChannels(prev => {
-      const next = new Set(prev);
-      if (next.has(ch)) { if (next.size === 1) return prev; next.delete(ch); }
-      else next.add(ch);
-      return next;
+  const toggleChannelForDraft = (draftIndex: number, ch: ChannelKey) => {
+    setChannelMap(prev => {
+      if (prev[ch] === draftIndex) {
+        const next = { ...prev };
+        delete next[ch];
+        return next;
+      }
+      return { ...prev, [ch]: draftIndex };
     });
   };
-  const selectedChannels = CHANNELS.filter(c => activeChannels.has(c));
+
+  const assignedChannels = CHANNELS.filter(c => channelMap[c] !== undefined);
 
   // ── Step 1: 초안 추천 ───────────────────────────────────────
   const handleGetDrafts = async () => {
@@ -181,7 +207,7 @@ export default function HomePage() {
       const data = await res.json();
       setDrafts(data.drafts);
       setDraftBodies(data.drafts.map((d: DraftItem) => d.body));
-      setSelectedDraft(null);
+      setChannelMap({});
       setPhase("drafts");
     } catch (e) {
       setDraftError(e instanceof Error ? e.message : "초안 추천에 실패했습니다.");
@@ -192,36 +218,45 @@ export default function HomePage() {
 
   // ── Step 2: 채널 콘텐츠 생성 ────────────────────────────────
   const handleGenerate = useCallback(async () => {
-    if (selectedDraft === null || generating || selectedChannels.length === 0) return;
-    const draft = draftBodies[selectedDraft] ?? drafts[selectedDraft]?.body ?? "";
+    if (generating || assignedChannels.length === 0) return;
+
+    // 초안별 배정 채널 묶기
+    const draftAssignments: Array<{ draftIndex: number; channels: ChannelKey[] }> = [];
+    for (let i = 0; i < drafts.length; i++) {
+      const chs = CHANNELS.filter(c => channelMap[c] === i);
+      if (chs.length > 0) draftAssignments.push({ draftIndex: i, channels: chs });
+    }
+    if (draftAssignments.length === 0) return;
 
     setGenerating(true); setGenError(null);
+    const targeted = assignedChannels;
+    setResultChannels(targeted);
     setResults(
       Object.fromEntries(
-        CHANNELS.map(c => [c, selectedChannels.includes(c) ? { status: "loading" } : { status: "idle" }])
+        CHANNELS.map(c => [c, { status: targeted.includes(c) ? "loading" : "idle" }])
       ) as Record<ChannelKey, ChannelResult>
     );
     setPhase("channels");
     setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
 
+    const channelsMap: Record<string, string> = {};
+
     try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim(), draft, channels: selectedChannels }),
-      });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "생성 실패"); }
-      const data = await res.json();
-
-      const newResults: Record<ChannelKey, ChannelResult> = { ...results };
-      const channelsMap: Record<string, string> = {};
-      for (const { channel, content } of data.results) {
-        newResults[channel as ChannelKey] = { status: "done", content };
-        channelsMap[channel] = content;
+      for (const { draftIndex, channels } of draftAssignments) {
+        const draft = draftBodies[draftIndex] ?? drafts[draftIndex]?.body ?? "";
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic: topic.trim(), draft, channels }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "생성 실패");
+        for (const { channel, content } of data.results) {
+          setResults(prev => ({ ...prev, [channel as ChannelKey]: { status: "done", content } }));
+          channelsMap[channel] = content;
+        }
       }
-      setResults(newResults);
 
-      // 결과물 자동 저장
       void fetch("/api/results", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -229,20 +264,24 @@ export default function HomePage() {
       });
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "알 수 없는 오류");
-      setResults(
-        Object.fromEntries(
-          CHANNELS.map(c => [c, selectedChannels.includes(c) ? { status: "error" } : { status: "idle" }])
-        ) as Record<ChannelKey, ChannelResult>
-      );
+      setResults(prev => {
+        const next = { ...prev };
+        for (const ch of targeted) {
+          if (next[ch].status === "loading") next[ch] = { status: "error" };
+        }
+        return next;
+      });
     } finally {
       setGenerating(false);
     }
-  }, [selectedDraft, generating, selectedChannels, draftBodies, drafts, topic, results]);
+  }, [generating, assignedChannels, drafts, draftBodies, channelMap, topic]);
 
-  const allDone = selectedChannels.every(c => results[c].status === "done");
-  const resetAll = () => { setPhase("input"); setDrafts([]); setSelectedDraft(null); setGenError(null); setDraftError(null); };
+  const allDone = resultChannels.length > 0 && resultChannels.every(c => results[c].status === "done");
+  const resetAll = () => {
+    setPhase("input"); setDrafts([]); setChannelMap({});
+    setGenError(null); setDraftError(null); setResultChannels([]);
+  };
 
-  // ── 렌더 ────────────────────────────────────────────────────
   return (
     <div className="gradient-bg min-h-screen">
       <Navbar />
@@ -261,7 +300,7 @@ export default function HomePage() {
             </h1>
             <p className="text-slate-500 text-base sm:text-lg max-w-lg mx-auto">
               네이버 블로그 · 인스타그램 · 페이스북 · 링크드인 · 매거진<br />
-              초안을 선택하면 AI가 채널별 가이드에 맞춰 완성합니다.
+              초안별로 채널을 배정하면 AI가 각 채널 가이드에 맞춰 완성합니다.
             </p>
           </div>
 
@@ -302,7 +341,6 @@ export default function HomePage() {
               />
               <p className="text-xs text-slate-400 mt-1.5 mb-4">Ctrl + Enter로 바로 초안 추천 받기</p>
 
-              {/* 예시 주제 */}
               <div className="flex flex-wrap gap-2 mb-5">
                 {EXAMPLE_TOPICS.map(ex => (
                   <button key={ex} onClick={() => { setTopic(ex); setPhase("input"); }}
@@ -312,25 +350,6 @@ export default function HomePage() {
                 ))}
               </div>
 
-              {/* 채널 선택 */}
-              <div className="mb-5">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">생성할 채널 선택</p>
-                <div className="flex flex-wrap gap-2">
-                  {CHANNELS.map(ch => {
-                    const { bgColor, color, borderColor } = CHANNEL_COLORS[ch];
-                    const isActive = activeChannels.has(ch);
-                    return (
-                      <button key={ch} onClick={() => toggleChannel(ch)}
-                        className={`relative px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer select-none ${isActive ? `${bgColor} ${color} ${borderColor} shadow-sm` : "bg-slate-100 text-slate-400 border-slate-200 opacity-50 hover:opacity-70"}`}>
-                        {CHANNEL_LABELS[ch]}
-                        {isActive && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-slate-400 mt-2">{selectedChannels.length}개 선택됨</p>
-              </div>
-
               {draftError && (
                 <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
                   <AlertCircle className="w-4 h-4 shrink-0" />{draftError}
@@ -338,14 +357,14 @@ export default function HomePage() {
               )}
 
               {phase === "input" ? (
-                <button onClick={() => void handleGetDrafts()} disabled={!topic.trim() || draftLoading || selectedChannels.length === 0}
+                <button onClick={() => void handleGetDrafts()} disabled={!topic.trim() || draftLoading}
                   className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
                   {draftLoading
                     ? <><Loader2 className="w-5 h-5 animate-spin" />초안 추천 중...</>
                     : <><Sparkles className="w-5 h-5" />초안 추천받기</>}
                 </button>
               ) : (
-                <button onClick={() => { setPhase("input"); setDrafts([]); setSelectedDraft(null); }}
+                <button onClick={() => { setPhase("input"); setDrafts([]); setChannelMap({}); }}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 cursor-pointer">
                   <RefreshCw className="w-4 h-4" />주제 다시 입력하기
                 </button>
@@ -358,26 +377,7 @@ export default function HomePage() {
             <div className="mb-8">
               <div className="text-center mb-6">
                 <h2 className="text-lg font-bold text-slate-900 mb-1">AI가 추천한 초안 3가지</h2>
-                <p className="text-sm text-slate-500">원하는 방향의 초안을 선택하거나 직접 수정한 후 채널 콘텐츠를 생성하세요</p>
-              </div>
-
-              {/* 채널 선택 */}
-              <div className="glass-card rounded-2xl px-5 py-4 mb-6 max-w-2xl mx-auto">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">적용할 채널 선택</p>
-                <div className="flex flex-wrap gap-2">
-                  {CHANNELS.map(ch => {
-                    const { bgColor, color, borderColor } = CHANNEL_COLORS[ch];
-                    const isActive = activeChannels.has(ch);
-                    return (
-                      <button key={ch} onClick={() => toggleChannel(ch)}
-                        className={`relative px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer select-none ${isActive ? `${bgColor} ${color} ${borderColor} shadow-sm` : "bg-slate-100 text-slate-400 border-slate-200 opacity-50 hover:opacity-70"}`}>
-                        {CHANNEL_LABELS[ch]}
-                        {isActive && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-slate-400 mt-2">{selectedChannels.length}개 선택됨</p>
+                <p className="text-sm text-slate-500">각 초안 하단에서 적용할 채널을 클릭해 배정하세요. 초안마다 다른 채널을 지정할 수 있습니다.</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -386,25 +386,47 @@ export default function HomePage() {
                     key={i}
                     draft={{ ...draft, body: draftBodies[i] ?? draft.body }}
                     index={i}
-                    selected={selectedDraft === i}
-                    onSelect={() => setSelectedDraft(i)}
+                    channelMap={channelMap}
+                    onToggleChannel={ch => toggleChannelForDraft(i, ch)}
                     onChange={body => setDraftBodies(prev => { const next = [...prev]; next[i] = body; return next; })}
                   />
                 ))}
               </div>
 
-              {/* 생성 버튼 */}
-              <div className="max-w-md mx-auto">
-                {selectedDraft !== null ? (
-                  <button onClick={() => void handleGenerate()} disabled={generating || selectedChannels.length === 0}
-                    className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
-                    <Wand2 className="w-5 h-5" />
-                    선택한 초안으로 {selectedChannels.length}개 채널 생성하기
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+              {/* 배정 요약 + 생성 버튼 */}
+              <div className="max-w-lg mx-auto">
+                {assignedChannels.length > 0 ? (
+                  <div>
+                    {/* 배정 요약 */}
+                    <div className="mb-3 space-y-1">
+                      {drafts.map((draft, i) => {
+                        const chs = CHANNELS.filter(c => channelMap[c] === i);
+                        if (chs.length === 0) return null;
+                        return (
+                          <div key={i} className="flex items-center gap-2 text-xs text-slate-500 justify-center flex-wrap">
+                            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${angleBadge(draft.angle)}`}>
+                              초안 {i + 1}
+                            </span>
+                            <span className="text-slate-300">→</span>
+                            {chs.map(ch => (
+                              <span key={ch} className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${CHANNEL_COLORS[ch].bgColor} ${CHANNEL_COLORS[ch].color} ${CHANNEL_COLORS[ch].borderColor}`}>
+                                {CHANNEL_LABELS[ch]}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button onClick={() => void handleGenerate()} disabled={generating}
+                      className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
+                      <Wand2 className="w-5 h-5" />
+                      {assignedChannels.length}개 채널 콘텐츠 생성하기
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 ) : (
                   <div className="text-center py-4 text-sm text-slate-400">
-                    위에서 초안을 선택해주세요
+                    각 초안 하단에서 적용할 채널을 선택해주세요
                   </div>
                 )}
               </div>
@@ -414,27 +436,11 @@ export default function HomePage() {
           {/* ─── Phase 3: 채널 결과 ───────────────────────── */}
           {phase === "channels" && (
             <div ref={resultsRef}>
-              {/* 선택된 초안 요약 */}
-              {selectedDraft !== null && drafts[selectedDraft] && (
-                <div className="glass-card rounded-2xl p-4 mb-6 max-w-2xl mx-auto border border-blue-100">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border ${angleBadge(drafts[selectedDraft].angle)}`}>
-                      {drafts[selectedDraft].angle}
-                    </span>
-                    <span className="text-xs text-slate-500">선택된 초안</span>
-                  </div>
-                  <p className="font-semibold text-slate-900 text-sm">{drafts[selectedDraft].title}</p>
-                  <pre className="text-xs text-slate-500 mt-1 whitespace-pre-wrap font-[inherit] line-clamp-2">
-                    {draftBodies[selectedDraft]}
-                  </pre>
-                </div>
-              )}
-
               {allDone && !generating && (
                 <div className="text-center mb-6 flex flex-col items-center gap-3">
                   <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium">
                     <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    {selectedChannels.length}개 채널 생성 완료 — 각 콘텐츠를 확인하고 복사해서 사용하세요
+                    {resultChannels.length}개 채널 생성 완료
                   </span>
                   <div className="flex gap-2">
                     <button onClick={resetAll}
@@ -456,8 +462,8 @@ export default function HomePage() {
               )}
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {selectedChannels.map(channel => (
-                  <div key={channel} className={channel === "magazine" || selectedChannels.length === 1 ? "lg:col-span-2" : ""}>
+                {resultChannels.map(channel => (
+                  <div key={channel} className={channel === "magazine" || resultChannels.length === 1 ? "lg:col-span-2" : ""}>
                     <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} />
                   </div>
                 ))}
@@ -465,7 +471,6 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* 가이드 단축 링크 */}
           {phase === "input" && (
             <div className="text-center mt-6">
               <a href="/guides" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600 transition-colors cursor-pointer">

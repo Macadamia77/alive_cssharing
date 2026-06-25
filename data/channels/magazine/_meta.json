@@ -1,0 +1,8 @@
+﻿{
+    "label":  "홈페이지 매거진",
+    "description":  "채널별 가이드 파일 기반 콘텐츠 생성",
+    "include":  [
+                    "guide.md"
+                ],
+    "type":  "single"
+}

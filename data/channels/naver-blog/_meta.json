@@ -1,0 +1,8 @@
+{
+  "label": "네이버 블로그",
+  "type": "single",
+  "description": "SEO 최적화 블로그 포스트 생성",
+  "include": [
+    "guide.md"
+  ]
+}

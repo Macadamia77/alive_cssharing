@@ -243,33 +243,38 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
 export async function buildSystemPrompt(channel: ChannelKey, token?: string): Promise<string> {
   const meta = await getChannelMeta(channel, token);
 
-  // 채널 디렉토리의 모든 가이드 파일 자동 수집 (include 목록 의존 없음)
-  let guideFiles: string[];
+  // 채널 디렉토리의 모든 파일 수집 후 가이드 파일만 필터링
+  // agents/ 폴더는 파이프라인 전용 지침으로 단순 생성 시스템 프롬프트에서 제외
+  let allFiles: string[];
   try {
-    guideFiles = await collectGuideFiles(channel, token);
+    allFiles = await collectGuideFiles(channel, token);
   } catch {
-    // 자동 탐색 실패 시 meta.include 폴백
-    guideFiles = meta.include;
+    allFiles = meta.include;
   }
 
+  // agents/ 폴더 파일 제외: 파이프라인 에이전트 지침은 단순 생성 컨텍스트와 맞지 않음
+  const guideFiles = allFiles.filter(
+    (f) => !f.startsWith("agents/") && isTextFile(f.split("/").pop() ?? "")
+  );
+
   if (guideFiles.length === 0) {
-    console.warn(`[buildSystemPrompt] ${channel}: 가이드 파일을 찾을 수 없습니다.`);
+    console.warn(`[buildSystemPrompt] ${channel}: 로드할 가이드 파일이 없습니다.`);
     return "";
   }
 
   const parts: string[] = [];
   for (const relPath of guideFiles) {
-    if (!isTextFile(relPath.split("/").pop() ?? "")) continue;
     try {
       const content = await readChannelFile(channel, relPath, token);
-      parts.push(`\n\n${"=".repeat(60)}\n# 가이드 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);
+      if (!content.trim()) continue;
+      parts.push(`\n\n${"=".repeat(60)}\n# ${relPath}\n${"=".repeat(60)}\n\n${content}`);
     } catch (e) {
       console.warn(`[buildSystemPrompt] ${channel}/${relPath} 로드 실패:`, e);
     }
   }
 
   if (parts.length === 0) {
-    console.warn(`[buildSystemPrompt] ${channel}: 가이드 파일을 모두 로드하지 못했습니다.`);
+    console.warn(`[buildSystemPrompt] ${channel}: 가이드 파일을 로드하지 못했습니다.`);
     return "";
   }
 
@@ -277,21 +282,15 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
 
   const header = `당신은 ${meta.label} 채널 전용 마케팅 콘텐츠 작성 AI입니다.
 
-[필수 준수 사항]
-아래 가이드 문서(${guideFiles.length}개)는 반드시 읽고 철저히 따라야 합니다.
-가이드에 명시된 형식, 구조, 어조, 금지 사항을 어기면 안 됩니다.
+아래 가이드 문서 ${guideFiles.length}개를 반드시 숙지하고 철저히 따라 콘텐츠를 작성하세요.
+가이드에 명시된 형식·구조·어조·금지 사항을 그대로 적용하세요.
 
-[참조 가이드 목록]
+[참조 가이드]
 ${guideList}
-
-[규칙]
-- 가이드의 형식과 구조를 그대로 따르세요.
-- 가이드에 없는 표현 방식이나 포맷은 사용하지 마세요.
-- 가이드의 금지 항목을 절대 위반하지 마세요.
-- 채널 특성과 가이드 톤에 맞게 작성하세요.
 
 [가이드 전문]`;
 
+  console.log(`[buildSystemPrompt] ${channel}: 가이드 ${guideFiles.length}개 로드 완료 (${parts.length}개 실제 로드)`);
   return header + parts.join("\n");
 }
 

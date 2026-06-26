@@ -258,11 +258,12 @@ export async function POST(req: NextRequest) {
     const results = await Promise.all(
       targetChannels.map(async (channel) => {
         const systemPrompt = await buildSystemPrompt(channel, token);
-        if (!systemPrompt) {
-          console.warn(`[generate] ${channel}: 가이드 시스템 프롬프트가 비어 있습니다. 가이드 관리에서 파일을 활성화했는지 확인하세요.`);
+        const guideLoaded = systemPrompt.length > 0;
+        if (!guideLoaded) {
+          console.warn(`[generate] ${channel}: 가이드를 로드하지 못했습니다.`);
         }
         const content = await generateContent(req, channel, topic.trim(), draft, systemPrompt, providerOverride, suggestions);
-        return { channel, content };
+        return { channel, content, guideLoaded };
       })
     );
 

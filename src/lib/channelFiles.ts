@@ -28,8 +28,14 @@ export function isTextFile(fileName: string): boolean {
 
 export async function getChannelMeta(channel: ChannelKey, token?: string): Promise<ChannelMeta> {
   if (isVercelProd()) {
-    const raw = await githubRead(`data/channels/${channel}/_meta.json`, token);
-    return JSON.parse(raw.replace(/^﻿/, ""));
+    try {
+      const raw = await githubRead(`data/channels/${channel}/_meta.json`, token);
+      const meta = JSON.parse(raw.replace(/^﻿/, "")) as ChannelMeta;
+      // GitHub에서 include가 비어 있으면 로컬 기본값 폴백
+      if (meta.include && meta.include.length > 0) return meta;
+    } catch {
+      // GitHub 읽기 실패 시 배포 번들 내 로컬 파일 폴백
+    }
   }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");
   const raw = await fs.readFile(metaPath, "utf-8");
@@ -92,7 +98,11 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
 export async function readChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
   if (isVercelProd()) {
     const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
-    return githubRead(`data/channels/${channel}/${safe}`, token);
+    try {
+      return await githubRead(`data/channels/${channel}/${safe}`, token);
+    } catch {
+      // GitHub 읽기 실패 시 배포 번들 내 로컬 파일 폴백
+    }
   }
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -195,17 +205,26 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
   const meta = await getChannelMeta(channel, token);
   const parts: string[] = [];
 
+  if (meta.include.length === 0) {
+    console.warn(`[buildSystemPrompt] ${channel}: _meta.json의 include 목록이 비어 있습니다. 가이드 관리에서 사용할 파일을 활성화해주세요.`);
+  }
+
   for (const relPath of meta.include) {
     if (!isTextFile(relPath.split("/").pop() ?? "")) continue; // 바이너리는 프롬프트에서 제외
     try {
       const content = await readChannelFile(channel, relPath, token);
       parts.push(`\n\n${"=".repeat(60)}\n# 가이드 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);
-    } catch {
-      // 파일이 없으면 스킵
+    } catch (e) {
+      console.warn(`[buildSystemPrompt] ${channel}/${relPath} 로드 실패:`, e);
     }
   }
 
-  if (parts.length === 0) return "";
+  if (parts.length === 0) {
+    if (meta.include.length > 0) {
+      console.warn(`[buildSystemPrompt] ${channel}: include 목록의 가이드 파일을 모두 로드하지 못했습니다.`);
+    }
+    return "";
+  }
 
   const guideList = meta.include.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
 

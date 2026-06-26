@@ -201,16 +201,67 @@ export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, 
   await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf-8");
 }
 
-export async function buildSystemPrompt(channel: ChannelKey, token?: string): Promise<string> {
-  const meta = await getChannelMeta(channel, token);
-  const parts: string[] = [];
+// AI 시스템 프롬프트용 가이드 파일 자동 수집
+// agents/, assets/ 디렉토리와 _ 로 시작하는 파일, CLAUDE.md 제외
+const EXCLUDED_GUIDE_DIRS = new Set(["agents", "assets"]);
 
-  if (meta.include.length === 0) {
-    console.warn(`[buildSystemPrompt] ${channel}: _meta.json의 include 목록이 비어 있습니다. 가이드 관리에서 사용할 파일을 활성화해주세요.`);
+async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<string[]> {
+  const files: string[] = [];
+
+  if (isVercelProd()) {
+    async function walkGithub(repoPath: string, relBase: string) {
+      const entries = await githubListDir(repoPath, token);
+      for (const entry of entries) {
+        if (entry.name.startsWith("_") || entry.name === "CLAUDE.md") continue;
+        const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+        if (entry.type === "dir") {
+          if (!EXCLUDED_GUIDE_DIRS.has(entry.name)) await walkGithub(entry.path, relPath);
+        } else if (isTextFile(entry.name)) {
+          files.push(relPath);
+        }
+      }
+    }
+    await walkGithub(`data/channels/${channel}`, "");
+    return files;
   }
 
-  for (const relPath of meta.include) {
-    if (!isTextFile(relPath.split("/").pop() ?? "")) continue; // 바이너리는 프롬프트에서 제외
+  const root = path.join(CHANNEL_DIR, channel);
+  async function walkLocal(dir: string, relBase: string) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith("_") || entry.name === "CLAUDE.md") continue;
+      const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!EXCLUDED_GUIDE_DIRS.has(entry.name)) await walkLocal(path.join(dir, entry.name), relPath);
+      } else if (isTextFile(entry.name)) {
+        files.push(relPath);
+      }
+    }
+  }
+  await walkLocal(root, "");
+  return files;
+}
+
+export async function buildSystemPrompt(channel: ChannelKey, token?: string): Promise<string> {
+  const meta = await getChannelMeta(channel, token);
+
+  // 채널 디렉토리의 모든 가이드 파일 자동 수집 (include 목록 의존 없음)
+  let guideFiles: string[];
+  try {
+    guideFiles = await collectGuideFiles(channel, token);
+  } catch {
+    // 자동 탐색 실패 시 meta.include 폴백
+    guideFiles = meta.include;
+  }
+
+  if (guideFiles.length === 0) {
+    console.warn(`[buildSystemPrompt] ${channel}: 가이드 파일을 찾을 수 없습니다.`);
+    return "";
+  }
+
+  const parts: string[] = [];
+  for (const relPath of guideFiles) {
+    if (!isTextFile(relPath.split("/").pop() ?? "")) continue;
     try {
       const content = await readChannelFile(channel, relPath, token);
       parts.push(`\n\n${"=".repeat(60)}\n# 가이드 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);
@@ -220,18 +271,16 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
   }
 
   if (parts.length === 0) {
-    if (meta.include.length > 0) {
-      console.warn(`[buildSystemPrompt] ${channel}: include 목록의 가이드 파일을 모두 로드하지 못했습니다.`);
-    }
+    console.warn(`[buildSystemPrompt] ${channel}: 가이드 파일을 모두 로드하지 못했습니다.`);
     return "";
   }
 
-  const guideList = meta.include.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
+  const guideList = guideFiles.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
 
   const header = `당신은 ${meta.label} 채널 전용 마케팅 콘텐츠 작성 AI입니다.
 
 [필수 준수 사항]
-아래 가이드 문서(${meta.include.length}개)는 반드시 읽고 철저히 따라야 합니다.
+아래 가이드 문서(${guideFiles.length}개)는 반드시 읽고 철저히 따라야 합니다.
 가이드에 명시된 형식, 구조, 어조, 금지 사항을 어기면 안 됩니다.
 
 [참조 가이드 목록]

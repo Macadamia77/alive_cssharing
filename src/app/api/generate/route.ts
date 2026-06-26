@@ -237,6 +237,24 @@ async function generateContent(
       ? `\n\n[참고 키워드 및 방향]\n${suggestions.map((s) => `- ${s}`).join("\n")}`
       : "";
 
+  // 채널별 이미지 카드 안내 (이미지가 있는 채널 가이드에 맞게 AI가 직접 HTML 카드 생성)
+  const imageCardGuide = `
+
+[이미지 카드]
+콘텐츠에 이미지/인포그래픽이 필요한 위치에는 아래 형식의 HTML 카드를 직접 삽입하세요.
+(CS쉐어링 B2B 맥락: 콜센터·CS 운영·기업 담당자 소재만 사용, 소비재·생활 이미지 금지)
+<figure style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;background:#fff;border:1px solid #e0e8f0;border-radius:10px;padding:24px 28px;margin:20px 0;box-shadow:0 2px 8px rgba(30,144,214,0.07);">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+    <div style="width:3px;height:14px;background:#1e90d6;border-radius:2px;"></div>
+    <span style="font-size:12px;color:#aaa;">CS쉐어링</span>
+  </div>
+  <div style="font-size:22px;font-weight:700;color:#1a1a1a;margin-bottom:4px;">[헤드라인 1행]</div>
+  <div style="font-size:22px;font-weight:700;color:#1e90d6;margin-bottom:16px;">[핵심 메시지 2행]</div>
+  [내용: 번호 목록 / 비교표 / 소제목 요약 등 — 내용에 맞게 선택]
+  <div style="background:#1e90d6;color:#fff;text-align:center;padding:13px;border-radius:7px;font-size:15px;font-weight:700;margin-top:20px;">CS쉐어링 문의 ☎ 1522-5539</div>
+  <div style="text-align:right;font-size:11px;color:#ccc;margin-top:10px;letter-spacing:0.5px;">CS Sharing</div>
+</figure>`;
+
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
 
@@ -246,8 +264,8 @@ ${topic}${suggestionContext}
 [작성자 초안]
 ${draft}
 
-위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요.`
-    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}`;
+위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요.${imageCardGuide}`
+    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}${imageCardGuide}`;
 
   if (provider !== "mock") {
     const pc = resolveProvider(req, provider as ProviderKey)
@@ -266,11 +284,10 @@ ${draft}
 }
 
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-// blog/ 폴더의 researcher → writer → assembler 흐름을 웹에서 재현
+// blog/ 폴더의 researcher → writer → image-maker → assembler 흐름을 웹에서 재현
 const WEB_PIPELINE_NOTE = `[웹 파이프라인 환경]
 파일 저장/읽기 작업 없이 결과 텍스트를 직접 출력합니다.
 이전 단계 결과는 [이전 단계 출력] 섹션으로 제공됩니다.
-이미지 파일은 접근 불가이므로 [IMAGE: 설명] 마커는 placeholder div로 처리하세요.
 
 `;
 
@@ -288,10 +305,12 @@ async function runAgentPipeline(
   const needed = [
     "agents/researcher.md",
     "agents/writer.md",
+    "agents/image-maker.md",
     "agents/assembler.md",
     "guide/01-writing-guide.md",
     "guide/02-examples.md",
     "guide/03-quality-check.md",
+    "guide/04-image-guide.md",
     "guide/06-brand-cta-reference.md",
     "guide/07-recatch-style.md",
     "guide/08-naver-seo.md",
@@ -390,22 +409,65 @@ async function runAgentPipeline(
 
   if (!draftOutput.trim()) throw new Error("[pipeline] 글쓰기 단계 결과가 비어 있습니다.");
 
+  // ── Step 2.5: Image Making ────────────────────────────────
+  // image-maker.md 지침으로 [IMAGE: 설명] 마커를 HTML+CSS 카드로 치환
+  // Python/Playwright 없이 AI가 HTML+CSS를 직접 생성 → 브라우저에서 동일하게 렌더링
+  const imageMarkers = [...draftOutput.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
+  let finalDraft = draftOutput;
+
+  if (imageMarkers.length > 0 && fileContents["agents/image-maker.md"]) {
+    const imageMakerSystem =
+      `[웹 파이프라인 환경 — HTML+CSS 카드 직접 출력 모드]\n` +
+      `Playwright/PNG 렌더링 대신, 각 [IMAGE: ...] 마커를 04-image-guide.md의 브랜드 카드 HTML+CSS로 직접 교체합니다.\n` +
+      `브랜드 PNG 파일은 웹에서 직접 로드 불가이므로 캐릭터 자리는 스타일된 텍스트/이모지로 처리하세요.\n` +
+      `색상: 썸네일 배경 #18A0E8, 카드 강조 #1e90d6, 남색 #2c4a7c\n\n` +
+      WEB_PIPELINE_NOTE +
+      (fileContents["agents/image-maker.md"] ?? "") +
+      sec("guide/04-image-guide.md") +
+      sec("guide/01-writing-guide.md") +
+      sec("guide/06-brand-cta-reference.md");
+
+    const imageMakerUser =
+      `[주제]\n${topic}\n\n` +
+      `아래 draft.md에서 [IMAGE: ...] 마커(${imageMarkers.length}개)를 04-image-guide.md의 브랜드 카드 HTML+CSS로 교체하세요.\n` +
+      `규칙:\n` +
+      `- 첫 번째 이미지 또는 "썸네일" 키워드: 720×720px 카드, 배경 #18A0E8(스카이블루), 제목·부제 흰색\n` +
+      `- 소제목 요약 카드(소제목마다 1장 필수): 800px, 브랜드 카드 템플릿\n` +
+      `- 나머지 이미지: 내용에 맞는 타입 선택(번호카드/비교표/배지카드 등)\n` +
+      `- 모든 카드 하단에 파란 CTA 버튼 + CS Sharing 워터마크 포함\n` +
+      `- PUBLISH/NOTES 블록 마커와 나머지 텍스트는 그대로 유지\n` +
+      `- 수정된 전체 draft.md를 출력하세요\n\n` +
+      `[draft.md]\n${draftOutput}`;
+
+    console.log(`[pipeline] ${channel} Step 2.5: 이미지 제작 시작 (마커 ${imageMarkers.length}개)`);
+    const draftWithImages = await step(imageMakerSystem, imageMakerUser, 8000);
+
+    if (draftWithImages.trim()) {
+      finalDraft = draftWithImages;
+      console.log(`[pipeline] ${channel} Step 2.5: 이미지 제작 완료 (${finalDraft.length}자)`);
+    } else {
+      console.warn(`[pipeline] ${channel} Step 2.5: 결과 없음, 이전 draft 사용`);
+    }
+  } else {
+    console.log(`[pipeline] ${channel} Step 2.5: 이미지 마커 없음 또는 image-maker.md 없음, 생략`);
+  }
+
   // ── Step 3: Assemble ──────────────────────────────────────
-  // assembler.md 지침 + guide/01(렌더링 규칙) + draft 결과
+  // assembler.md 지침 + guide/01(렌더링 규칙) + 이미지 카드 포함 draft 결과
   const assembleSystem =
     WEB_PIPELINE_NOTE +
     `NOTES 블록이 없어도 PUBLISH 블록만으로 HTML을 생성하세요.\n` +
-    `썸네일 이미지 파일이 없으므로 썸네일 삽입 단계는 건너뜁니다.\n\n` +
+    `초안에 이미 HTML+CSS 이미지 카드(<figure>, <div> 등)가 포함된 경우 그대로 유지하세요.\n` +
+    `남아있는 [IMAGE: ...] 마커는 아래 placeholder로 처리하세요:\n` +
+    `<div style="background:#f0f4ff;border:1.5px dashed #2c4a7c;border-radius:10px;padding:28px;text-align:center;margin:24px 0;"><span style="color:#2c4a7c;font-size:14px;">📷 이미지 자리</span></div>\n\n` +
     (fileContents["agents/assembler.md"] ?? "") +
     sec("guide/01-writing-guide.md");
 
   const assembleUser =
     `[주제]\n${topic}\n\n` +
-    `[이전 단계 출력 — draft.md]\n${draftOutput}\n\n` +
+    `[이전 단계 출력 — draft.md (이미지 카드 포함)]\n${finalDraft}\n\n` +
     `위 초안을 assembler.md 지침에 따라 완성된 HTML로 변환하세요. ` +
-    `[IMAGE: 설명] 마커는 아래 형식의 placeholder div로 처리하세요:\n` +
-    `<div style="background:#f0f4ff;border:1px dashed #2c4a7c;border-radius:8px;padding:24px;text-align:center;margin:24px 0;color:#2c4a7c;">📷 [설명]</div>\n` +
-    `PUBLISH 블록 내용을 HTML로 완성하여 출력하세요.`;
+    `초안 내 HTML 이미지 카드는 그대로 유지하고, PUBLISH 블록 전체를 HTML로 완성하여 출력하세요.`;
 
   console.log(`[pipeline] ${channel} Step 3: 조립 시작`);
   const finalHtml = await step(assembleSystem, assembleUser, 8000);

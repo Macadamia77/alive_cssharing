@@ -240,22 +240,27 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
   return files;
 }
 
+// 채널에 멀티에이전트 파이프라인이 있는지 확인 (agents/researcher.md 존재 여부)
+export async function hasAgentPipeline(channel: ChannelKey, token?: string): Promise<boolean> {
+  try {
+    const allFiles = await collectGuideFiles(channel, token);
+    return allFiles.includes("agents/researcher.md");
+  } catch {
+    return false;
+  }
+}
+
 export async function buildSystemPrompt(channel: ChannelKey, token?: string): Promise<string> {
   const meta = await getChannelMeta(channel, token);
 
-  // 채널 디렉토리의 모든 파일 수집 후 가이드 파일만 필터링
-  // agents/ 폴더는 파이프라인 전용 지침으로 단순 생성 시스템 프롬프트에서 제외
-  let allFiles: string[];
+  // 채널 디렉토리의 모든 텍스트 파일 수집
+  let guideFiles: string[];
   try {
-    allFiles = await collectGuideFiles(channel, token);
+    const all = await collectGuideFiles(channel, token);
+    guideFiles = all.filter(f => isTextFile(f.split("/").pop() ?? ""));
   } catch {
-    allFiles = meta.include;
+    guideFiles = meta.include;
   }
-
-  // agents/ 폴더 파일 제외: 파이프라인 에이전트 지침은 단순 생성 컨텍스트와 맞지 않음
-  const guideFiles = allFiles.filter(
-    (f) => !f.startsWith("agents/") && isTextFile(f.split("/").pop() ?? "")
-  );
 
   if (guideFiles.length === 0) {
     console.warn(`[buildSystemPrompt] ${channel}: 로드할 가이드 파일이 없습니다.`);
@@ -285,12 +290,12 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
 아래 가이드 문서 ${guideFiles.length}개를 반드시 숙지하고 철저히 따라 콘텐츠를 작성하세요.
 가이드에 명시된 형식·구조·어조·금지 사항을 그대로 적용하세요.
 
-[참조 가이드]
+[참조 가이드 목록]
 ${guideList}
 
 [가이드 전문]`;
 
-  console.log(`[buildSystemPrompt] ${channel}: 가이드 ${guideFiles.length}개 로드 완료 (${parts.length}개 실제 로드)`);
+  console.log(`[buildSystemPrompt] ${channel}: 파일 ${guideFiles.length}개 로드 (${parts.length}개 실제 로드)`);
   return header + parts.join("\n");
 }
 

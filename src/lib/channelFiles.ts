@@ -203,7 +203,7 @@ export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, 
 
 // AI 시스템 프롬프트용 가이드 파일 자동 수집
 // _ 로 시작하는 파일(시스템 파일)과 CLAUDE.md만 제외, 나머지 모든 텍스트 파일 포함
-async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<string[]> {
+export async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<string[]> {
   const files: string[] = [];
 
   if (isVercelProd()) {

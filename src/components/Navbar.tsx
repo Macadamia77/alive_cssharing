@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Menu, X, BookOpen, Settings, LayoutList } from "lucide-react";
+import { Sparkles, Menu, X, BookOpen, Settings, LayoutList, PenLine } from "lucide-react";
 import Link from "next/link";
 
 export default function Navbar() {
@@ -33,6 +33,13 @@ export default function Navbar() {
               className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer"
             >
               콘텐츠 생성
+            </Link>
+            <Link
+              href="/blog"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer"
+            >
+              <PenLine className="w-3.5 h-3.5" aria-hidden="true" />
+              블로그 생성
             </Link>
             <Link
               href="/results"
@@ -82,6 +89,14 @@ export default function Navbar() {
                 onClick={() => setMobileOpen(false)}
               >
                 콘텐츠 생성
+              </Link>
+              <Link
+                href="/blog"
+                className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer"
+                onClick={() => setMobileOpen(false)}
+              >
+                <PenLine className="w-4 h-4" aria-hidden="true" />
+                블로그 생성
               </Link>
               <Link href="/results" className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer" onClick={() => setMobileOpen(false)}>
                 <LayoutList className="w-4 h-4" aria-hidden="true" />

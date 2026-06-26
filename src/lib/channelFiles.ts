@@ -202,9 +202,7 @@ export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, 
 }
 
 // AI 시스템 프롬프트용 가이드 파일 자동 수집
-// agents/, assets/ 디렉토리와 _ 로 시작하는 파일, CLAUDE.md 제외
-const EXCLUDED_GUIDE_DIRS = new Set(["agents", "assets"]);
-
+// _ 로 시작하는 파일(시스템 파일)과 CLAUDE.md만 제외, 나머지 모든 텍스트 파일 포함
 async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<string[]> {
   const files: string[] = [];
 
@@ -215,7 +213,7 @@ async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<s
         if (entry.name.startsWith("_") || entry.name === "CLAUDE.md") continue;
         const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
         if (entry.type === "dir") {
-          if (!EXCLUDED_GUIDE_DIRS.has(entry.name)) await walkGithub(entry.path, relPath);
+          await walkGithub(entry.path, relPath);
         } else if (isTextFile(entry.name)) {
           files.push(relPath);
         }
@@ -232,7 +230,7 @@ async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<s
       if (entry.name.startsWith("_") || entry.name === "CLAUDE.md") continue;
       const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (!EXCLUDED_GUIDE_DIRS.has(entry.name)) await walkLocal(path.join(dir, entry.name), relPath);
+        await walkLocal(path.join(dir, entry.name), relPath);
       } else if (isTextFile(entry.name)) {
         files.push(relPath);
       }

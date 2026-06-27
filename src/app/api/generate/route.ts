@@ -447,14 +447,18 @@ async function runAgentPipeline(
   const imageMarkers = [...draftOutput.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
   let finalDraft = draftOutput;
 
-  if (imageMarkers.length > 0 && fileContents["agents/image-maker.md"]) {
+  // image-maker-web.md 우선, 없으면 image-maker.md 폴백
+  const imageMakerInstructions =
+    fileContents["agents/image-maker-web.md"] ??
+    fileContents["agents/image-maker.md"];
+
+  if (imageMarkers.length > 0 && imageMakerInstructions) {
     const imageMakerSystem =
       WEB_PIPELINE_NOTE +
-      `각 [IMAGE: ...] 마커를 브랜드 카드 HTML+CSS로 교체합니다. PNG 파일 불필요, HTML 직접 생성.\n` +
-      `색상: 썸네일 배경 #18A0E8, 카드 강조 #1e90d6, 남색 #2c4a7c\n\n` +
-      (fileContents["agents/image-maker.md"] ?? "") +
+      imageMakerInstructions +
       sec("guide/04-image-guide.md") +
-      sec("guide/06-brand-cta-reference.md");
+      sec("guide/06-brand-cta-reference.md") +
+      sec("guide/01-writing-guide.md");
 
     const imageMakerUser =
       `[주제]\n${topic}\n\n` +
@@ -477,28 +481,32 @@ async function runAgentPipeline(
   }
 
   // ── Step 3: Assemble → 완성된 standalone HTML 생성 ────────
-  // assembler.md는 파이썬/파일저장 기반이라 웹에서 혼동 유발 → 웹 전용 지침으로 대체
-  const assembleSystem =
-    WEB_PIPELINE_NOTE +
-    `당신은 HTML 생성 전문가입니다. 블로그 초안을 완성된 standalone HTML로 변환합니다.\n\n` +
-    `[출력 규칙 — 절대 준수]\n` +
-    `1. <!DOCTYPE html>로 시작하는 완전한 HTML 문서를 출력한다\n` +
-    `2. \`\`\`html, ~~~html 등 코드 블록으로 절대 감싸지 않는다 — <!DOCTYPE html>부터 바로 시작\n` +
-    `3. <!-- PUBLISH:START -->~<!-- PUBLISH:END --> 사이 내용만 HTML로 변환 (NOTES 블록 제외)\n` +
-    `4. PUBLISH 마커가 없으면 전체 내용을 본문으로 처리\n` +
-    `5. 이미 삽입된 HTML 카드(<figure>, <div> 등)는 그대로 유지\n` +
-    `6. 남은 [IMAGE: ...] 마커는 아래 placeholder로 처리:\n` +
-    `   <div style="background:#f0f4ff;border:1.5px dashed #2c4a7c;border-radius:10px;padding:28px;text-align:center;margin:24px 0;"><span style="color:#2c4a7c;font-size:14px;">📷 이미지 자리</span></div>\n\n` +
-    `[HTML 스타일 규칙]\n` +
-    `body: { background:#f9f9f9; font-family:'Malgun Gothic','맑은 고딕',sans-serif; color:#333; line-height:1.8; }\n` +
-    `.container: { max-width:700px; margin:40px auto; background:#fff; padding:40px; border-radius:8px; box-shadow:0 4px 8px rgba(0,0,0,0.05); }\n` +
-    `h1: { font-size:28px; font-weight:bold; border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:24px; }\n` +
-    `h2(소제목): { font-size:20px; font-weight:bold; border-left:5px solid #2c4a7c; padding-left:14px; color:#111; margin:32px 0 12px; }\n` +
-    `p: { text-align:center; margin:12px 0; }\n` +
-    `강조 마커: {{hl:텍스트}}→<mark>텍스트</mark> / {{center:텍스트}}→<span style="display:block;text-align:center">텍스트</span>\n` +
-    `[RICH:PHONE]→전화번호 클릭 배너(tel:1522-5539) / [RICH:LINK:설명]→링크 카드\n` +
-    `#태그→<span style="background:#e8f0fe;color:#2c4a7c;padding:2px 8px;border-radius:12px;font-size:13px;">#태그</span>\n\n` +
-    sec("guide/01-writing-guide.md");
+  // assembler-web.md 우선, 없으면 웹 전용 하드코딩 지침 사용
+  const assemblerInstructions = fileContents["agents/assembler-web.md"];
+
+  const assembleSystemBase = assemblerInstructions
+    ? WEB_PIPELINE_NOTE + assemblerInstructions
+    : WEB_PIPELINE_NOTE +
+      `당신은 HTML 생성 전문가입니다. 블로그 초안을 완성된 standalone HTML로 변환합니다.\n\n` +
+      `[출력 규칙 — 절대 준수]\n` +
+      `1. <!DOCTYPE html>로 시작하는 완전한 HTML 문서를 출력한다\n` +
+      `2. \`\`\`html, ~~~html 등 코드 블록으로 절대 감싸지 않는다 — <!DOCTYPE html>부터 바로 시작\n` +
+      `3. <!-- PUBLISH:START -->~<!-- PUBLISH:END --> 사이 내용만 HTML로 변환 (NOTES 블록 제외)\n` +
+      `4. PUBLISH 마커가 없으면 전체 내용을 본문으로 처리\n` +
+      `5. 이미 삽입된 HTML 카드(<figure>, <div> 등)는 그대로 유지\n` +
+      `6. 남은 [IMAGE: ...] 마커는 아래 placeholder로 처리:\n` +
+      `   <div style="background:#f0f4ff;border:1.5px dashed #2c4a7c;border-radius:10px;padding:28px;text-align:center;margin:24px 0;"><span style="color:#2c4a7c;font-size:14px;">📷 이미지 자리</span></div>\n\n` +
+      `[HTML 스타일 규칙]\n` +
+      `body: { background:#f9f9f9; font-family:'Malgun Gothic','맑은 고딕',sans-serif; color:#333; line-height:1.8; }\n` +
+      `.container: { max-width:700px; margin:40px auto; background:#fff; padding:40px; border-radius:8px; box-shadow:0 4px 8px rgba(0,0,0,0.05); }\n` +
+      `h1: { font-size:28px; font-weight:bold; border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:24px; }\n` +
+      `h2(소제목): { font-size:20px; font-weight:bold; border-left:5px solid #2c4a7c; padding-left:14px; color:#111; margin:32px 0 12px; }\n` +
+      `p: { text-align:center; margin:12px 0; }\n` +
+      `강조 마커: {{hl:텍스트}}→<mark>텍스트</mark> / {{center:텍스트}}→<span style="display:block;text-align:center">텍스트</span>\n` +
+      `[RICH:PHONE]→전화번호 클릭 배너(tel:1522-5539) / [RICH:LINK:설명]→링크 카드\n` +
+      `#태그→<span style="background:#e8f0fe;color:#2c4a7c;padding:2px 8px;border-radius:12px;font-size:13px;">#태그</span>`;
+
+  const assembleSystem = assembleSystemBase + sec("guide/01-writing-guide.md");
 
   const assembleUser =
     `[주제]\n${topic}\n\n` +

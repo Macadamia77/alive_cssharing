@@ -7,12 +7,15 @@ const GITHUB_OWNER = process.env.GITHUB_OWNER ?? "jademin";
 const GITHUB_REPO = process.env.GITHUB_REPO ?? "alive_cssharing";
 const GITHUB_BRANCH = process.env.GITHUB_BRANCH ?? "main";
 
+// Vercel 환경변수는 대소문자 구분 — 소문자로 저장된 경우도 인식
+const ENV_GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? process.env.github_token;
+
 export function isVercelProd(): boolean {
   return process.env.VERCEL === "1";
 }
 
 function resolveToken(token?: string): string {
-  const tok = token ?? process.env.GITHUB_TOKEN;
+  const tok = token ?? ENV_GITHUB_TOKEN;
   if (!tok) throw new Error("GitHub 토큰이 설정되지 않았습니다. 설정 페이지에서 GitHub 토큰을 입력해주세요.");
   return tok;
 }
@@ -70,7 +73,7 @@ export async function githubRead(repoPath: string, token?: string): Promise<stri
 
 /** GitHub에서 파일의 raw base64 콘텐츠를 그대로 반환합니다 (바이너리용) */
 export async function githubReadBase64(repoPath: string, token?: string): Promise<string> {
-  const tok = token ?? process.env.GITHUB_TOKEN;
+  const tok = token ?? ENV_GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "cs-ai-web",
@@ -96,7 +99,7 @@ export interface GithubDirEntry {
 
 /** GitHub에서 디렉토리 목록을 가져옵니다 (Vercel 읽기용) */
 export async function githubListDir(repoPath: string, token?: string): Promise<GithubDirEntry[]> {
-  const tok = token ?? process.env.GITHUB_TOKEN;
+  const tok = token ?? ENV_GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "cs-ai-web",

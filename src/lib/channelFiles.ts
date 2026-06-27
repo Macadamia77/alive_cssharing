@@ -204,39 +204,56 @@ export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, 
 // AI 시스템 프롬프트용 가이드 파일 자동 수집
 // _ 로 시작하는 파일(시스템 파일)과 CLAUDE.md만 제외, 나머지 모든 텍스트 파일 포함
 export async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<string[]> {
-  const files: string[] = [];
-
-  if (isVercelProd()) {
-    async function walkGithub(repoPath: string, relBase: string) {
-      const entries = await githubListDir(repoPath, token);
-      for (const entry of entries) {
-        if (entry.name.startsWith("_") || entry.name === "CLAUDE.md") continue;
-        const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
-        if (entry.type === "dir") {
-          await walkGithub(entry.path, relPath);
-        } else if (isTextFile(entry.name)) {
-          files.push(relPath);
-        }
-      }
-    }
-    await walkGithub(`data/channels/${channel}`, "");
-    return files;
-  }
-
   const root = path.join(CHANNEL_DIR, channel);
-  async function walkLocal(dir: string, relBase: string) {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  async function walkLocal(dir: string, relBase: string, out: string[]) {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const entry of entries) {
       if (entry.name.startsWith("_") || entry.name === "CLAUDE.md") continue;
       const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        await walkLocal(path.join(dir, entry.name), relPath);
+        await walkLocal(path.join(dir, entry.name), relPath, out);
       } else if (isTextFile(entry.name)) {
-        files.push(relPath);
+        out.push(relPath);
       }
     }
   }
-  await walkLocal(root, "");
+
+  if (isVercelProd()) {
+    // GitHub에서 최신 파일 목록 조회 (가이드 관리 UI 반영)
+    try {
+      const githubFiles: string[] = [];
+      async function walkGithub(repoPath: string, relBase: string) {
+        const entries = await githubListDir(repoPath, token);
+        for (const entry of entries) {
+          if (entry.name.startsWith("_") || entry.name === "CLAUDE.md" || entry.name.startsWith(".")) continue;
+          const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+          if (entry.type === "dir") {
+            await walkGithub(entry.path, relPath);
+          } else if (isTextFile(entry.name)) {
+            githubFiles.push(relPath);
+          }
+        }
+      }
+      await walkGithub(`data/channels/${channel}`, "");
+      if (githubFiles.length > 0) return githubFiles;
+      console.warn(`[collectGuideFiles] GitHub 목록이 비어있음 → 배포 번들 파일 사용`);
+    } catch (e) {
+      console.warn(`[collectGuideFiles] GitHub 조회 실패 → 배포 번들 파일 사용:`, e);
+    }
+    // GitHub 실패 시 배포 번들의 로컬 파일로 폴백
+    const localFiles: string[] = [];
+    await walkLocal(root, "", localFiles);
+    return localFiles;
+  }
+
+  const files: string[] = [];
+  await walkLocal(root, "", files);
   return files;
 }
 

@@ -80,7 +80,16 @@ export async function loadAIConfig(token?: string): Promise<AIConfig> {
 
 export async function saveAIConfig(config: AIConfig, token?: string): Promise<void> {
   const { githubWrite } = await import("./githubStorage");
-  const json = JSON.stringify(config, null, 2);
+  // API 키는 GitHub/로컬 파일에 저장하지 않음 — 쿠키 또는 Vercel 환경변수로만 관리
+  const safeConfig: AIConfig = {
+    activeProvider: config.activeProvider,
+    providers: {
+      claude: { apiKey: "", model: config.providers.claude.model },
+      openai: { apiKey: "", model: config.providers.openai.model },
+      gemini: { apiKey: "", model: config.providers.gemini.model },
+    },
+  };
+  const json = JSON.stringify(safeConfig, null, 2);
   if (isVercelProd()) {
     await githubWrite(GH_CONFIG_PATH, json, token);
     return;

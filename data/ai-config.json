@@ -10,7 +10,7 @@
       "model": "gpt-4o"
     },
     "gemini": {
-      "apiKey": "REDACTED",
+      "apiKey": "",
       "model": "gemini-2.5-flash"
     }
   }

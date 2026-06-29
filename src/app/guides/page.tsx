@@ -6,7 +6,6 @@ import Link from "next/link";
 const CHANNEL_ICONS_SVG: Record<ChannelKey, string> = {
   "naver-blog": "N",
   instagram: "IG",
-  facebook: "f",
   linkedin: "in",
   magazine: "M",
 };

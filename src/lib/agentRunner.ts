@@ -293,9 +293,11 @@ ${draft}
     }
 
     const maxTok = channel === "instagram" ? 8000 : 4096;
+    // instagram은 JSON 구조화 작업 → thinking 불필요, 끄면 훨씬 빠름
+    const disableThinking = channel === "instagram";
     if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
     if (provider === "openai") return callOpenAI(pc.apiKey, pc.model, systemPrompt, userMessage);
-    if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
+    if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok, disableThinking);
   }
 
   return mockGenerate(channel, topic, systemPrompt ? `[가이드 ${Math.round(systemPrompt.length / 100)}백자]` : "");

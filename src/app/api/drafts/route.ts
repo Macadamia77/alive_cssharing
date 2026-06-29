@@ -54,7 +54,7 @@ async function callAI(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: "user", parts: [{ text: user }] }],
-          generationConfig: { maxOutputTokens: 3000 },
+          generationConfig: { maxOutputTokens: 3000, thinkingConfig: { thinkingBudget: 0 } },
         }),
       }
     );

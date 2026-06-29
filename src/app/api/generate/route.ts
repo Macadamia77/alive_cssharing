@@ -1,10 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
+import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
+import { join } from "path";
 import { CHANNELS, type ChannelKey } from "@/lib/channels";
 import { buildSystemPrompt, hasAgentPipeline, collectGuideFiles, readChannelFile } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
 import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
 import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  generateContent as agentGenerateContent,
+  runAgentPipeline as agentRunPipeline,
+} from "@/lib/agentRunner";
+
+function isSupabaseConfigured(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  return url.length > 0 && !url.includes("placeholder");
+}
+
+function makeResultId(): string {
+  const now = new Date();
+  const ts = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${ts}-${rand}`;
+}
+
+// 로컬 모드 태스크 상태를 파일로 저장 (모듈 리로드에 안전)
+function getTaskPath(taskId: string) {
+  const dir = join(process.cwd(), "data", "results", ".tasks");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, `${taskId.replace(/[/\\:*?"<>|]/g, "_")}.json`);
+}
+
+function writeTask(taskId: string, data: object) {
+  try { writeFileSync(getTaskPath(taskId), JSON.stringify(data), "utf-8"); } catch {}
+}
+
+function readTask(taskId: string): { status: string; result?: string; error?: string } | null {
+  try {
+    const raw = readFileSync(getTaskPath(taskId), "utf-8");
+    return JSON.parse(raw);
+  } catch { return null; }
+}
 
 export const maxDuration = 300;
 
@@ -552,6 +595,78 @@ export async function POST(req: NextRequest) {
       activeApiKey = resolved?.apiKey || null;
     }
 
+    // ── Supabase 미설정 시 로컬 백그라운드 생성 ────────────────
+    if (!isSupabaseConfigured()) {
+      const resultId = makeResultId();
+      const taskIds = targetChannels.map((channel) => `local_${resultId}_${channel}`);
+
+      // 태스크 즉시 pending 등록 (파일)
+      taskIds.forEach((id) => writeTask(id, { status: "pending" }));
+
+      // 백그라운드 생성 (await 없이 실행)
+      void (async () => {
+        const resultsDir = join(process.cwd(), "data", "results");
+        mkdirSync(resultsDir, { recursive: true });
+        const channelResults: Record<string, string> = {};
+
+        await Promise.all(
+          targetChannels.map(async (channel) => {
+            const taskId = `local_${resultId}_${channel}`;
+            try {
+              let content: string;
+              const usePipeline = await hasAgentPipeline(channel, token ?? undefined);
+              if (usePipeline) {
+                // agentRunner의 파이프라인 (naver-blog 등)
+                content = await agentRunPipeline(
+                  channel, topic.trim(), draft,
+                  token ?? undefined,
+                  activeProvider as import("@/lib/aiConfig").Provider,
+                  undefined,
+                  activeApiKey ?? undefined
+                );
+              } else {
+                // agentRunner의 단순 생성 (instagram 등 — imageCardGuide 제외, maxTokens 올바름)
+                const systemPrompt = await buildSystemPrompt(channel, token ?? undefined);
+                content = await agentGenerateContent(
+                  channel, topic.trim(), draft, systemPrompt,
+                  activeProvider as import("@/lib/aiConfig").Provider,
+                  token ?? undefined,
+                  suggestions ?? [],
+                  activeApiKey ?? undefined
+                );
+              }
+              channelResults[channel] = content;
+              writeTask(taskId, { status: "done", result: content });
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              writeTask(taskId, { status: "error", error: msg });
+            }
+          })
+        );
+
+        // 결과를 파일에도 저장 (결과물 페이지용)
+        writeFileSync(
+          join(resultsDir, `${resultId}.json`),
+          JSON.stringify({
+            id: resultId,
+            topic: topic.trim(),
+            createdAt: new Date().toISOString(),
+            channels: channelResults,
+          }, null, 2),
+          "utf-8"
+        );
+      })();
+
+      return NextResponse.json({
+        success: true,
+        tasks: targetChannels.map((channel) => ({
+          channel,
+          taskId: `local_${resultId}_${channel}`,
+        })),
+      });
+    }
+
+    // ── Supabase 비동기 큐 등록 ──────────────────────────────────
     const tasksData = targetChannels.map((channel) => ({
       topic: topic.trim(),
       draft,
@@ -593,6 +708,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "taskId가 필요합니다." }, { status: 400 });
     }
 
+    // ── 로컬 백그라운드 생성 결과 조회 ───────────────────────
+    if (taskId.startsWith("local_")) {
+      const task = readTask(taskId);
+      if (!task || task.status === "pending") {
+        return NextResponse.json({ status: "pending" });
+      }
+      if (task.status === "error") {
+        return NextResponse.json({ status: "error", error: task.error });
+      }
+      return NextResponse.json({ status: "done", result: task.result });
+    }
+
+    // ── Supabase 큐 조회 ─────────────────────────────────────
     const { data: task, error } = await supabase
       .from("tasks")
       .select("status, result, error")

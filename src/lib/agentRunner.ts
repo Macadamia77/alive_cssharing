@@ -244,7 +244,8 @@ export async function generateContent(
       ? `\n\n[참고 키워드 및 방향]\n${suggestions.map((s) => `- ${s}`).join("\n")}`
       : "";
 
-  const imageCardGuide = `
+  // instagram은 JSON만 출력해야 하므로 HTML 이미지 카드 가이드를 제외
+  const imageCardGuide = channel === "instagram" ? "" : `
 
 [이미지 카드]
 콘텐츠에 이미지/인포그래픽이 필요한 위치에는 아래 형식의 HTML 카드를 직접 삽입하세요.
@@ -291,9 +292,10 @@ ${draft}
       throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
     }
 
-    if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage);
+    const maxTok = channel === "instagram" ? 8000 : 4096;
+    if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
     if (provider === "openai") return callOpenAI(pc.apiKey, pc.model, systemPrompt, userMessage);
-    if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage);
+    if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
   }
 
   return mockGenerate(channel, topic, systemPrompt ? `[가이드 ${Math.round(systemPrompt.length / 100)}백자]` : "");

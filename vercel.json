@@ -1,3 +1,3 @@
 {
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- src/ public/ package.json next.config.ts tsconfig.json"
+  "ignoreCommand": "git rev-parse HEAD^ 2>/dev/null && git diff --quiet HEAD^ HEAD -- src/ public/ package.json next.config.ts tsconfig.json || true"
 }

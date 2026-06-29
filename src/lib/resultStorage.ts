@@ -4,7 +4,13 @@ import { isVercelProd, githubWrite, githubDelete, githubRead, githubListDir } fr
 import { resolveGithubToken } from "./resolveToken";
 import { type NextRequest } from "next/server";
 
-const RESULTS_DIR = path.join(process.cwd(), "data", "results");
+import { existsSync } from "fs";
+
+let rootDir = process.cwd();
+if (!existsSync(path.join(rootDir, "data")) && existsSync(path.join(rootDir, "..", "data"))) {
+  rootDir = path.join(rootDir, "..");
+}
+const RESULTS_DIR = path.join(rootDir, "data", "results");
 const GH_PATH = "data/results";
 
 export interface ResultEntry {

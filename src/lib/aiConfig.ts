@@ -2,7 +2,13 @@ import fs from "fs/promises";
 import path from "path";
 import { isVercelProd, githubRead } from "./githubStorage";
 
-const CONFIG_PATH = path.join(process.cwd(), "data", "ai-config.json");
+import { existsSync } from "fs";
+
+let rootDir = process.cwd();
+if (!existsSync(path.join(rootDir, "data")) && existsSync(path.join(rootDir, "..", "data"))) {
+  rootDir = path.join(rootDir, "..");
+}
+const CONFIG_PATH = path.join(rootDir, "data", "ai-config.json");
 const GH_CONFIG_PATH = "data/ai-config.json";
 
 export type ProviderKey = "claude" | "openai" | "gemini";

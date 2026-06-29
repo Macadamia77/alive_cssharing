@@ -33,7 +33,18 @@ interface Props {
   channel: ChannelKey;
   status: Status;
   content?: string;
+  stage?: string;
 }
+
+const STAGE_LABELS: Record<string, string> = {
+  pending: "대기 중",
+  processing: "준비 중",
+  researching: "리서치 분석 중",
+  writing: "원고 집필 중",
+  "making-images": "이미지 카드 삽입 중",
+  assembling: "레이아웃 조립 중",
+  generating: "글쓰기 진행 중",
+};
 
 function SkeletonBlock() {
   return (
@@ -45,7 +56,7 @@ function SkeletonBlock() {
   );
 }
 
-export default function ChannelResultCard({ channel, status, content }: Props) {
+export default function ChannelResultCard({ channel, status, content, stage }: Props) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { color, bgColor, borderColor } = CHANNEL_COLORS[channel];
@@ -78,7 +89,7 @@ export default function ChannelResultCard({ channel, status, content }: Props) {
           {status === "loading" && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               <div className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" aria-hidden="true" />
-              생성 중
+              {stage ? STAGE_LABELS[stage] || "생성 중" : "생성 중"}
             </span>
           )}
           {status === "done" && (
@@ -145,9 +156,11 @@ export default function ChannelResultCard({ channel, status, content }: Props) {
             ) : (
               /* 텍스트 콘텐츠: 기존 방식 */
               <>
-                <pre className="text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">
-                  {expanded ? content : preview}
-                </pre>
+                <div
+                  className="text-sm text-slate-700 leading-relaxed font-[inherit]"
+                  style={{ whiteSpace: "pre-wrap" }}
+                  dangerouslySetInnerHTML={{ __html: expanded ? content : preview }}
+                />
                 {hasMore && (
                   <button
                     onClick={() => setExpanded(!expanded)}

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\whwns\\\\Desktop\\\\필메프 Cs sharing 컨텐츠 마케팅 자동화 프로젝트\\\\alive_cssharing-main\\\\alive_cssharing-main\\\\render-worker\" -File | Where-Object { $_.Extension -in '.ts', '.js', '.json', '.env' } | Select-Object Name)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Git\\\\bin\\\\git.exe\" --version)",
+      "PowerShell($env:PATH)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/whwns/AppData/Local/Programs/**)",
+      "Read(//c/Program Files/Git/cmd/**)",
+      "Read(//c//**)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"User\"\\); git --version)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"User\"\\); Set-Location \"C:\\\\Users\\\\whwns\\\\Desktop\\\\필메프 Cs sharing 컨텐츠 마케팅 자동화 프로젝트\\\\alive_cssharing-main\\\\alive_cssharing-main\"; git status)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\whwns\\Desktop\\�ʸ��� Cs sharing ������ ������ �ڵ�ȭ ������Ʈ\\alive_cssharing-main"
+    ]
+  }
+}

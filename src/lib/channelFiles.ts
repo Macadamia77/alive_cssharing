@@ -4,7 +4,13 @@ import path from "path";
 import { type ChannelKey, CHANNELS } from "./channels";
 import { isVercelProd, githubWrite, githubDelete, githubRead, githubReadBase64, githubListDir } from "./githubStorage";
 
-const CHANNEL_DIR = path.join(process.cwd(), "data", "channels");
+import { existsSync } from "fs";
+
+let rootDir = process.cwd();
+if (!existsSync(path.join(rootDir, "data")) && existsSync(path.join(rootDir, "..", "data"))) {
+  rootDir = path.join(rootDir, "..");
+}
+const CHANNEL_DIR = path.join(rootDir, "data", "channels");
 
 export interface ChannelMeta {
   label: string;

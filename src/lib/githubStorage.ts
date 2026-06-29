@@ -27,11 +27,11 @@ async function getFileSha(repoPath: string, token: string): Promise<string | nul
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}?ref=${GITHUB_BRANCH}`,
     {
       headers: { Authorization: `token ${token}`, "User-Agent": "cs-ai-web" },
-      cache: "no-store", // Next.js fetch 캐시 무력화 — SHA는 항상 최신값이어야 함
-    }
+      cache: "no-store",
+    } as any
   );
   if (!res.ok) return null;
-  const data = await res.json();
+  const data = await res.json() as any;
   return data.sha ?? null;
 }
 
@@ -58,11 +58,11 @@ export async function githubWrite(repoPath: string, content: string, token?: str
       },
       body: JSON.stringify(body),
       cache: "no-store",
-    }
+    } as any
   );
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
+    const err = await res.json().catch(() => ({})) as any;
     throw new Error(err.message ?? `GitHub API 오류 (HTTP ${res.status})`);
   }
 }
@@ -84,10 +84,10 @@ export async function githubReadBase64(repoPath: string, token?: string): Promis
 
   const res = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}?ref=${GITHUB_BRANCH}`,
-    { headers, cache: "no-store" }
+    { headers, cache: "no-store" } as any
   );
   if (!res.ok) throw new Error(`GitHub 읽기 실패 (${repoPath}): ${res.status}`);
-  const json = await res.json();
+  const json = await res.json() as any;
   if (typeof json.content !== "string") throw new Error("GitHub 응답에 content가 없습니다.");
   // GitHub API는 줄바꿈 포함 base64를 반환하므로 제거
   return json.content.replace(/\n/g, "");
@@ -110,7 +110,7 @@ export async function githubListDir(repoPath: string, token?: string): Promise<G
 
   const res = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}?ref=${GITHUB_BRANCH}`,
-    { headers, cache: "no-store" }
+    { headers, cache: "no-store" } as any
   );
   if (!res.ok) {
     if (res.status === 404) return [];
@@ -146,11 +146,11 @@ export async function githubDelete(repoPath: string, token?: string): Promise<vo
         branch: GITHUB_BRANCH,
       }),
       cache: "no-store",
-    }
+    } as any
   );
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
+    const err = await res.json().catch(() => ({})) as any;
     throw new Error(err.message ?? `GitHub API 오류 (HTTP ${res.status})`);
   }
 }

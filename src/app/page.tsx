@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
@@ -25,7 +25,7 @@ type Phase = "input" | "drafts" | "channels";
 type ChannelStatus = "idle" | "loading" | "done" | "error";
 
 interface DraftItem { angle: string; title: string; body: string; }
-interface ChannelResult { status: ChannelStatus; content?: string; }
+interface ChannelResult { status: ChannelStatus; content?: string; stage?: string; }
 
 // ── 예시 주제 ────────────────────────────────────────────────
 const EXAMPLE_TOPICS = [
@@ -317,7 +317,7 @@ export default function HomePage() {
     setResultChannels(targeted);
     setResults(
       Object.fromEntries(
-        CHANNELS.map(c => [c, { status: targeted.includes(c) ? "loading" : "idle" }])
+        CHANNELS.map(c => [c, { status: targeted.includes(c) ? "loading" : "idle", stage: "pending" }])
       ) as Record<ChannelKey, ChannelResult>
     );
     setPhase("channels");
@@ -326,6 +326,8 @@ export default function HomePage() {
     const channelsMap: Record<string, string> = {};
 
     try {
+      const allTasks: Array<{ channel: ChannelKey; taskId: string }> = [];
+
       for (const { draftIndex, channels } of draftAssignments) {
         const draft = draftBodies[draftIndex] ?? drafts[draftIndex]?.body ?? "";
         const res = await fetch("/api/generate", {
@@ -335,17 +337,56 @@ export default function HomePage() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "생성 실패");
-        for (const { channel, content } of data.results) {
-          setResults(prev => ({ ...prev, [channel as ChannelKey]: { status: "done", content } }));
-          channelsMap[channel] = content;
+        if (data.tasks) {
+          allTasks.push(...data.tasks);
         }
       }
 
-      void fetch("/api/results", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim(), channels: channelsMap }),
+      const pollTask = (channel: ChannelKey, taskId: string): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const interval = setInterval(async () => {
+            try {
+              const res = await fetch(`/api/generate?taskId=${taskId}`);
+              if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || "상태 조회 실패");
+              }
+              const data = await res.json() as { status: string; result?: string; error?: string };
+
+              if (data.status === "completed") {
+                clearInterval(interval);
+                setResults(prev => ({ ...prev, [channel]: { status: "done", content: data.result } }));
+                resolve(data.result || "");
+              } else if (data.status === "failed") {
+                clearInterval(interval);
+                setResults(prev => ({ ...prev, [channel]: { status: "error" } }));
+                reject(new Error(`[${CHANNEL_LABELS[channel]}] 생성 실패: ${data.error}`));
+              } else {
+                setResults(prev => ({ ...prev, [channel]: { status: "loading", stage: data.status } }));
+              }
+            } catch (err) {
+              clearInterval(interval);
+              setResults(prev => ({ ...prev, [channel]: { status: "error" } }));
+              reject(err);
+            }
+          }, 2000);
+        });
+      };
+
+      const pollPromises = allTasks.map(async ({ channel, taskId }) => {
+        const content = await pollTask(channel, taskId);
+        channelsMap[channel] = content;
       });
+
+      await Promise.all(pollPromises);
+
+      if (Object.keys(channelsMap).length > 0) {
+        void fetch("/api/results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic: topic.trim(), channels: channelsMap }),
+        });
+      }
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "알 수 없는 오류");
       setResults(prev => {
@@ -358,7 +399,7 @@ export default function HomePage() {
     } finally {
       setGenerating(false);
     }
-  }, [generating, assignedChannels, drafts, draftBodies, channelMap, topic]);
+  }, [generating, assignedChannels, drafts, draftBodies, channelMap, topic, selectedProvider]);
 
   const allDone = resultChannels.length > 0 && resultChannels.every(c => results[c].status === "done");
   const clearSession = () => {
@@ -592,7 +633,7 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {resultChannels.map(channel => (
                   <div key={channel} className={channel === "magazine" || resultChannels.length === 1 ? "lg:col-span-2" : ""}>
-                    <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} />
+                    <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} stage={results[channel].stage} />
                   </div>
                 ))}
               </div>

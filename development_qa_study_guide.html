@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎓 필메프 CS Sharing 자동화 프로젝트: 개발 Q&A 복기 가이드</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+    
+    :root {
+      --bg-primary: #f8fafc;
+      --card-bg: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --primary: #1e90d6;
+      --primary-light: #f0f7ff;
+      --border-color: #e2e8f0;
+      --accent: #2c4a7c;
+      --accent-light: #f0f4ff;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: 'Inter', 'Malgun Gothic', '맑은 고딕', sans-serif;
+      margin: 0;
+      padding: 0;
+      line-height: 1.7;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 60px 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 50px;
+    }
+
+    h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      color: var(--text-muted);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .toc {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 40px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+
+    .toc-title {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--accent);
+      margin-top: 0;
+      margin-bottom: 16px;
+    }
+
+    .toc ul {
+      list-style-type: none;
+      padding-left: 0;
+      margin: 0;
+    }
+
+    .toc li {
+      margin-bottom: 8px;
+    }
+
+    .toc a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s ease;
+    }
+
+    .toc a:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 36px;
+      margin-bottom: 30px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+    }
+
+    h2 {
+      font-size: 22px;
+      color: var(--accent);
+      border-bottom: 2px solid var(--primary-light);
+      padding-bottom: 12px;
+      margin-top: 0;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .qa-box {
+      margin-bottom: 24px;
+    }
+
+    .question {
+      background: #f1f5f9;
+      border-left: 4px solid var(--primary);
+      padding: 16px 20px;
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 20px;
+    }
+
+    .question-title {
+      font-weight: 700;
+      font-size: 15px;
+      color: #334155;
+      margin: 0;
+    }
+
+    .answer {
+      padding-left: 4px;
+    }
+
+    .answer h3 {
+      font-size: 16px;
+      color: var(--accent);
+      margin-top: 24px;
+      margin-bottom: 10px;
+    }
+
+    .answer p {
+      margin-bottom: 16px;
+      color: var(--text-muted);
+    }
+
+    .diagram-container {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 20px;
+      font-family: monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      margin: 20px 0;
+      overflow-x: auto;
+    }
+
+    .highlight-box {
+      background: var(--primary-light);
+      border: 1px solid #bae6fd;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 20px 0;
+      color: #0369a1;
+    }
+
+    .highlight-box ul {
+      margin: 8px 0 0 0;
+      padding-left: 20px;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 60px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    code {
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 14px;
+      color: #e11d48;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎓 필메프 CS Sharing 자동화 프로젝트: 개발 복기 가이드</h1>
+      <div class="subtitle">마케팅 자동화 프로그램 개발 중 발생한 핵심 문제 해결 과정과 아키텍처 원리를 기록한 문서입니다. 자고 일어나서 천천히 복기해 보세요.</div>
+    </header>
+
+    <div class="toc">
+      <div class="toc-title">📌 목차</div>
+      <ul>
+        <li><a href="#section1">1. AI 글자수 제한(Token Limit)과 우회 구조 설계</a></li>
+        <li><a href="#section2">2. VERCEL 환경 변수(0과 1)와 로컬 파일 작동 원리</a></li>
+        <li><a href="#section3">3. 배포와 Git Ignore, 그리고 데이터베이스 연동 보안</a></li>
+        <li><a href="#section4">4. dist 폴더의 정체와 안전한 삭제 이유</a></li>
+        <li><a href="#section5">5. 빌드 공정의 핵심: 압축 및 패키징 (Minification & Bundling) 상세</a></li>
+        <li><a href="#section6">6. 더 근본적인 아키텍처 해결책: 데이터 구조의 원자화 (JSON 배열 설계)</a></li>
+        <li><a href="#section7">7. 추론(Thinking) 토큰 병목 현상과 선택적 차단 해결법</a></li>
+      </ul>
+    </div>
+
+    <!-- Section 1 -->
+    <div class="section-card" id="section1">
+      <h2>1. AI 글자수 제한(Token Limit)과 우회 구조 설계</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "기존에 너가 문제라고 얘기한 게, 텍스트까지 이미지 메이킹 에이전트가 받아서 텍스트랑 이미지를 함께 출력해서 어셈블러 에이전트한테 넘기는 게 문제였다고 했는데 그게 왜 문제지? 어차피 최종 결과는 합쳐야 하잖아? 그리고 네이버 블로그 글이 왜 도입부만 출력되고 중간에 끊겼던 거야?"</p>
+        </div>
+        <div class="answer">
+          <p>모든 거대 언어 모델(Gemini, Claude, GPT 등)에는 <strong>"1회 답변당 출력할 수 있는 물리적인 최대 글자수 한도(Max Output Tokens)"</strong>가 존재합니다. 구글 Gemini API의 경우 이 한계치는 아무리 설정을 크게 늘려도 <strong>8,192 토큰(한글 기준 공백 포함 약 5,000자 내외)</strong>등입니다.</p>
+          
+          <h3>🚫 기존의 병목 구조 (글자수 초과로 인한 폭발)</h3>
+          <p>작가 에이전트가 상세하게 쓴 <strong>6,600자</strong> 본문을 전달받아, 이미지 메이커 에이전트가 중간 마커 자리에 들어갈 대용량 HTML 카드 코드(CSS 포함) 7개를 생성하여 <strong>합쳐진 본문 전체(약 17,000자)를 AI에게 다시 출력</strong>하라고 요구했습니다. 이로 인해 API 최대 출력 한도(8,192 토큰)를 한참 초과하여 글이 잘리게 되었습니다.</p>
+
+          <h3>⚙️ 개선된 스마트 우회 구조 (자바스크립트의 분할 조립)</h3>
+          <div class="diagram-container">
+[작가 AI] ➔ 본문 초안 작성 (6,600자)
+   │
+   ▼
+[이미지 메이커 AI] ➔ "본문은 적지 말고, 오직 이미지 카드 HTML 7개만 출력해 주세요."
+   │  (출력량을 3,000자 수준으로 낮춰 잘림 방지)
+   ▼
+[일꾼 백엔드(JS)] ➔ AI가 준 카드를 메모리에 보관하고 마커 자리에 임시 번호표({{HTML_CARD_X}}) 배치
+   │
+   ▼
+[조립가 AI(Assembler)] ➔ 번호표만 달린 가벼운 글을 받아 마크다운만 HTML로 변환
+   │  (가벼워서 절대 잘리지 않음)
+   ▼
+[최종 복원(JS)] ➔ 완성된 결과물의 번호표 자리에 보관했던 카드 HTML을 쏙쏙 끼워넣어 출력!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2 -->
+    <div class="section-card" id="section2">
+      <h2>2. VERCEL 환경 변수(0과 1)와 로컬 파일 작동 원리</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "원래 VERCEL=1로 켜두었던 것은 실배포 환경을 똑같이 구현하기 위해서였잖아? 이걸 VERCEL=0으로 꺼두면 깃허브에 Merge 되었을 때 배포용 Render 서버가 로컬 파일을 읽으려고 해서 에러가 나지 않을까?"</p>
+        </div>
+        <div class="answer">
+          <p><strong>전혀 걱정하실 필요 없습니다. <code>.env</code> 파일은 원래 깃허브에 올라가지 않기 때문입니다.</strong></p>
+          
+          <p>프로젝트 최상위의 <code>.gitignore</code> 규칙에 의해 <code>render-worker/.env</code> 파일은 개발자의 컴퓨터에만 존재하며, 깃허브 저장소에는 절대 반영되지 않습니다. 따라서 로컬에서 고친 <code>VERCEL=0</code> 설정은 깃허브 병합 시 배포 서버에 아무런 영향도 주지 않습니다.</p>
+
+          <h3>💡 로컬 개발(VERCEL=0)과 실배포(VERCEL=1)의 완벽한 분리</h3>
+          <p>로컬 개발 중에는 내 하드디스크의 가이드라인 지침서 파일들(<code>image-maker-web.md</code> 등)을 수정하면서 바로 테스트해야 하므로 <code>VERCEL=0</code>이 필요합니다. 이후 실제 Render 서비스 배포가 완료되면 Render 대시보드 환경변수 설정 창에 수동으로 <code>VERCEL = 1</code>을 직접 적어둡니다. 그러면 배포 서버는 정상적으로 깃허브에서 가이드라인을 다운로드하게 됩니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 3 -->
+    <div class="section-card" id="section3">
+      <h2>3. 배포와 Git Ignore, 그리고 데이터베이스 연동 보안</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "그러면 데이터베이스 주소(SUPABASE_URL)나 열쇠(API 키) 정보가 든 .env 파일도 깃허브에 안 올라갈 텐데, 실제 배포된 사이트에서는 어떻게 데이터베이스에 접속하고 통신할 수 있는 거지?"</p>
+        </div>
+        <div class="answer">
+          <p>보안 정보가 담긴 환경설정 파일을 소스코드 저장소(Git)에 올리는 것은 매우 위험합니다. 대신, 클라우드 호스팅 서비스들이 제공하는 <strong>"대시보드 환경변수 주입"</strong> 방식을 통해 해결합니다.</p>
+          
+          <div class="highlight-box font-medium">
+            <strong>🔒 배포 서버 환경변수 수동 등록 공식:</strong>
+            <ul>
+              <li><strong>Vercel (웹 게이트웨이):</strong> Vercel 설정 페이지 ➔ <code>SUPABASE_SERVICE_ROLE_KEY</code>, <code>NEXT_PUBLIC_SUPABASE_URL</code> 직접 등록</li>
+              <li><strong>Render (백그라운드 일꾼):</strong> Render 설정 페이지 ➔ <code>SUPABASE_URL</code>, <code>SUPABASE_SERVICE_ROLE_KEY</code>, <code>VERCEL=1</code> 직접 등록</li>
+            </ul>
+          </div>
+          <p>이렇게 수동으로 한 번만 꽂아두면, 깃허브에는 소스코드가 안전하게 공유되면서 각 배포 서버 컴퓨터들은 클라우드가 제공하는 비밀 키를 바탕으로 작동하게 됩니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 4 -->
+    <div class="section-card" id="section4">
+      <h2>4. dist 폴더의 정체와 안전한 삭제 이유</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "너 render-worker/dist 폴더 삭제해도 되겠어? 큰일 날 것 같은데. 이게 정확히 무슨 역할이길래 이렇게 과감하게 삭제한 거야?"</p>
+        </div>
+        <div class="answer">
+          <p><strong><code>dist</code> 폴더는 영구 보관용 소스 폴더가 아니라, 언제든 완전히 지워도 안전한 "임시 번역본 보관창고"입니다.</strong></p>
+          
+          <p>우리가 소스코드를 짤 때는 타입스크립트(<code>.ts</code>)를 쓰지만, 컴퓨터 엔진은 순수 자바스크립트(<code>.js</code>) 파일만 실행할 수 있습니다. 우리가 빌드 명령(<code>npm run build</code>)을 내릴 때 컴파일러가 원본 소스를 변환해서 새로 뱉어내 저장하는 장소가 바로 <code>dist(Distribution)</code> 폴더입니다.</p>
+
+          <p>원본 소스코드(<code>index.ts</code>와 <code>src/</code> 폴더)가 그대로 살아있으므로 <code>dist</code>는 언제든 필요하면 0.5초 만에 처음부터 끝까지 완전 재창조가 가능합니다. 로컬 개발 중에는 실시간 실행 도구가 메모리에서 바로 번역해 돌려주기 때문에 이 폴더가 필요 없으며, 오히려 구버전 컴파일 캐시 파일이 고여있으면 버그를 유발하므로 <strong>자주 비우고 청소해 주는 것이 훨씬 이롭습니다.</strong></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 5 -->
+    <div class="section-card" id="section5">
+      <h2>5. 빌드 공정의 핵심: 압축 및 패키징 (Minification & Bundling) 상세</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "빌드 맨 마지막 단계에서 압축 및 패키징을 한다며? 이전 설명에는 왜 그 내용이 빠져있어? 구체적으로 어떻게 최적화되는지 알려줘."</p>
+        </div>
+        <div class="answer">
+          <p>컴파일러가 코드를 자바스크립트로 단순히 변환한 후, 실제 웹 사이트 배포에 적합하도록 코드를 극단적으로 다이어트시키는 작업이 바로 <strong>압축(Minification)</strong>과 <strong>패키징(Bundling)</strong>입니다.</p>
+          
+          <h3>① 패키징 (Bundling - 하나로 묶기)</h3>
+          <p>개발 시 관리 효율성을 위해 쪼개둔 수십 개의 파일들(<code>route.ts</code>, <code>agentRunner.ts</code> 등)을 번들러가 관계 분석 후 <strong>단 하나의 통합 자바스크립트 파일(`main.js` 등)로 합쳐</strong>, 인터넷 다운로드 연결 횟수를 줄여 로딩 속도를 향상시킵니다.</p>
+
+          <h3>② 압축 (Minification - 빈칸 및 여백 제거)</h3>
+          <p>개발자가 가독성을 위해 남겨둔 줄바꿈(Enter), 여백(Space), 주석, 그리고 길게 작성한 변수명을 <strong>여백 제거 및 문자 압축 방식(예: 긴 변수명을 <code>a</code>로 치환)을 통해 극단적으로 경량화</strong>합니다. 이로 인해 소스코드 전체 크기가 70% 이상 가볍게 다이어트됩니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 6 -->
+    <div class="section-card" id="section6">
+      <h2>6. 더 근본적인 아키텍처 해결책: 데이터 구조의 원자화 (JSON 배열 설계)</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "이렇게 HTML 주석 기호를 활용하는 AI의 눈치(학습 과정)에 의존하는 방법 외에, 시스템적으로 에러를 0%로 만드는 근본적인 프로그래밍적 해결법은 없었어?"</p>
+        </div>
+        <div class="answer">
+          <p>가장 근본적이고 수학적으로 에러 확률이 0%인 설계 기법은 글을 단일 문자열로 취급하지 않고 <strong>"원자 단위의 JSON 부품 목록(Array) 데이터 구조"</strong>로 변환하여 처리하는 것입니다.</p>
+          
+          <h3>🛠️ 원자화 설계 동작 방식</h3>
+          <p>작가 AI가 글을 쓸 때 하나의 텍스트 본문 대신, 각 요소가 구별된 JSON 리스트 데이터를 출력하도록 지시합니다. 그 뒤 자바스크립트 프로그램(일꾼)이 이 배열을 돌며 <code>paragraph</code>는 조립가 AI에게 단독 전달하고, <code>image_request</code>는 이미지 메이커 AI에게 던져 부품별 HTML 결과물을 따로 받아온 뒤, 최종 결합합니다.</p>
+
+          <h3>⚠️ 그럼에도 이번 프로젝트에서 원자화 대신 주석 기호 우회를 선택한 이유</h3>
+          <p>AI가 각 단락을 조각내어 개별적으로 전달받게 되면, 바로 위 문단에서 자신이 서술한 흐름을 읽지 못해 <strong>같은 단어를 무한 반복하거나 앞뒤 문맥이 꼬이는 글의 품질 하락 현상</strong>이 발생합니다. 또한 기존의 마크다운 기반 뼈대를 JSON 배열 구조로 다 뜯어고치려면 소모되는 개발 자원이 너무 큽니다. 따라서 단일 글 구조를 유지하되 AI가 무시하는 속성을 지닌 <strong>HTML 주석 기호(<code>&lt;!-- --&gt;</code>)를 안전장치로 배치하여 우회한 것</strong>이 최적의 실무 대안이 되었습니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 7 -->
+    <div class="section-card" id="section7">
+      <h2>7. 추론(Thinking) 토큰 병목 현상과 선택적 차단 해결법</h2>
+      <div class="qa-box">
+        <div class="question">
+          <p class="question-title">❓ 질문: "생각을 안 하면 글의 퀄리티가 떨어지는 거 아니야? 그리고 API의 글자 토큰 한계 수치(maxOutputTokens)를 그냥 대폭 늘려버리면 간단히 해결될 일인데 왜 늘리지 않고 복잡한 다른 방식을 사용한 거지?"</p>
+        </div>
+        <div class="answer">
+          <p>구글 Gemini API 서버가 공식적으로 제공하는 1회 답변당 <strong>최대 출력 한계(maxOutputTokens)는 8,192 토큰이 물리적 상한선(Hard Limit)</strong>입니다. 이 상한선은 임의로 늘릴 수 없으며, 추론 생각 토큰(Thinking Tokens)도 이 한도 내에 차감됩니다. 입력 데이터가 무거워질수록 AI는 약 7,600자의 공간을 생각하는 데 소모해 버리며, 실제 답변을 적을 한도가 500자 미만으로 남아 글이 도중에 잘릴 수밖에 없었습니다.</p>
+
+          <h3>⚙️ 선택적 생각 차단 (Selective Thinking Disable) 해결책</h3>
+          <p>글의 퀄리티 저하를 막기 위해, 기획과 조립 각 단계의 특성을 고려하여 생각 기능을 필요한 단계에만 골라서 켜고 끄는(On/Off) 방식을 적용했습니다.</p>
+          <ul>
+            <li><strong>1단계(리서치) 및 2단계(창작 작가) [Thinking On]:</strong> 아이디어를 짜내고 논리적인 글을 창작해야 하는 핵심 단계이므로 생각 기능을 유지하여 최고 수준의 글 퀄리티를 유지합니다.</li>
+            <li><strong>2.5단계(카드 메이커) 및 3단계(HTML 조립가) [Thinking Off]:</strong> 글을 HTML에 맞춰 감싸거나 디자인 템플릿에 맞추는 기계적 포맷팅 공정이므로 생각 예산을 차단(thinkingBudget: 0)하여 8,192자 공간 전체를 순수하게 HTML 본문 생성에만 투입하도록 하여 잘림 현상을 완벽히 차단했습니다.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <p>© 2026 필메프 CS Sharing 콘텐츠 마케팅 자동화 프로젝트 스터디 가이드북</p>
+    </footer>
+  </div>
+</body>
+</html>

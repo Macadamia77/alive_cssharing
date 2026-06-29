@@ -3,7 +3,7 @@ import { type ChannelKey } from "@/lib/channels";
 import { readChannelFile, readChannelFileBase64, writeChannelFile, deleteChannelFile, deleteChannelFolder, moveChannelFile, isTextFile } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
 
-const VALID: ChannelKey[] = ["naver-blog", "instagram", "facebook", "linkedin", "magazine"];
+const VALID: ChannelKey[] = ["naver-blog", "instagram", "linkedin", "magazine"];
 
 function isValid(ch: string): ch is ChannelKey {
   return VALID.includes(ch as ChannelKey);

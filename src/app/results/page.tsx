@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib/channels";
+import InstagramCardPreview, { tryParseInstagramJson } from "@/components/InstagramCardPreview";
 
 // ── 채널 아이콘 ──────────────────────────────────────────────
 const CHANNEL_ICONS: Record<ChannelKey, React.ReactNode> = {
@@ -137,6 +138,18 @@ function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
             className="w-full p-4 text-sm text-slate-800 font-[inherit] leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 min-h-[200px]"
             autoFocus
           />
+        ) : ch === "instagram" && tryParseInstagramJson(text) ? (
+          /* 인스타그램: 카드뉴스 프리뷰 */
+          <div className="p-4"><InstagramCardPreview content={text} /></div>
+        ) : (text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html")) ? (
+          /* 네이버 블로그 HTML: iframe 렌더링 */
+          <iframe
+            srcDoc={text}
+            title="블로그 미리보기"
+            className="w-full"
+            style={{ height: "500px", border: "none" }}
+            sandbox="allow-same-origin"
+          />
         ) : (
           <pre className="p-4 text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">{text}</pre>
         )}
@@ -145,6 +158,33 @@ function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
         )}
       </div>
     </div>
+  );
+}
+
+// ── 채널 뱃지 (클릭으로 복사) ───────────────────────────────
+function CopyBadge({ ch, color, bgColor, content }: {
+  ch: ChannelKey; color: string; bgColor: string; content: string | undefined;
+}) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!content) return;
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title={content ? "클릭하여 복사" : "콘텐츠 없음"}
+      disabled={!content}
+      className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer disabled:opacity-40 ${
+        copied ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : `${bgColor} ${color}`
+      }`}
+    >
+      {copied ? <Check className="w-3 h-3" /> : CHANNEL_ICONS[ch]}
+      <span className="hidden sm:inline">{copied ? "복사됨" : (CHANNEL_LABELS[ch] ?? ch)}</span>
+    </button>
   );
 }
 
@@ -172,7 +212,7 @@ function ResultCard({ result, onDelete }: {
     <div className="glass-card rounded-2xl overflow-hidden">
       {/* 카드 헤더 */}
       <div
-        className="px-5 py-4 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        className="px-5 py-4 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors"
         onClick={() => setOpen(v => !v)}
       >
         <div className="text-slate-400 shrink-0">
@@ -182,15 +222,19 @@ function ResultCard({ result, onDelete }: {
           <p className="font-semibold text-slate-900 text-sm truncate">{result.topic}</p>
           <p className="text-xs text-slate-400 mt-0.5">{fmtDate(result.createdAt)} · {fmtTime(result.createdAt)}</p>
         </div>
-        {/* 채널 뱃지 */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* 채널 뱃지 (클릭하면 콘텐츠 복사) */}
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
           {channelKeys.map(ch => {
             const { color, bgColor } = CHANNEL_COLORS[ch as ChannelKey] ?? { color: "text-slate-600", bgColor: "bg-slate-100" };
+            const content = channels[ch];
             return (
-              <span key={ch} className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold ${bgColor} ${color}`}>
-                {CHANNEL_ICONS[ch as ChannelKey]}
-                <span className="hidden sm:inline">{CHANNEL_LABELS[ch as ChannelKey] ?? ch}</span>
-              </span>
+              <CopyBadge
+                key={ch}
+                ch={ch as ChannelKey}
+                color={color}
+                bgColor={bgColor}
+                content={content}
+              />
             );
           })}
         </div>

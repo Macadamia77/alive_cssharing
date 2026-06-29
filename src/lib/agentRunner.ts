@@ -133,7 +133,7 @@ export async function generateContent(
       ? `\n\n[참고 키워드 및 방향]\n${suggestions.map((s) => `- ${s}`).join("\n")}`
       : "";
 
-  const imageCardGuide = readFileSync(join(process.cwd(), "data/channels/naver-blog/image-card-template.html"), "utf-8");
+  const imageCardGuide = readFileSync(join(__dirname, "../../data/channels/naver-blog/image-card-template.html"), "utf-8");
 
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
@@ -174,7 +174,7 @@ ${draft}
 }
 
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-const WEB_PIPELINE_NOTE = readFileSync(join(process.cwd(), "data/prompts/web-pipeline-note.md"), "utf-8");
+const WEB_PIPELINE_NOTE = readFileSync(join(__dirname, "../../data/prompts/web-pipeline-note.md"), "utf-8");
 
 export async function runAgentPipeline(
   channel: ChannelKey,

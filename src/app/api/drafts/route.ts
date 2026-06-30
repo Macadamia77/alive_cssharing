@@ -2,69 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
 import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { callClaude, callOpenAI, callGemini } from "@/lib/apiClients";
+import { readFileSync } from "fs";
+import { join } from "path";
 
-async function callAI(
-  provider: ProviderKey,
-  apiKey: string,
-  model: string,
-  system: string,
-  user: string
-): Promise<string> {
-  if (provider === "claude") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: model || "claude-sonnet-4-6",
-        max_tokens: 3000,
-        system,
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message ?? `Claude API 오류 (${res.status})`); }
-    const d = await res.json();
-    return (d.content?.[0]?.text as string) ?? "";
-  }
-
-  if (provider === "openai") {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: model || "gpt-4o",
-        messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      }),
-    });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message ?? `OpenAI API 오류 (${res.status})`); }
-    const d = await res.json();
-    return (d.choices?.[0]?.message?.content as string) ?? "";
-  }
-
-  if (provider === "gemini") {
-    const fullModel = model || "gemini-2.5-flash";
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${fullModel}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: "user", parts: [{ text: user }] }],
-          generationConfig: { maxOutputTokens: 3000 },
-        }),
-      }
-    );
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message ?? `Gemini API 오류 (${res.status})`); }
-    const d = await res.json();
-    return (d.candidates?.[0]?.content?.parts?.[0]?.text as string) ?? "";
-  }
-
-  throw new Error("mock");
-}
+const DRAFTS_SYSTEM = readFileSync(join(process.cwd(), "data/prompts/drafts.md"), "utf-8");
 
 export interface DraftItem {
   angle: string;
@@ -150,7 +92,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
     }
 
-    // 쿠키/환경변수 우선 → 없으면 GitHub 설정 파일 폴백 (GH 토큰 사용)
     const pc = resolveProvider(req, provider as ProviderKey)
       ?? await loadAIConfig(resolveGithubToken(req)).then(c => c.providers[provider as ProviderKey]).catch(() => null);
 
@@ -161,19 +102,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const system = `당신은 마케팅 콘텐츠 전략가입니다. 주어진 주제로 3가지 서로 다른 각도의 초안을 작성합니다.
-각 초안은 다음 JSON 배열 형식으로 반환하세요:
-[
-  { "angle": "초안 유형 (예: 정보 전달형)", "title": "제목", "body": "본문 (2~4 문단)" },
-  ...
-]
-초안은 서로 다른 방향성(정보형, 스토리형, 문제해결형 등)을 가져야 하며, CS쉐어링 마케팅에 활용될 것입니다.`;
-
     const user = `주제: "${topic.trim()}"\n\n위 주제로 마케팅 콘텐츠 초안 3가지를 JSON 형식으로 작성해주세요.`;
 
-    const raw = await callAI(provider as ProviderKey, pc.apiKey, pc.model, system, user);
-    const drafts = parseDrafts(raw, topic.trim());
-    return NextResponse.json({ drafts });
+    let raw: string;
+    if (provider === "claude") raw = await callClaude(pc.apiKey, pc.model, DRAFTS_SYSTEM, user, 3000);
+    else if (provider === "openai") raw = await callOpenAI(pc.apiKey, pc.model, DRAFTS_SYSTEM, user);
+    else raw = await callGemini(pc.apiKey, pc.model, DRAFTS_SYSTEM, user, 3000);
+
+    return NextResponse.json({ drafts: parseDrafts(raw, topic.trim()) });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

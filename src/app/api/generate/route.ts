@@ -717,7 +717,7 @@ export async function GET(req: NextRequest) {
       if (task.status === "error") {
         return NextResponse.json({ status: "error", error: task.error });
       }
-      return NextResponse.json({ status: "done", result: task.result });
+      return NextResponse.json({ status: "completed", result: task.result });
     }
 
     // ── Supabase 큐 조회 ─────────────────────────────────────

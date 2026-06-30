@@ -570,10 +570,19 @@ async function renderKeyMessage(container, items, frame) {
 async function renderFlowBlocks(container, items, frame) {
   var maxItems = Math.min(items.length, 4);
   var gap = 60;
-  var boxHeight = Math.min(
-    Math.floor((container.height - gap * (maxItems - 1)) / maxItems),
-    210
+  var minBoxHeight = 146;
+  var boxHeight = Math.max(
+    Math.min(
+      Math.floor((container.height - gap * (maxItems - 1)) / maxItems),
+      230
+    ),
+    minBoxHeight
   );
+
+  var totalHeight = maxItems * boxHeight + (maxItems - 1) * gap;
+  if (totalHeight > container.height) {
+    container.resize(container.width, totalHeight);
+  }
 
   for (var i = 0; i < maxItems; i++) {
     var blockY = i * (boxHeight + gap);
@@ -655,7 +664,7 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
 
     badge.name = "generated_number_badge";
     badge.x = isFlow ? 18 : 22;
-    badge.y = isFlow ? 14 : 22;
+    badge.y = 22;
     badge.resize(badgeSize, badgeSize);
     badge.fills = [{ type: "SOLID", color: hexToRgb("#00AEEF") }];
     badge.cornerRadius = badgeRadius;
@@ -681,8 +690,8 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
     badge.appendChild(numberText);
 
     textLeft = isFlow ? 70 : 98;
-    topPadding = isFlow ? 14 : 24;
-    bodyTop = isFlow ? 56 : 92;
+    topPadding = isFlow ? 22 : 24;
+    bodyTop = isFlow ? 80 : 92;
   }
 
   var titleText = figma.createText();
@@ -737,7 +746,8 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
 
   bodyText.textAutoResize = "HEIGHT";
   bodyText.lineHeight = { unit: "PIXELS", value: bodyText.fontSize * 1.2 };
-  bodyText.resize(width - textLeft - 24, height - bodyTop - 14);
+  var bottomPad = isFlow ? 28 : 14;
+  bodyText.resize(width - textLeft - 24, height - bodyTop - bottomPad);
 
   fitTextsInsideBlock(titleText, bodyText, width, height, textLeft, topPadding, bodyTop, layoutType);
 }
@@ -746,7 +756,8 @@ function fitTextsInsideBlock(titleText, bodyText, boxWidth, boxHeight, textLeft,
   var titleMaxWidth = boxWidth - textLeft - 24;
   var bodyMaxWidth = boxWidth - textLeft - 24;
   var titleMaxHeight = bodyTop - topPadding - 6;
-  var bodyMaxHeight = boxHeight - bodyTop - 14;
+  var bottomPadFit = layoutType === "flow_process" ? 28 : 14;
+  var bodyMaxHeight = boxHeight - bodyTop - bottomPadFit;
 
   if (titleMaxWidth <= 0 || bodyMaxWidth <= 0 || titleMaxHeight <= 0 || bodyMaxHeight <= 0) {
     return;

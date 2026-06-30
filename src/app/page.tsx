@@ -183,7 +183,6 @@ export default function HomePage() {
   const [draftBodies, setDraftBodies] = useState<string[]>([]);
   // 채널 → 초안 인덱스 (undefined = 미배정)
   const [channelMap, setChannelMap] = useState<Partial<Record<ChannelKey, number>>>({});
-
   // sessionStorage 복원 완료 여부 (복원 전에 저장 effect가 초기값으로 덮어쓰는 것을 방지)
   const [sessionRestored, setSessionRestored] = useState(false);
 

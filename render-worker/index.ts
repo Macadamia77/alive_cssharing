@@ -127,6 +127,62 @@ async function processNextTask() {
   }
 }
 
+// 한 번에 여러 작업을 가져와 각각 다른 작업을 선점한 뒤,
+// 선점에 성공한 것들을 진짜 병렬로 처리한다.
+async function processBatch() {
+  // 1. pending 상태의 작업을 한 번에 최대 N개 조회 (1개가 아니라 N개)
+  const { data: tasks, error } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(MAX_CONCURRENT);
+
+  if (error) {
+    console.error("[Worker] DB 조회 중 오류 발생:", error.message);
+    return;
+  }
+
+  if (!tasks || tasks.length === 0) {
+    return;
+  }
+
+  // 2. 각 작업을 개별적으로 선점 (서로 다른 id 라 충돌 없음)
+  //    옵티미스틱 락은 다중 인스턴스 환경의 안전장치로 그대로 유지한다.
+  const grabbed: any[] = [];
+  for (const task of tasks) {
+    const { data: grabbedTasks, error: updateError } = await supabase
+      .from("tasks")
+      .update({ status: "processing" })
+      .eq("id", task.id)
+      .eq("status", "pending")
+      .select();
+
+    if (updateError) {
+      console.error(`[Worker] 작업 선점 중 오류 발생 (ID: ${task.id}):`, updateError.message);
+      continue;
+    }
+    if (grabbedTasks && grabbedTasks.length > 0) {
+      grabbed.push(task);
+    }
+  }
+
+  if (grabbed.length === 0) {
+    return;
+  }
+
+  // 3. 메모리에 올라온 이후 DB의 민감 정보를 즉시 삭제
+  await Promise.all(grabbed.map(task =>
+    supabase.from("tasks")
+      .update({ api_key: null, github_token: null })
+      .eq("id", task.id)
+  ));
+
+  // 4. 선점한 작업들을 진짜 병렬로 처리 (api_key/github_token은 메모리 내 task 객체에 유지)
+  await Promise.all(grabbed.map((task) => processTask(task)));
+}
+
+
 // 3초 주기로 새 작업을 폴링해서 처리하는 루프
 async function startLoop() {
   while (true) {

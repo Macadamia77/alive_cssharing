@@ -87,13 +87,14 @@ export default function ChannelResultCard({ channel, status, content, stage }: P
         <div className="flex items-center gap-2.5">
           <span className={color}>{icon}</span>
           <span className="font-semibold text-slate-800 text-sm">{label}</span>
+          {channel === "naver-blog" && <span className="text-[10px] text-slate-400">Claude</span>}
         </div>
 
         <div className="flex items-center gap-2">
           {status === "loading" && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               <div className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" aria-hidden="true" />
-              {stage ? STAGE_LABELS[stage] || "생성 중" : "생성 중"}
+              {stage ? (STAGE_LABELS[stage] || stage) : "생성 중"}
             </span>
           )}
           {status === "done" && (

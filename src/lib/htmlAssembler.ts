@@ -33,26 +33,16 @@ function loadBrand(): Brand {
 }
 const BRAND = loadBrand();
 
-// ─── HTML 문서 셸 (data/channels/naver-blog/templates/blog-shell.html) ──
-// {{TITLE}}, {{BODY}} 플레이스홀더를 치환해 완성형 문서를 만든다.
+// ─── HTML 문서 셸 ────────────────────────────────────────────
+// 셸 템플릿(data/channels/naver-blog/templates/blog-shell.html)은 호출부(agentRunner)가
+// channelFiles(Supabase→GitHub→로컬) 경로로 읽어 assembleNaverBlogHtml(draft, shell)로 넘긴다.
+// → 웹에서 셸을 수정하면 재배포 없이 실시간 반영된다.
+// shell 인자가 없거나 비면 아래 최소 폴백 셸을 사용한다.
 const FALLBACK_SHELL =
   '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">' +
   '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
   "<title>{{TITLE}}</title></head><body>" +
   '<div class="container"><h1>{{TITLE}}</h1>{{BODY}}</div></body></html>';
-
-function loadShell(): string {
-  try {
-    return readFileSync(
-      join(process.cwd(), "data/channels/naver-blog/templates/blog-shell.html"),
-      "utf-8"
-    );
-  } catch (e) {
-    console.warn(`[htmlAssembler] blog-shell.html 로드 실패, 폴백 셸 사용: ${e instanceof Error ? e.message : e}`);
-    return FALLBACK_SHELL;
-  }
-}
-const SHELL = loadShell();
 
 const EMOJI_START = /^\p{Extended_Pictographic}️?/u;
 
@@ -121,7 +111,7 @@ interface PendingList {
  * PUBLISH 마커가 없거나, 품질 게이트가 FAIL이거나, 변환 중 문제가 생기면 null을 반환한다
  * (호출부는 null일 때 원문 draftOutput을 그대로 사용하는 기존 폴백 동작을 유지해야 한다).
  */
-export function assembleNaverBlogHtml(draftOutput: string): string | null {
+export function assembleNaverBlogHtml(draftOutput: string, shell?: string): string | null {
   try {
     const publishMatch = draftOutput.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
     if (!publishMatch) return null;
@@ -207,16 +197,17 @@ export function assembleNaverBlogHtml(draftOutput: string): string | null {
     const bodyHtml = htmlParts.join("\n");
     if (!bodyHtml.trim()) return null;
 
-    return renderDocument(title, bodyHtml);
+    return renderDocument(title, bodyHtml, shell);
   } catch (e) {
     console.warn(`[htmlAssembler] 변환 실패, draft 원문으로 폴백: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }
 
-function renderDocument(title: string, bodyHtml: string): string {
+function renderDocument(title: string, bodyHtml: string, shell?: string): string {
   // 셸 템플릿의 플레이스홀더를 치환한다. 치환값에 $ 등이 있어도 안전하도록 replacer 함수를 사용.
-  return SHELL
+  const tpl = shell && shell.trim() ? shell : FALLBACK_SHELL;
+  return tpl
     .replace(/\{\{TITLE\}\}/g, () => title)
     .replace(/\{\{BODY\}\}/g, () => bodyHtml);
 }

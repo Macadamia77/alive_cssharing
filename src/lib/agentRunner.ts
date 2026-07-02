@@ -473,7 +473,9 @@ export async function runAgentPipeline(
   if (statusCallback) await statusCallback("assembling");
 
   console.log(`[pipeline] ${channel} Step 3: 조립 시작 (코드 기반)`);
-  const assembled = assembleNaverBlogHtml(finalDraft);
+  // HTML 셸 템플릿을 channelFiles(Supabase→GitHub→로컬)로 읽어 넘긴다 → 웹 수정 시 실시간 반영
+  const shell = await readChannelFile(channel, "templates/blog-shell.html", token).catch(() => undefined);
+  const assembled = assembleNaverBlogHtml(finalDraft, shell);
   if (assembled === null) {
     console.warn(`[pipeline] ${channel} Step 3: 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
     return draftOutput;

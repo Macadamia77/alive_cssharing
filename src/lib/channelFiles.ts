@@ -34,15 +34,15 @@ export function isTextFile(fileName: string): boolean {
 }
 
 export async function getChannelMeta(channel: ChannelKey, token?: string): Promise<ChannelMeta> {
-  if (isVercelProd()) {
-    try {
-      const raw = await githubRead(`data/channels/${channel}/_meta.json`, token);
-      const meta = JSON.parse(raw.replace(/^﻿/, "")) as ChannelMeta;
-      // GitHub에서 include가 비어 있으면 로컬 기본값 폴백
-      if (meta.include && meta.include.length > 0) return meta;
-    } catch {
-      // GitHub 읽기 실패 시 배포 번들 내 로컬 파일 폴백
-    }
+  // 호스트(Vercel/render-worker/로컬)와 무관하게 항상 GitHub을 먼저 시도 —
+  // GitHub이 최신 상태의 단일 소스이고, 실패할 때만 배포 번들의 로컬 파일로 폴백한다.
+  try {
+    const raw = await githubRead(`data/channels/${channel}/_meta.json`, token);
+    const meta = JSON.parse(raw.replace(/^﻿/, "")) as ChannelMeta;
+    // GitHub에서 include가 비어 있으면 로컬 기본값 폴백
+    if (meta.include && meta.include.length > 0) return meta;
+  } catch (e) {
+    console.warn(`[getChannelMeta] ${channel} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
   }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");
   const raw = await fs.readFile(metaPath, "utf-8");
@@ -52,29 +52,31 @@ export async function getChannelMeta(channel: ChannelKey, token?: string): Promi
 export async function getChannelFileTree(channel: ChannelKey, token?: string): Promise<FileNode[]> {
   const meta = await getChannelMeta(channel, token);
 
-  if (isVercelProd()) {
-    async function walkGithub(repoPath: string, relBase: string): Promise<FileNode[]> {
-      const entries = await githubListDir(repoPath, token);
-      const nodes: FileNode[] = [];
-      for (const entry of entries) {
-        if (entry.name.startsWith("_")) continue;
-        const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
-        if (entry.type === "dir") {
-          const children = await walkGithub(entry.path, relPath);
-          nodes.push({ name: entry.name, path: relPath, type: "dir", included: false, children });
-        } else {
-          // 모든 파일 표시 (.md 한정 제거)
-          nodes.push({
-            name: entry.name,
-            path: relPath,
-            type: "file",
-            included: meta.include.includes(relPath),
-          });
-        }
+  async function walkGithub(repoPath: string, relBase: string): Promise<FileNode[]> {
+    const entries = await githubListDir(repoPath, token);
+    const nodes: FileNode[] = [];
+    for (const entry of entries) {
+      if (entry.name.startsWith("_")) continue;
+      const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+      if (entry.type === "dir") {
+        const children = await walkGithub(entry.path, relPath);
+        nodes.push({ name: entry.name, path: relPath, type: "dir", included: false, children });
+      } else {
+        // 모든 파일 표시 (.md 한정 제거)
+        nodes.push({
+          name: entry.name,
+          path: relPath,
+          type: "file",
+          included: meta.include.includes(relPath),
+        });
       }
-      return nodes;
     }
-    return walkGithub(`data/channels/${channel}`, "");
+    return nodes;
+  }
+  try {
+    return await walkGithub(`data/channels/${channel}`, "");
+  } catch (e) {
+    console.warn(`[getChannelFileTree] ${channel} GitHub 조회 실패, 로컬 번들 파일로 폴백:`, e);
   }
 
   const root = path.join(CHANNEL_DIR, channel);
@@ -103,27 +105,27 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
 
 /** 텍스트 파일 읽기 */
 export async function readChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
-  if (isVercelProd()) {
-    const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
-    try {
-      return await githubRead(`data/channels/${channel}/${safe}`, token);
-    } catch {
-      // GitHub 읽기 실패 시 배포 번들 내 로컬 파일 폴백
-    }
+  const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  try {
+    return await githubRead(`data/channels/${channel}/${safe}`, token);
+  } catch (e) {
+    console.warn(`[readChannelFile] ${channel}/${filePath} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
   }
-  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
-  const full = path.join(CHANNEL_DIR, channel, safe);
+  const safeLocal = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const full = path.join(CHANNEL_DIR, channel, safeLocal);
   return fs.readFile(full, "utf-8");
 }
 
 /** 바이너리 파일 읽기 → raw base64 반환 */
 export async function readChannelFileBase64(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
-  if (isVercelProd()) {
-    const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
-    return githubReadBase64(`data/channels/${channel}/${safe}`, token);
+  const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  try {
+    return await githubReadBase64(`data/channels/${channel}/${safe}`, token);
+  } catch (e) {
+    console.warn(`[readChannelFileBase64] ${channel}/${filePath} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
   }
-  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
-  const full = path.join(CHANNEL_DIR, channel, safe);
+  const safeLocal = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const full = path.join(CHANNEL_DIR, channel, safeLocal);
   const buf = await fs.readFile(full);
   return buf.toString("base64");
 }
@@ -231,37 +233,32 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
     }
   }
 
-  if (isVercelProd()) {
-    // GitHub에서 최신 파일 목록 조회 (가이드 관리 UI 반영)
-    try {
-      const githubFiles: string[] = [];
-      async function walkGithub(repoPath: string, relBase: string) {
-        const entries = await githubListDir(repoPath, token);
-        for (const entry of entries) {
-          if (entry.name.startsWith("_") || entry.name === "CLAUDE.md" || entry.name.startsWith(".")) continue;
-          const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
-          if (entry.type === "dir") {
-            await walkGithub(entry.path, relPath);
-          } else if (isTextFile(entry.name)) {
-            githubFiles.push(relPath);
-          }
+  // 호스트(Vercel/render-worker/로컬)와 무관하게 항상 GitHub에서 최신 파일 목록을
+  // 먼저 조회한다 (가이드 관리 UI에서의 수정·업로드가 어디서 실행되든 즉시 반영되도록).
+  try {
+    const githubFiles: string[] = [];
+    async function walkGithub(repoPath: string, relBase: string) {
+      const entries = await githubListDir(repoPath, token);
+      for (const entry of entries) {
+        if (entry.name.startsWith("_") || entry.name === "CLAUDE.md" || entry.name.startsWith(".")) continue;
+        const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+        if (entry.type === "dir") {
+          await walkGithub(entry.path, relPath);
+        } else if (isTextFile(entry.name)) {
+          githubFiles.push(relPath);
         }
       }
-      await walkGithub(`data/channels/${channel}`, "");
-      if (githubFiles.length > 0) return githubFiles;
-      console.warn(`[collectGuideFiles] GitHub 목록이 비어있음 → 배포 번들 파일 사용`);
-    } catch (e) {
-      console.warn(`[collectGuideFiles] GitHub 조회 실패 → 배포 번들 파일 사용:`, e);
     }
-    // GitHub 실패 시 배포 번들의 로컬 파일로 폴백
-    const localFiles: string[] = [];
-    await walkLocal(root, "", localFiles);
-    return localFiles;
+    await walkGithub(`data/channels/${channel}`, "");
+    if (githubFiles.length > 0) return githubFiles;
+    console.warn(`[collectGuideFiles] GitHub 목록이 비어있음 → 배포 번들 파일 사용`);
+  } catch (e) {
+    console.warn(`[collectGuideFiles] GitHub 조회 실패 → 배포 번들 파일 사용:`, e);
   }
-
-  const files: string[] = [];
-  await walkLocal(root, "", files);
-  return files;
+  // GitHub 실패 시 배포 번들의 로컬 파일로 폴백
+  const localFiles: string[] = [];
+  await walkLocal(root, "", localFiles);
+  return localFiles;
 }
 
 // 채널에 멀티에이전트 파이프라인이 있는지 확인

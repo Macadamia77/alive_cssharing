@@ -153,6 +153,7 @@ function DraftCard({
               >
                 {isMine && <Check className="inline w-2.5 h-2.5 mr-0.5 -mt-px" />}
                 {CHANNEL_LABELS[ch]}
+                {ch === "naver-blog" && <span className="ml-0.5 opacity-60">·Claude</span>}
                 {isTaken && (
                   <span className="ml-1 text-[9px] text-slate-300 no-underline font-normal">
                     ({(assignedTo ?? 0) + 1})
@@ -175,6 +176,7 @@ export default function HomePage() {
   // AI 선택
   const [selectedProvider, setSelectedProvider] = useState<AIProvider>("mock");
   const [availableProviders, setAvailableProviders] = useState<AIProvider[]>(["mock"]);
+  const hasClaudeKey = availableProviders.includes("claude");
 
   // 초안 단계
   const [draftLoading, setDraftLoading] = useState(false);
@@ -275,6 +277,7 @@ export default function HomePage() {
   };
 
   const assignedChannels = CHANNELS.filter(c => channelMap[c] !== undefined);
+  const blogNeedsClaudeKey = assignedChannels.includes("naver-blog") && selectedProvider !== "mock" && !hasClaudeKey;
 
   // ── Step 1: 초안 추천 ───────────────────────────────────────
   const handleGetDrafts = async () => {
@@ -489,6 +492,7 @@ export default function HomePage() {
                     })}
                   </div>
                 )}
+                <p className="text-[10px] text-slate-400 mt-2">네이버 블로그는 품질을 위해 항상 Claude로 생성됩니다.</p>
               </div>
 
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
@@ -581,7 +585,14 @@ export default function HomePage() {
                         );
                       })}
                     </div>
-                    <button onClick={() => void handleGenerate()} disabled={generating}
+                    {blogNeedsClaudeKey && (
+                      <div className="mb-3 flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        네이버 블로그 생성에는 Claude API 키가 필요합니다.
+                        <a href="/settings" className="font-semibold underline hover:text-amber-900">설정에서 연결하기 →</a>
+                      </div>
+                    )}
+                    <button onClick={() => void handleGenerate()} disabled={generating || blogNeedsClaudeKey}
                       className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
                       <Wand2 className="w-5 h-5" />
                       {assignedChannels.length}개 채널 · {AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}로 생성

@@ -4,7 +4,8 @@ import { loadAIConfig, type Provider, type ProviderKey } from "./aiConfig";
 import { DEFAULT_MODELS } from "./resolveProvider";
 import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { callClaude, callOpenAI, callGemini, callGeminiWithSearch } from "./apiClients";
+import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch } from "./apiClients";
+import { assembleNaverBlogHtml } from "./htmlAssembler";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -269,10 +270,14 @@ export async function runAgentPipeline(
     fileContents["agents/researcher.md"] ??
     "당신은 리서처입니다. 주제를 조사하고 research.md 형식으로 출력하세요.";
 
+  // 리서치 단계에는 서비스 카탈로그·SEO 가이드만 필요 (나머지는 컨텍스트 낭비)
+  const RESEARCH_GUIDE_KEYS = new Set(["guide/06-brand-cta-reference.md", "guide/08-naver-seo.md"]);
+  const researchGuideKeys = guideKeys.filter(k => RESEARCH_GUIDE_KEYS.has(k));
+
   const researchSystem =
     WEB_PIPELINE_NOTE +
     researcherInstructions +
-    guideKeys.map(k => sec(k)).join("");
+    researchGuideKeys.map(k => sec(k)).join("");
 
   const researchUser =
     `주제: ${topic}` +
@@ -280,7 +285,16 @@ export async function runAgentPipeline(
     `\n\nresearch.md 형식으로 조사·분석 결과를 직접 출력하세요.`;
 
   console.log(`[pipeline] ${channel} Step 1: 리서치 시작`);
-  const researchOutput = stripCodeFence(await step(researchSystem, researchUser, 4096, provider === "gemini"));
+  let researchOutput: string;
+  if (provider === "claude") {
+    researchOutput = stripCodeFence(
+      await callClaudeWithNativeSearch(pc.apiKey, pc.model, researchSystem, researchUser, 8192, (n) => {
+        if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`);
+      })
+    );
+  } else {
+    researchOutput = stripCodeFence(await step(researchSystem, researchUser, 8192, provider === "gemini"));
+  }
   console.log(`[pipeline] ${channel} Step 1: 리서치 완료 (${researchOutput.length}자)`);
   saveDebug("step1_research", researchOutput);
 
@@ -289,26 +303,41 @@ export async function runAgentPipeline(
 
   const writerInstructions = fileContents["agents/writer-web.md"];
 
+  // 글쓰기 단계: 중요도 낮은 순 → 높은 순 정렬 (LLM은 프롬프트 뒷부분에 더 주목)
+  const WRITE_GUIDE_ORDER = [
+    "guide/04-image-guide.md",
+    "guide/02-examples.md",
+    "guide/03-quality-check.md",
+    "guide/08-naver-seo.md",
+    "guide/06-brand-cta-reference.md",
+    "guide/07-recatch-style.md",
+    "guide/01-writing-guide.md", // 핵심 규칙 — 가장 마지막에 배치
+  ];
+  const writeGuideKeys = [
+    ...guideKeys.filter(k => !WRITE_GUIDE_ORDER.includes(k)),
+    ...WRITE_GUIDE_ORDER.filter(k => guideKeys.includes(k)),
+  ];
+
   let writeSystem: string;
   if (writerInstructions) {
     writeSystem =
       WEB_PIPELINE_NOTE +
       writerInstructions +
-      guideKeys.map(k => sec(k)).join("");
+      writeGuideKeys.map(k => sec(k)).join("");
   } else {
-    const writerFileList = guideKeys
+    const writerFileList = writeGuideKeys
       .map((k, i) => `${i + 1}. ${k} → 아래 === 섹션에 전문 포함됨`)
       .join("\n");
     const writeFileReadyNote =
       `[웹 파이프라인 — 파일 제공 완료. 지금 바로 작성 시작]\n` +
       `writer.md의 '읽을 파일' 목록이 모두 이 시스템 프롬프트 안에 제공되어 있습니다:\n` +
       writerFileList + "\n" +
-      `${guideKeys.length + 1}. output/[주제]/research.md → 사용자 메시지의 [이전 단계 출력] 섹션\n\n` +
+      `${writeGuideKeys.length + 1}. output/[주제]/research.md → 사용자 메시지의 [이전 단계 출력] 섹션\n\n` +
       `→ 모든 파일 제공 완료. '하나라도 빠지면 작성하지 않는다' 조건 충족됨. 지금 바로 전체 글 작성 시작.\n\n`;
     writeSystem =
       writeFileReadyNote +
       (fileContents["agents/writer.md"] ?? "당신은 블로그 글쓰기 전문가입니다.") +
-      guideKeys.map(k => sec(k)).join("");
+      writeGuideKeys.map(k => sec(k)).join("");
   }
 
   const writeUser =
@@ -325,15 +354,50 @@ export async function runAgentPipeline(
     `<!-- NOTES:END -->`;
 
   console.log(`[pipeline] ${channel} Step 2: 글쓰기 시작`);
-  const draftRaw = stripCodeFence(await step(writeSystem, writeUser, 8000));
+  const draftRaw = stripCodeFence(await step(writeSystem, writeUser, 24000));
   console.log(`[pipeline] ${channel} Step 2: 글쓰기 완료 (${draftRaw.length}자)`);
   saveDebug("step2_writer_raw", draftRaw);
 
   if (!draftRaw.trim()) throw new Error("[pipeline] 글쓰기 단계 결과가 비어 있습니다.");
 
-  const draftOutput = draftRaw.includes("<!-- PUBLISH:START -->")
+  let draftOutput = draftRaw.includes("<!-- PUBLISH:START -->")
     ? draftRaw
     : `<!-- PUBLISH:START -->\n${draftRaw}\n<!-- PUBLISH:END -->`;
+
+  // ── Step 2b: 자기검증 + 필요 시 1회 재작성 (Claude 전용) ──────
+  if (provider === "claude") {
+    if (statusCallback) await statusCallback("품질 검증 중");
+    const rubric = fileContents["guide/03-quality-check.md"] ?? "";
+    const verifySystem =
+      "당신은 콘텐츠 품질 검증 담당자입니다. 아래 원고를 하네스 기준으로 검증하고, " +
+      "첫 줄에 정확히 'PASS' 또는 'FAIL'만 쓰고, FAIL인 경우 다음 줄부터 구체적 문제점을 불릿으로 나열하세요.\n\n" +
+      rubric;
+    const verifyUser = `[검증 대상 원고]\n${draftOutput}`;
+
+    try {
+      const verifyResult = stripCodeFence(await callClaude(pc.apiKey, pc.model, verifySystem, verifyUser, 1024));
+      saveDebug("step2b_verify", verifyResult);
+
+      const firstLine = verifyResult.trim().split("\n")[0]?.trim().toUpperCase() ?? "";
+      if (firstLine.startsWith("FAIL")) {
+        if (statusCallback) await statusCallback("본문 보완 중 (재작성)");
+        const issues = verifyResult.trim().split("\n").slice(1).join("\n");
+        const revisionUser =
+          writeUser +
+          `\n\n[이전 원고]\n${draftOutput}\n\n[품질 검증 결과 — 아래 문제점을 반드시 해결하여 전체를 다시 작성하세요]\n${issues}`;
+        const revisedRaw = stripCodeFence(await callClaude(pc.apiKey, pc.model, writeSystem, revisionUser, 24000));
+        saveDebug("step2c_revision", revisedRaw);
+        if (revisedRaw.trim()) {
+          draftOutput = revisedRaw.includes("<!-- PUBLISH:START -->")
+            ? revisedRaw
+            : `<!-- PUBLISH:START -->\n${revisedRaw}\n<!-- PUBLISH:END -->`;
+        }
+      }
+    } catch (e) {
+      // 검증/재작성 실패는 파이프라인을 막지 않는다 — 원래 초안을 그대로 사용
+      console.warn(`[pipeline] ${channel} Step 2b 검증/재작성 실패, 원래 초안 유지: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   // ── Step 2.5: Image Making ────────────────────────────────
   const imageMarkers = [...draftOutput.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
@@ -366,7 +430,7 @@ export async function runAgentPipeline(
       `[입력 draft.md 전문]\n${draftOutput}`;
 
     console.log(`[pipeline] ${channel} Step 2.5: 이미지 카드 작성 시작 (${imageMarkers.length}개 감지)`);
-    const finalDraftRaw = stripCodeFence(await step(imageMakerSystem, imageMakerUser, 8000, false, true));
+    const finalDraftRaw = stripCodeFence(await step(imageMakerSystem, imageMakerUser, 12000, false, true));
     console.log(`[pipeline] ${channel} Step 2.5: 이미지 카드 작성 완료 (${finalDraftRaw.length}자)`);
     saveDebug("step2.5_imagemaker_raw", finalDraftRaw);
 
@@ -399,31 +463,18 @@ export async function runAgentPipeline(
     saveDebug("step2.5_imagemaker_final_draft", finalDraft);
   }
 
-  // ── Step 3: Assembler ──────────────────────────────────────
+  // ── Step 3: Assembler (코드 기반 — LLM 호출 없음, 토큰 한도 없음) ──
   if (statusCallback) await statusCallback("assembling");
 
-  const assemblerInstructions =
-    fileContents["agents/assembler-web.md"] ??
-    fileContents["agents/assembler.md"] ??
-    "당신은 어셈블러입니다. draft를 정제하여 완성형 HTML만 출력하세요.";
-
-  const assemblerSystem =
-    WEB_PIPELINE_NOTE +
-    assemblerInstructions +
-    sec("guide/01-writing-guide.md");
-
-  const assemblerUser =
-    `[주제]\n${topic}\n\n` +
-    `[이전 단계 출력 — draft.md]\n${finalDraft}\n\n` +
-    `위 draft.md를 정밀 파싱하고 가이드를 적용하여, 본문과 이미지 카드가 온전히 합쳐진 독립형 HTML만 출력하세요.`;
-
-  console.log(`[pipeline] ${channel} Step 3: 조립 시작`);
-  const finalHtmlRaw = await step(assemblerSystem, assemblerUser, 8000, false, true);
-  let finalHtml = stripCodeFence(finalHtmlRaw);
+  console.log(`[pipeline] ${channel} Step 3: 조립 시작 (코드 기반)`);
+  const assembled = assembleNaverBlogHtml(finalDraft);
+  if (assembled === null) {
+    console.warn(`[pipeline] ${channel} Step 3: 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
+    return draftOutput;
+  }
+  let finalHtml = assembled;
   console.log(`[pipeline] ${channel} Step 3: 조립 완료 (${finalHtml.length}자)`);
-  saveDebug("step3_assembler_raw", finalHtmlRaw);
-
-  if (!finalHtml.trim() || !finalHtml.includes("<")) return draftOutput;
+  saveDebug("step3_assembled_html", finalHtml);
 
   // 조립된 최종 HTML에서 플레이스홀더들을 실제 HTML 카드 코드로 치환 복원!
   replacedCards.forEach((cardHtml, idx) => {

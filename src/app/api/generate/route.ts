@@ -94,10 +94,8 @@ export async function POST(req: NextRequest) {
       const resultId = makeResultId();
       const taskIds = targetChannels.map((channel) => `local_${resultId}_${channel}`);
 
-      // 태스크 즉시 pending 등록 (파일)
       taskIds.forEach((id) => writeTask(id, { status: "pending" }));
 
-      // 백그라운드 생성 (await 없이 실행)
       void (async () => {
         const resultsDir = join(process.cwd(), "data", "results");
         mkdirSync(resultsDir, { recursive: true });
@@ -110,7 +108,6 @@ export async function POST(req: NextRequest) {
               let content: string;
               const usePipeline = await hasAgentPipeline(channel, token ?? undefined);
               if (usePipeline) {
-                // agentRunner의 파이프라인 (naver-blog 등)
                 content = await agentRunPipeline(
                   channel, topic.trim(), draft,
                   token ?? undefined,
@@ -119,7 +116,6 @@ export async function POST(req: NextRequest) {
                   activeApiKey ?? undefined
                 );
               } else {
-                // agentRunner의 단순 생성 (instagram 등 — imageCardGuide 제외, maxTokens 올바름)
                 const systemPrompt = await buildSystemPrompt(channel, token ?? undefined);
                 content = await agentGenerateContent(
                   channel, topic.trim(), draft, systemPrompt,
@@ -138,7 +134,6 @@ export async function POST(req: NextRequest) {
           })
         );
 
-        // 결과를 파일에도 저장 (결과물 페이지용)
         writeFileSync(
           join(resultsDir, `${resultId}.json`),
           JSON.stringify({
@@ -160,17 +155,34 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // 네이버 블로그는 실검색·자기검증 파이프라인을 위해 항상 Claude로 강제한다
+    const isBlogRequested = targetChannels.includes("naver-blog");
+    let blogApiKey: string | null = null;
+    if (isBlogRequested && activeProvider !== "mock") {
+      const blogProvider = resolveProvider(req, "claude");
+      if (!blogProvider) {
+        return NextResponse.json(
+          { error: "네이버 블로그 채널은 Claude API 키가 필요합니다. 설정 페이지에서 Claude API 키를 등록해주세요." },
+          { status: 400 }
+        );
+      }
+      blogApiKey = blogProvider.apiKey;
+    }
+
     // ── Supabase 비동기 큐 등록 ──────────────────────────────────
-    const tasksData = targetChannels.map((channel) => ({
-      topic: topic.trim(),
-      draft,
-      channel,
-      status: "pending",
-      provider: activeProvider,
-      api_key: activeApiKey,
-      suggestions: suggestions || null,
-      github_token: token,
-    }));
+    const tasksData = targetChannels.map((channel) => {
+      const isBlog = channel === "naver-blog" && activeProvider !== "mock";
+      return {
+        topic: topic.trim(),
+        draft,
+        channel,
+        status: "pending",
+        provider: isBlog ? "claude" : activeProvider,
+        api_key: isBlog ? blogApiKey : activeApiKey,
+        suggestions: suggestions || null,
+        github_token: token,
+      };
+    });
 
     const { data: insertedTasks, error: dbError } = await supabase
       .from("tasks")

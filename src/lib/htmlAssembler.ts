@@ -6,6 +6,7 @@
 // data/ 에서 로드한다 (하드코딩 금지 원칙). 파일이 없으면 최소 폴백으로 동작이 끊기지 않게 한다.
 import { readFileSync } from "fs";
 import { join } from "path";
+import { dataRoot } from "./dataRoot";
 
 // ─── 브랜드 상수 (data/brand.json) ───────────────────────────
 interface Brand {
@@ -24,7 +25,7 @@ const FALLBACK_BRAND: Brand = {
 
 function loadBrand(): Brand {
   try {
-    const raw = readFileSync(join(process.cwd(), "data/brand.json"), "utf-8");
+    const raw = readFileSync(join(dataRoot(), "data/brand.json"), "utf-8");
     return { ...FALLBACK_BRAND, ...JSON.parse(raw) };
   } catch (e) {
     console.warn(`[htmlAssembler] data/brand.json 로드 실패, 폴백 상수 사용: ${e instanceof Error ? e.message : e}`);

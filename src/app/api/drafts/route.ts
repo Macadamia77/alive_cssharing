@@ -5,8 +5,9 @@ import { resolveGithubToken } from "@/lib/resolveToken";
 import { callClaude, callOpenAI, callGemini } from "@/lib/apiClients";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { dataRoot } from "@/lib/dataRoot";
 
-const DRAFTS_SYSTEM = readFileSync(join(process.cwd(), "data/prompts/drafts.md"), "utf-8");
+const DRAFTS_SYSTEM = readFileSync(join(dataRoot(), "data/prompts/drafts.md"), "utf-8");
 
 export interface DraftItem {
   angle: string;

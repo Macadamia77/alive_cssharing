@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch } from "./apiClients";
 import { assembleNaverBlogHtml } from "./htmlAssembler";
+import { dataRoot } from "./dataRoot";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -181,7 +182,7 @@ ${draft}
 }
 
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-const WEB_PIPELINE_NOTE = readFileSync(join(process.cwd(), "data/prompts/web-pipeline-note.md"), "utf-8");
+const WEB_PIPELINE_NOTE = readFileSync(join(dataRoot(), "data/prompts/web-pipeline-note.md"), "utf-8");
 
 export async function runAgentPipeline(
   channel: ChannelKey,

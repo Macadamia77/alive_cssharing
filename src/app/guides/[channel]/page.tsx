@@ -3,7 +3,7 @@ import Navbar from "@/components/Navbar";
 import { type ChannelKey } from "@/components/ChannelResultCard";
 import { notFound } from "next/navigation";
 
-const VALID_CHANNELS: ChannelKey[] = ["naver-blog", "instagram", "facebook", "linkedin", "magazine"];
+const VALID_CHANNELS: ChannelKey[] = ["naver-blog", "instagram", "linkedin", "magazine"];
 
 export default async function GuideDetailPage({
   params,

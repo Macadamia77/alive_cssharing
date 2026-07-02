@@ -1,0 +1,107 @@
+{
+  "planning": "각 layout_type별 렌더러 검증용 테스트 데이터",
+  "content_title": "CS쉐어링 콜센터 아웃소싱 솔루션",
+  "cards": [
+    {
+      "card_no": 1,
+      "card_type": "중간 카드",
+      "template_name": "Instagram post - middle",
+      "layout_type": "stacked_boxes",
+      "cloud_label": "",
+      "series_title": "CS쉐어링 솔루션",
+      "title": "콜센터 운영의\n3가지 핵심",
+      "highlight_text": "3가지 핵심",
+      "subtitle": "전문가가 검증한 운영 전략",
+      "body": "stacked_boxes: 파란 좌측 강조선 + 흰 박스 세로 스택",
+      "items": [
+        { "title": "전문 인력 배치", "body": "경력 3년 이상 CS 전문가로 구성된 팀" },
+        { "title": "실시간 모니터링", "body": "24/7 품질 지표 추적 및 즉시 대응 체계" },
+        { "title": "데이터 기반 개선", "body": "월별 분석 리포트로 지속적 운영 최적화" }
+      ],
+      "cta": "",
+      "design_point": ""
+    },
+    {
+      "card_no": 2,
+      "card_type": "중간 카드",
+      "template_name": "Instagram post - middle",
+      "layout_type": "keyword_boxes",
+      "cloud_label": "",
+      "series_title": "CS쉐어링 솔루션",
+      "title": "우리가 커버하는\n모든 채널",
+      "highlight_text": "모든 채널",
+      "subtitle": "멀티채널 고객 응대 솔루션",
+      "body": "keyword_boxes: 파란 배경 타일 그리드. 번호·선 없음",
+      "items": [
+        { "title": "전화 응대", "body": "인바운드/아웃바운드" },
+        { "title": "채팅 상담", "body": "실시간 메신저 대응" },
+        { "title": "이메일 처리", "body": "B2B 문의 특화" },
+        { "title": "SNS 관리", "body": "브랜드 채널 운영" }
+      ],
+      "cta": "",
+      "design_point": ""
+    },
+    {
+      "card_no": 3,
+      "card_type": "중간 카드",
+      "template_name": "Instagram post - middle",
+      "layout_type": "compare_2col",
+      "cloud_label": "",
+      "series_title": "CS쉐어링 솔루션",
+      "title": "아웃소싱 전후\n비교",
+      "highlight_text": "비교",
+      "subtitle": "도입 전과 후의 명확한 차이",
+      "body": "compare_2col: A(파랑)/B(슬레이트) 2열 분리. 아이템 앞절반→A, 뒷절반→B",
+      "items": [
+        { "title": "처리 지연 빈번", "body": "평균 대기 8분 이상" },
+        { "title": "높은 이탈률", "body": "고객 불만 접수 증가" },
+        { "title": "응답률 99%", "body": "평균 대기 30초 이내" },
+        { "title": "만족도 향상", "body": "NPS +35점 개선" }
+      ],
+      "cta": "",
+      "design_point": ""
+    },
+    {
+      "card_no": 4,
+      "card_type": "중간 카드",
+      "template_name": "Instagram post - middle",
+      "layout_type": "steps_vertical",
+      "cloud_label": "",
+      "series_title": "CS쉐어링 솔루션",
+      "title": "도입까지\n4단계",
+      "highlight_text": "4단계",
+      "subtitle": "빠르고 체계적인 온보딩",
+      "body": "steps_vertical: 파란 원형 번호 + 연결선으로 흐름 표시",
+      "items": [
+        { "title": "현황 진단", "body": "현재 CS 운영 현황 및 Pain Point 분석" },
+        { "title": "맞춤 설계", "body": "업종·규모에 최적화된 운영 모델 제안" },
+        { "title": "파일럿 운영", "body": "2주 시범 운영으로 품질 사전 검증" },
+        { "title": "정식 전환", "body": "KPI 설정 후 본격 운영 시작" }
+      ],
+      "cta": "",
+      "design_point": ""
+    },
+    {
+      "card_no": 5,
+      "card_type": "중간 카드",
+      "template_name": "Instagram post - middle",
+      "layout_type": "flow_process",
+      "cloud_label": "",
+      "series_title": "CS쉐어링 솔루션",
+      "title": "고객 문의\n처리 흐름",
+      "highlight_text": "처리 흐름",
+      "subtitle": "인입부터 해결까지 원스톱",
+      "body": "flow_process: 파란 그라디언트 박스 + ▼ 화살표 연결",
+      "items": [
+        { "title": "고객 문의 인입", "body": "전화·채팅·이메일 통합 수신" },
+        { "title": "자동 분류", "body": "AI 태깅으로 담당자 즉시 배정" },
+        { "title": "전문 상담", "body": "스크립트 기반 일관된 응대" },
+        { "title": "해결 및 기록", "body": "CRM 자동 저장 + 사후 분석" }
+      ],
+      "cta": "",
+      "design_point": ""
+    }
+  ],
+  "caption": "CS쉐어링과 함께라면 콜센터 운영이 달라집니다.\n문의: 1522-5539",
+  "hashtags": ["#CS쉐어링", "#콜센터아웃소싱", "#고객서비스", "#CX운영"]
+}

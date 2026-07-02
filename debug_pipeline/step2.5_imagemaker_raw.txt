@@ -1,0 +1,30 @@
+<!-- CARD_START -->
+<div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;
+            background:#18A0E8; width:720px; height:720px; padding:60px;
+            box-sizing:border-box; position:relative; display:flex; flex-direction:column;
+            justify-content:center; align-items:center; border:8px solid #ffffff; margin:24px auto;">
+  
+  <!-- 좌상단 흰 모서리 장식선 -->
+  <div style="position:absolute; left:40px; top:40px; width:40px; height:40px; border-left:4px solid #ffffff; border-top:4px solid #ffffff;"></div>
+  
+  <!-- 우상단 CS Sharing 로고 -->
+  <div style="position:absolute; right:40px; top:40px; color:#ffffff; font-size:18px; font-weight:700; letter-spacing:1px;">CS Sharing</div>
+  
+  <!-- 중앙 상단 흰 캡슐 배지 (주제/카테고리) -->
+  <div style="background:#ffffff; color:#18A0E8; border-radius:20px; padding:6px 20px; font-size:16px; font-weight:700; margin-bottom:24px; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+    고객센터 운영 전략
+  </div>
+  
+  <!-- 중앙 글 제목 (흰색, 굵게, 최대 2줄) -->
+  <div style="color:#ffffff; font-size:36px; font-weight:800; text-align:center; line-height:1.4; word-break:keep-all; max-width:600px; margin-bottom:40px;">
+    성수기 CS 문제점, 아웃소싱으로 해결하는 3가지
+  </div>
+  
+  <!-- 하단 캐릭터 대체 이모지 -->
+  <div style="font-size:70px; margin-bottom:20px;">📞</div>
+  
+  <!-- 우하단 슬로건 -->
+  <div style="position:absolute; right:40px; bottom:40px; color:#ffffff; font-size:14px; font-weight:500; opacity:0.9;">CS 아웃소싱의 새로운 기준</div>
+</div>
+<p style="font-size:13px;color:#888;text-align:center;margin-top:8px;">성수기 고객 문의 폭주와 CS팀의 어려움을 상징하는 이미지</p>
+<!-- CARD_END -->

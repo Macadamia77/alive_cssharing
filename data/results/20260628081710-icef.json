@@ -1,0 +1,8 @@
+{
+  "id": "20260628081710-icef",
+  "topic": "성수기 CS 준비하려고 하는데, 인력 공백이 매출 손실로 이어지는 이유",
+  "createdAt": "2026-06-28T08:17:10.934Z",
+  "channels": {
+    "instagram": "{\n  \"planning\": \"성수기 CS 인력 공백은 단순히 바쁜 것을 넘어, 고객 이탈과 구매 전환율 하락을 유발하여 기업의 소중한 매출을 직접적으로 갉아먹는 악순환으로 이어질 수 있습니다. CS쉐어링은 유연하고 전문적인 CS 운영으로 이러한 문제를 해결하고 기업이 핵심 사업에 집중할 수 있도록 돕습니다.\",\n  \"content_title\": \"성수기 CS 인력 공백, 매출 손실로 이어지는 악순환\",\n  \"cards\": [\n    {\n      \"card_no\": 1,\n      \"card_type\": \"후킹 카드\",\n      \"template_name\": \"Instagram post - first\",\n      \"layout_type\": \"cover\",\n      \"cloud_label\": \"Insight\",\n      \"series_title\": \"\",\n      \"title\": \"성수기 CS,\\n이번에도 놓칠 건가요?\",\n      \"highlight_text\": \"\",\n      \"subtitle\": \"인력 공백이 예상되는 성수기, 매출 손실로 이어지는 악순환을 끊어야 합니다.\",\n      \"body\": \"성수기 CS 인력 공백이 매출 손실로 이어지는 악순환을 인지하고 끊어낼 필요성을 제기합니다.\",\n      \"items\": [],\n      \"cta\": \"\",\n      \"design_point\": \"\"\n    },\n    {\n      \"card_no\": 2,\n      \"card_type\": \"중간 카드\",\n      \"template_name\": \"Instagram post - middle\",\n      \"layout_type\": \"keyword_boxes\",\n      \"cloud_label\": \"\",\n      \"series_title\": \"성수기 CS 운영 진단\",\n      \"title\": \"갑작스러운\\n문의 폭주\",\n      \"highlight_text\": \"문의 폭주\",\n      \"subtitle\": \"고객"
+  }
+}

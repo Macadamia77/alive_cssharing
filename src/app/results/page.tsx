@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib/channels";
+import InstagramCardPreview, { tryParseInstagramJson } from "@/components/InstagramCardPreview";
 import {
   copyToClipboard, htmlToText, splitHashtags, extractCards, downloadCardPng, downloadCardsZip,
 } from "@/lib/resultDownload";
@@ -15,7 +16,6 @@ import {
 const CHANNEL_ICONS: Record<ChannelKey, React.ReactNode> = {
   "naver-blog": <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current"><path d="M16.273 12.845L7.376 0H0v24h7.727V11.155L16.624 24H24V0h-7.727z" /></svg>,
   instagram: <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" /></svg>,
-  facebook: <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" /></svg>,
   linkedin: <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>,
   magazine: <BookOpen className="w-3.5 h-3.5" />,
 };
@@ -180,10 +180,14 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
             className="w-full p-4 text-sm text-slate-800 font-[inherit] leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 min-h-[200px]"
             autoFocus
           />
-        ) : text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html") ? (
+        ) : ch === "instagram" && tryParseInstagramJson(text) ? (
+          /* 인스타그램: 카드뉴스 프리뷰 */
+          <div className="p-4"><InstagramCardPreview content={text} /></div>
+        ) : (text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html")) ? (
+          /* 네이버 블로그 HTML: iframe 렌더링 */
           <iframe
             srcDoc={text}
-            title="미리보기"
+            title="블로그 미리보기"
             className="w-full"
             style={{ height: "500px", border: "none" }}
             sandbox="allow-same-origin"
@@ -233,6 +237,33 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
   );
 }
 
+// ── 채널 뱃지 (클릭으로 복사) ───────────────────────────────
+function CopyBadge({ ch, color, bgColor, content }: {
+  ch: ChannelKey; color: string; bgColor: string; content: string | undefined;
+}) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!content) return;
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title={content ? "클릭하여 복사" : "콘텐츠 없음"}
+      disabled={!content}
+      className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer disabled:opacity-40 ${
+        copied ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : `${bgColor} ${color}`
+      }`}
+    >
+      {copied ? <Check className="w-3 h-3" /> : CHANNEL_ICONS[ch]}
+      <span className="hidden sm:inline">{copied ? "복사됨" : (CHANNEL_LABELS[ch] ?? ch)}</span>
+    </button>
+  );
+}
+
 // ── 결과 카드 ──────────────────────────────────────────────
 function ResultCard({ result, onDelete }: {
   result: ResultEntry;
@@ -265,7 +296,7 @@ function ResultCard({ result, onDelete }: {
     <div className="glass-card rounded-2xl overflow-hidden">
       {/* 카드 헤더 */}
       <div
-        className="px-5 py-4 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        className="px-5 py-4 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors"
         onClick={() => setOpen(v => !v)}
       >
         <div className="text-slate-400 shrink-0">
@@ -275,15 +306,19 @@ function ResultCard({ result, onDelete }: {
           <p className="font-semibold text-slate-900 text-sm truncate">{result.topic}</p>
           <p className="text-xs text-slate-400 mt-0.5">{fmtDate(result.createdAt)} · {fmtTime(result.createdAt)}</p>
         </div>
-        {/* 채널 뱃지 */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* 채널 뱃지 (클릭하면 콘텐츠 복사) */}
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
           {channelKeys.map(ch => {
             const { color, bgColor } = CHANNEL_COLORS[ch as ChannelKey] ?? { color: "text-slate-600", bgColor: "bg-slate-100" };
+            const content = channels[ch];
             return (
-              <span key={ch} className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold ${bgColor} ${color}`}>
-                {CHANNEL_ICONS[ch as ChannelKey]}
-                <span className="hidden sm:inline">{CHANNEL_LABELS[ch as ChannelKey] ?? ch}</span>
-              </span>
+              <CopyBadge
+                key={ch}
+                ch={ch as ChannelKey}
+                color={color}
+                bgColor={bgColor}
+                content={content}
+              />
             );
           })}
         </div>

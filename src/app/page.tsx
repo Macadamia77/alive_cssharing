@@ -185,6 +185,8 @@ export default function HomePage() {
   const [draftBodies, setDraftBodies] = useState<string[]>([]);
   // 채널 → 초안 인덱스 (undefined = 미배정)
   const [channelMap, setChannelMap] = useState<Partial<Record<ChannelKey, number>>>({});
+  // sessionStorage 복원 완료 여부 (복원 전에 저장 effect가 초기값으로 덮어쓰는 것을 방지)
+  const [sessionRestored, setSessionRestored] = useState(false);
 
   // 채널 생성 단계
   const [generating, setGenerating] = useState(false);
@@ -227,6 +229,41 @@ export default function HomePage() {
       }
     })();
   }, []);
+
+  // 페이지 이탈 후 복귀 시 초안/주제 복원
+  useEffect(() => {
+    try {
+      const savedTopic = sessionStorage.getItem("csai_topic");
+      const savedPhase = sessionStorage.getItem("csai_phase");
+      const savedDrafts = sessionStorage.getItem("csai_drafts");
+      const savedBodies = sessionStorage.getItem("csai_draftBodies");
+      const savedMap = sessionStorage.getItem("csai_channelMap");
+      if (savedTopic) setTopic(savedTopic);
+      if (savedDrafts) {
+        const parsedDrafts = JSON.parse(savedDrafts) as DraftItem[];
+        if (parsedDrafts.length > 0) {
+          setDrafts(parsedDrafts);
+          setDraftBodies(savedBodies ? (JSON.parse(savedBodies) as string[]) : parsedDrafts.map(d => d.body));
+          setChannelMap(savedMap ? (JSON.parse(savedMap) as Partial<Record<ChannelKey, number>>) : {});
+          // channels 단계에서 이탈했어도 drafts로 복원
+          if (savedPhase === "drafts" || savedPhase === "channels") setPhase("drafts");
+        }
+      }
+    } catch {}
+    setSessionRestored(true);
+  }, []);
+
+  // 상태 변경 시 sessionStorage에 저장
+  useEffect(() => {
+    if (!sessionRestored) return;
+    try {
+      sessionStorage.setItem("csai_topic", topic);
+      sessionStorage.setItem("csai_phase", phase);
+      sessionStorage.setItem("csai_drafts", JSON.stringify(drafts));
+      sessionStorage.setItem("csai_draftBodies", JSON.stringify(draftBodies));
+      sessionStorage.setItem("csai_channelMap", JSON.stringify(channelMap));
+    } catch {}
+  }, [topic, phase, drafts, draftBodies, channelMap, sessionRestored]);
 
   const toggleChannelForDraft = (draftIndex: number, ch: ChannelKey) => {
     setChannelMap(prev => {
@@ -367,8 +404,12 @@ export default function HomePage() {
   }, [generating, assignedChannels, drafts, draftBodies, channelMap, topic, selectedProvider]);
 
   const allDone = resultChannels.length > 0 && resultChannels.every(c => results[c].status === "done");
+  const clearSession = () => {
+    ["csai_topic","csai_phase","csai_drafts","csai_draftBodies","csai_channelMap"].forEach(k => sessionStorage.removeItem(k));
+  };
   const resetAll = () => {
-    setPhase("input"); setDrafts([]); setChannelMap({});
+    clearSession();
+    setPhase("input"); setTopic(""); setDrafts([]); setDraftBodies([]); setChannelMap({});
     setGenError(null); setDraftError(null); setResultChannels([]);
   };
 
@@ -491,7 +532,7 @@ export default function HomePage() {
                     : <><Sparkles className="w-5 h-5" />{AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}로 초안 생성하기</>}
                 </button>
               ) : (
-                <button onClick={() => { setPhase("input"); setDrafts([]); setChannelMap({}); }}
+                <button onClick={() => { clearSession(); setPhase("input"); setDrafts([]); setDraftBodies([]); setChannelMap({}); }}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 cursor-pointer">
                   <RefreshCw className="w-4 h-4" />주제 다시 입력하기
                 </button>
@@ -577,9 +618,13 @@ export default function HomePage() {
                     {resultChannels.length}개 채널 생성 완료
                   </span>
                   <div className="flex gap-2">
+                    <button onClick={() => { setPhase("drafts"); setGenError(null); setResultChannels([]); }}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50 cursor-pointer">
+                      <ArrowLeft className="w-3.5 h-3.5" />초안으로 돌아가기
+                    </button>
                     <button onClick={resetAll}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50 cursor-pointer">
-                      <ArrowLeft className="w-3.5 h-3.5" />새 콘텐츠 생성
+                      <RefreshCw className="w-3.5 h-3.5" />새 주제로 시작
                     </button>
                     <Link href="/results"
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 text-sm font-medium hover:bg-blue-100 cursor-pointer">

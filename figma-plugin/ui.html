@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      color: #333;
+      padding: 16px;
+      background: #fff;
+    }
+
+    h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #111;
+    }
+
+    .desc {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .theme-section {
+      margin-bottom: 12px;
+    }
+
+    .theme-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 6px;
+    }
+
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .theme-btn {
+      padding: 6px 4px;
+      border: 1.5px solid #d9d9d9;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 11px;
+      font-weight: 500;
+      color: #555;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+      line-height: 1.3;
+    }
+
+    .theme-btn:hover {
+      border-color: #00AEEF;
+      color: #00AEEF;
+    }
+
+    .theme-btn.active {
+      border-color: #00AEEF;
+      background: #e8f7fd;
+      color: #007ab8;
+      font-weight: 600;
+    }
+
+    .theme-btn .theme-icon {
+      display: block;
+      font-size: 16px;
+      margin-bottom: 2px;
+    }
+
+    textarea {
+      width: 100%;
+      height: 185px;
+      border: 1px solid #d9d9d9;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 11px;
+      font-family: "Menlo", "Consolas", monospace;
+      color: #333;
+      resize: none;
+      outline: none;
+      line-height: 1.4;
+    }
+
+    textarea:focus {
+      border-color: #00AEEF;
+    }
+
+    textarea::placeholder {
+      color: #bbb;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    button {
+      flex: 1;
+      padding: 9px 0;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #btn-create {
+      background: #00AEEF;
+      color: #fff;
+    }
+
+    #btn-create:hover:not(:disabled) {
+      background: #009ad6;
+    }
+
+    #btn-clear {
+      background: #f0f0f0;
+      color: #555;
+      flex: 0 0 72px;
+    }
+
+    #btn-clear:hover:not(:disabled) {
+      background: #e4e4e4;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #555;
+      min-height: 18px;
+      line-height: 1.5;
+    }
+
+    #status.error {
+      color: #e34;
+    }
+
+    #status.success {
+      color: #0a8;
+    }
+  </style>
+</head>
+<body>
+  <h2>CS쉐어링 카드뉴스 생성</h2>
+  <p class="desc">앱에서 생성한 JSON을 복사한 뒤 아래에 붙여넣고<br>카드 생성 버튼을 누르세요.</p>
+
+  <div class="theme-section">
+    <div class="theme-label">📐 피그마 템플릿 테마</div>
+    <div class="theme-grid">
+      <button class="theme-btn active" data-theme="default">
+        <span class="theme-icon">🎨</span>기본
+      </button>
+      <button class="theme-btn" data-theme="summer">
+        <span class="theme-icon">☀️</span>여름
+      </button>
+      <button class="theme-btn" data-theme="summer1">
+        <span class="theme-icon">🏖️</span>여름 1
+      </button>
+      <button class="theme-btn" data-theme="summer2">
+        <span class="theme-icon">🌊</span>여름 2
+      </button>
+      <button class="theme-btn" data-theme="summer3">
+        <span class="theme-icon">🍧</span>여름 3
+      </button>
+      <button class="theme-btn" data-theme="summer4">
+        <span class="theme-icon">🌴</span>여름 4
+      </button>
+      <button class="theme-btn" data-theme="summer5">
+        <span class="theme-icon">🏝️</span>여름 5
+      </button>
+    </div>
+  </div>
+
+  <textarea
+    id="json-input"
+    placeholder='{"cards": [...]} 또는 앱 전체 JSON 붙여넣기'
+    spellcheck="false"
+  ></textarea>
+
+  <div class="btn-row">
+    <button id="btn-create">카드 생성</button>
+    <button id="btn-clear">지우기</button>
+  </div>
+
+  <div id="status"></div>
+
+  <script>
+    var btnCreate = document.getElementById("btn-create");
+    var btnClear = document.getElementById("btn-clear");
+    var jsonInput = document.getElementById("json-input");
+    var statusEl = document.getElementById("status");
+    var selectedTheme = "default";
+
+    // 테마 버튼 이벤트
+    document.querySelectorAll(".theme-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        document.querySelectorAll(".theme-btn").forEach(function(b) {
+          b.classList.remove("active");
+        });
+        btn.classList.add("active");
+        selectedTheme = btn.getAttribute("data-theme");
+      });
+    });
+
+    function setStatus(text, type) {
+      statusEl.textContent = text;
+      statusEl.className = type || "";
+    }
+
+    function setLoading(isLoading) {
+      btnCreate.disabled = isLoading;
+      btnClear.disabled = isLoading;
+      btnCreate.textContent = isLoading ? "생성 중..." : "카드 생성";
+    }
+
+    btnCreate.addEventListener("click", function () {
+      var text = jsonInput.value.trim();
+
+      if (!text) {
+        setStatus("JSON을 붙여넣어 주세요.", "error");
+        return;
+      }
+
+      setLoading(true);
+      setStatus("처리 중...");
+
+      parent.postMessage(
+        { pluginMessage: { type: "create-cards", jsonText: text, theme: selectedTheme } },
+        "*"
+      );
+    });
+
+    btnClear.addEventListener("click", function () {
+      jsonInput.value = "";
+      setStatus("");
+    });
+
+    window.onmessage = function (event) {
+      var msg = event.data.pluginMessage;
+
+      if (!msg) return;
+
+      if (msg.type === "status") {
+        var isError = msg.message.startsWith("오류");
+        var isDone = msg.message.includes("완료");
+
+        setStatus(msg.message, isError ? "error" : isDone ? "success" : "");
+      }
+
+      if (msg.type === "button-enabled") {
+        setLoading(false);
+      }
+    };
+  </script>
+</body>
+</html>

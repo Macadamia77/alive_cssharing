@@ -7,4 +7,7 @@ if (!supabaseUrl || !supabaseKey) {
   console.warn("[supabase] Supabase URL 또는 Key가 주입되지 않았습니다.");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = createClient(
+  supabaseUrl || "https://placeholder.supabase.co",
+  supabaseKey || "placeholder"
+);

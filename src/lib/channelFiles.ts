@@ -18,6 +18,13 @@ export interface ChannelMeta {
   description: string;
   include: string[];
   excluded_note?: string;
+  // ⑤ 생성 튜닝 (선택 — 없으면 코드 기본값 사용)
+  maxTokens?: number;        // 응답 최대 길이 (기본 4096)
+  disableThinking?: boolean; // Gemini thinking 비활성화 (JSON 구조화 채널용)
+  imageCards?: boolean;      // 이미지 카드 가이드 포함 여부 (기본 true, JSON 채널은 false)
+  // ④ 파이프라인 가이드 선택/순서 (선택 — 파이프라인 채널용)
+  researchGuides?: string[]; // 리서치 단계에 넣을 guide 파일 키 목록
+  writeOrder?: string[];     // 글쓰기 단계 guide 배치 순서 (뒤일수록 LLM이 더 주목)
 }
 
 export interface FileNode {

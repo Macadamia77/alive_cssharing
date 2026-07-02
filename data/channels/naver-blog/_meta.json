@@ -9,5 +9,18 @@
     "guide/06-brand-cta-reference.md",
     "guide/07-recatch-style.md",
     "guide/08-naver-seo.md"
+  ],
+  "researchGuides": [
+    "guide/06-brand-cta-reference.md",
+    "guide/08-naver-seo.md"
+  ],
+  "writeOrder": [
+    "guide/04-image-guide.md",
+    "guide/02-examples.md",
+    "guide/03-quality-check.md",
+    "guide/08-naver-seo.md",
+    "guide/06-brand-cta-reference.md",
+    "guide/07-recatch-style.md",
+    "guide/01-writing-guide.md"
   ]
 }

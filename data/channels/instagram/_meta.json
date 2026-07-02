@@ -4,5 +4,8 @@
   "description": "B2B 감성 + 정보 콘텐츠 생성",
   "include": [
     "guide.md"
-  ]
+  ],
+  "maxTokens": 16000,
+  "disableThinking": true,
+  "imageCards": false
 }

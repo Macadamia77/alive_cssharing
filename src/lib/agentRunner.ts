@@ -1,11 +1,12 @@
 import { CHANNELS, type ChannelKey } from "./channels";
-import { buildSystemPrompt, hasAgentPipeline, collectGuideFiles, readChannelFile } from "./channelFiles";
+import { buildSystemPrompt, hasAgentPipeline, collectGuideFiles, readChannelFile, getChannelMeta } from "./channelFiles";
 import { loadAIConfig, type Provider, type ProviderKey } from "./aiConfig";
 import { DEFAULT_MODELS } from "./resolveProvider";
 import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch } from "./apiClients";
 import { assembleNaverBlogHtml } from "./htmlAssembler";
+import { dataRoot } from "./dataRoot";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -118,28 +119,26 @@ export async function generateContent(
   suggestions?: string[],
   apiKeyOverride?: string
 ): Promise<string> {
+  // 채널 설정(_meta.json)에서 생성 튜닝 로드 (없으면 코드 기본값)
+  const meta = await getChannelMeta(channel, token).catch(() => null);
+
   const suggestionContext =
     suggestions && suggestions.length > 0
       ? `\n\n[참고 키워드 및 방향]\n${suggestions.map((s) => `- ${s}`).join("\n")}`
       : "";
 
-  // instagram은 JSON만 출력해야 하므로 HTML 이미지 카드 가이드를 제외
-  const imageCardGuide = channel === "instagram" ? "" : `
-
-[이미지 카드]
-콘텐츠에 이미지/인포그래픽이 필요한 위치에는 아래 형식의 HTML 카드를 직접 삽입하세요.
-(CS쉐어링 B2B 맥락: 콜센터·CS 운영·기업 담당자 소재만 사용, 소비재·생활 이미지 금지)
-<figure style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;background:#fff;border:1px solid #e0e8f0;border-radius:10px;padding:24px 28px;margin:20px 0;box-shadow:0 2px 8px rgba(30,144,214,0.07);">
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-    <div style="width:3px;height:14px;background:#1e90d6;border-radius:2px;"></div>
-    <span style="font-size:12px;color:#aaa;">CS쉐어링</span>
-  </div>
-  <div style="font-size:22px;font-weight:700;color:#1a1a1a;margin-bottom:4px;">[헤드라인 1행]</div>
-  <div style="font-size:22px;font-weight:700;color:#1e90d6;margin-bottom:16px;">[핵심 메시지 2행]</div>
-  [내용: 번호 목록 / 비교표 / 소제목 요약 등 — 내용에 맞게 선택]
-  <div style="background:#1e90d6;color:#fff;text-align:center;padding:13px;border-radius:7px;font-size:15px;font-weight:700;margin-top:20px;">CS쉐어링 문의 ☎ 1522-5539</div>
-  <div style="text-align:right;font-size:11px;color:#ccc;margin-top:10px;letter-spacing:0.5px;">CS Sharing</div>
-</figure>`;
+  // 이미지 카드 가이드는 채널별 파일(data/channels/<채널>/image-card-guide.md)에서 로드한다.
+  // 공용 파일로 획일 적용하지 않고 채널마다 독립적으로 관리한다.
+  // _meta.json의 imageCards가 false인 채널(JSON 출력 등)은 아예 불러오지 않는다.
+  let imageCardGuide = "";
+  if (meta?.imageCards !== false) {
+    try {
+      const guideText = (await readChannelFile(channel, "image-card-guide.md", token)).trim();
+      if (guideText) imageCardGuide = `\n\n${guideText}`;
+    } catch {
+      // 해당 채널에 image-card-guide.md가 없으면 이미지 카드 가이드 없이 진행 (정상)
+    }
+  }
 
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
@@ -171,9 +170,9 @@ ${draft}
       throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
     }
 
-    const maxTok = channel === "instagram" ? 16000 : 4096;
-    // instagram은 JSON 구조화 작업 → thinking 불필요, 끄면 훨씬 빠름
-    const disableThinking = channel === "instagram";
+    // 응답 길이·thinking은 _meta.json에서 (JSON 구조화 채널은 길게 + thinking off)
+    const maxTok = meta?.maxTokens ?? 4096;
+    const disableThinking = meta?.disableThinking ?? false;
     if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
     if (provider === "openai") return callOpenAI(pc.apiKey, pc.model, systemPrompt, userMessage);
     if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok, disableThinking);
@@ -183,7 +182,7 @@ ${draft}
 }
 
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-const WEB_PIPELINE_NOTE = readFileSync(join(process.cwd(), "data/prompts/web-pipeline-note.md"), "utf-8");
+const WEB_PIPELINE_NOTE = readFileSync(join(dataRoot(), "data/prompts/web-pipeline-note.md"), "utf-8");
 
 export async function runAgentPipeline(
   channel: ChannelKey,
@@ -194,6 +193,9 @@ export async function runAgentPipeline(
   statusCallback?: (status: string) => Promise<void>,
   apiKeyOverride?: string
 ): Promise<string> {
+  // 채널 설정(_meta.json) — 리서치/글쓰기 가이드 선택·순서를 여기서 읽는다 (하드코딩 금지)
+  const meta = await getChannelMeta(channel, token).catch(() => null);
+
   // 채널 디렉토리의 모든 파일을 동적으로 로드 (가이드 관리에서 추가/수정된 파일 포함)
   const allFiles = await collectGuideFiles(channel, token);
   const fileContents: Record<string, string> = {};
@@ -270,8 +272,10 @@ export async function runAgentPipeline(
     fileContents["agents/researcher.md"] ??
     "당신은 리서처입니다. 주제를 조사하고 research.md 형식으로 출력하세요.";
 
-  // 리서치 단계에는 서비스 카탈로그·SEO 가이드만 필요 (나머지는 컨텍스트 낭비)
-  const RESEARCH_GUIDE_KEYS = new Set(["guide/06-brand-cta-reference.md", "guide/08-naver-seo.md"]);
+  // 리서치 단계에 넣을 가이드 — _meta.json의 researchGuides (없으면 코드 기본값)
+  const RESEARCH_GUIDE_KEYS = new Set(
+    meta?.researchGuides ?? ["guide/06-brand-cta-reference.md", "guide/08-naver-seo.md"]
+  );
   const researchGuideKeys = guideKeys.filter(k => RESEARCH_GUIDE_KEYS.has(k));
 
   const researchSystem =
@@ -303,8 +307,9 @@ export async function runAgentPipeline(
 
   const writerInstructions = fileContents["agents/writer-web.md"];
 
-  // 글쓰기 단계: 중요도 낮은 순 → 높은 순 정렬 (LLM은 프롬프트 뒷부분에 더 주목)
-  const WRITE_GUIDE_ORDER = [
+  // 글쓰기 단계 가이드 배치 순서 — _meta.json의 writeOrder (없으면 코드 기본값).
+  // 중요도 낮은 순 → 높은 순 (LLM은 프롬프트 뒷부분에 더 주목).
+  const WRITE_GUIDE_ORDER = meta?.writeOrder ?? [
     "guide/04-image-guide.md",
     "guide/02-examples.md",
     "guide/03-quality-check.md",
@@ -368,10 +373,12 @@ export async function runAgentPipeline(
   if (provider === "claude") {
     if (statusCallback) await statusCallback("품질 검증 중");
     const rubric = fileContents["guide/03-quality-check.md"] ?? "";
-    const verifySystem =
-      "당신은 콘텐츠 품질 검증 담당자입니다. 아래 원고를 하네스 기준으로 검증하고, " +
-      "첫 줄에 정확히 'PASS' 또는 'FAIL'만 쓰고, FAIL인 경우 다음 줄부터 구체적 문제점을 불릿으로 나열하세요.\n\n" +
-      rubric;
+    // 검증 페르소나는 data/channels/naver-blog/agents/verifier-web.md에서 로드 (하드코딩 금지).
+    // 파일이 없으면 최소 폴백 스텁 사용.
+    const verifierInstructions =
+      fileContents["agents/verifier-web.md"] ??
+      "당신은 콘텐츠 품질 검증 담당자입니다. 첫 줄에 정확히 'PASS' 또는 'FAIL'만 쓰고, FAIL인 경우 다음 줄부터 구체적 문제점을 불릿으로 나열하세요.";
+    const verifySystem = verifierInstructions + "\n\n" + rubric;
     const verifyUser = `[검증 대상 원고]\n${draftOutput}`;
 
     try {
@@ -467,7 +474,9 @@ export async function runAgentPipeline(
   if (statusCallback) await statusCallback("assembling");
 
   console.log(`[pipeline] ${channel} Step 3: 조립 시작 (코드 기반)`);
-  const assembled = assembleNaverBlogHtml(finalDraft);
+  // HTML 셸 템플릿을 channelFiles(Supabase→GitHub→로컬)로 읽어 넘긴다 → 웹 수정 시 실시간 반영
+  const shell = await readChannelFile(channel, "templates/blog-shell.html", token).catch(() => undefined);
+  const assembled = assembleNaverBlogHtml(finalDraft, shell);
   if (assembled === null) {
     console.warn(`[pipeline] ${channel} Step 3: 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
     return draftOutput;

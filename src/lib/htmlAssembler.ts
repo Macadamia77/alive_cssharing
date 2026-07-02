@@ -1,6 +1,49 @@
 // data/channels/naver-blog/agents/assembler-web.md 3~4단계 변환 규칙표를 그대로 코드로 이식.
 // LLM에게 draft 전체를 다시 타이핑시키던 방식(출력 길이가 입력에 비례 → max_tokens에서 계속 잘림)을
 // 대체하는 결정론적 마크다운→HTML 변환기.
+//
+// 변환 "로직"은 코드에 두되, "템플릿(HTML 셸)"과 "브랜드 상수(전화·URL·CTA 문구)"는
+// data/ 에서 로드한다 (하드코딩 금지 원칙). 파일이 없으면 최소 폴백으로 동작이 끊기지 않게 한다.
+import { readFileSync } from "fs";
+import { join } from "path";
+import { dataRoot } from "./dataRoot";
+
+// ─── 브랜드 상수 (data/brand.json) ───────────────────────────
+interface Brand {
+  phone: string;
+  url: string;
+  phoneCtaLabel: string;
+  mapLabel: string;
+}
+
+const FALLBACK_BRAND: Brand = {
+  phone: "1522-5539",
+  url: "https://cssharing.co.kr",
+  phoneCtaLabel: "📞 1522-5539 무료 상담",
+  mapLabel: "📍 CS쉐어링 위치 안내 (발행 시 지도 삽입)",
+};
+
+function loadBrand(): Brand {
+  try {
+    const raw = readFileSync(join(dataRoot(), "data/brand.json"), "utf-8");
+    return { ...FALLBACK_BRAND, ...JSON.parse(raw) };
+  } catch (e) {
+    console.warn(`[htmlAssembler] data/brand.json 로드 실패, 폴백 상수 사용: ${e instanceof Error ? e.message : e}`);
+    return FALLBACK_BRAND;
+  }
+}
+const BRAND = loadBrand();
+
+// ─── HTML 문서 셸 ────────────────────────────────────────────
+// 셸 템플릿(data/channels/naver-blog/templates/blog-shell.html)은 호출부(agentRunner)가
+// channelFiles(Supabase→GitHub→로컬) 경로로 읽어 assembleNaverBlogHtml(draft, shell)로 넘긴다.
+// → 웹에서 셸을 수정하면 재배포 없이 실시간 반영된다.
+// shell 인자가 없거나 비면 아래 최소 폴백 셸을 사용한다.
+const FALLBACK_SHELL =
+  '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">' +
+  '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+  "<title>{{TITLE}}</title></head><body>" +
+  '<div class="container"><h1>{{TITLE}}</h1>{{BODY}}</div></body></html>';
 
 const EMOJI_START = /^\p{Extended_Pictographic}️?/u;
 
@@ -16,14 +59,14 @@ function applyInline(text: string): string {
 
 function richBlockHtml(trimmed: string): string | null {
   if (trimmed === "[RICH:PHONE]") {
-    return '<a href="tel:1522-5539" style="display:block;background:#1e90d6;color:#fff;text-align:center;padding:14px;border-radius:8px;font-weight:700;text-decoration:none;margin:16px 0;">📞 1522-5539 무료 상담</a>';
+    return `<a href="tel:${BRAND.phone}" style="display:block;background:#1e90d6;color:#fff;text-align:center;padding:14px;border-radius:8px;font-weight:700;text-decoration:none;margin:16px 0;">${BRAND.phoneCtaLabel}</a>`;
   }
   if (trimmed === "[RICH:MAP]") {
-    return '<div style="background:#f5f5f5;border-radius:8px;padding:16px;text-align:center;margin:16px 0;color:#555;">📍 CS쉐어링 위치 안내 (발행 시 지도 삽입)</div>';
+    return `<div style="background:#f5f5f5;border-radius:8px;padding:16px;text-align:center;margin:16px 0;color:#555;">${BRAND.mapLabel}</div>`;
   }
   const linkMatch = trimmed.match(/^\[RICH:LINK:(.+)\]$/);
   if (linkMatch) {
-    return `<a href="https://cssharing.co.kr" style="display:block;background:#f0f7ff;border:2px solid #1e90d6;color:#1e90d6;text-align:center;padding:14px;border-radius:8px;font-weight:700;text-decoration:none;margin:16px 0;">${linkMatch[1]} →</a>`;
+    return `<a href="${BRAND.url}" style="display:block;background:#f0f7ff;border:2px solid #1e90d6;color:#1e90d6;text-align:center;padding:14px;border-radius:8px;font-weight:700;text-decoration:none;margin:16px 0;">${linkMatch[1]} →</a>`;
   }
   return null;
 }
@@ -69,7 +112,7 @@ interface PendingList {
  * PUBLISH 마커가 없거나, 품질 게이트가 FAIL이거나, 변환 중 문제가 생기면 null을 반환한다
  * (호출부는 null일 때 원문 draftOutput을 그대로 사용하는 기존 폴백 동작을 유지해야 한다).
  */
-export function assembleNaverBlogHtml(draftOutput: string): string | null {
+export function assembleNaverBlogHtml(draftOutput: string, shell?: string): string | null {
   try {
     const publishMatch = draftOutput.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
     if (!publishMatch) return null;
@@ -155,59 +198,17 @@ export function assembleNaverBlogHtml(draftOutput: string): string | null {
     const bodyHtml = htmlParts.join("\n");
     if (!bodyHtml.trim()) return null;
 
-    return renderDocument(title, bodyHtml);
+    return renderDocument(title, bodyHtml, shell);
   } catch (e) {
     console.warn(`[htmlAssembler] 변환 실패, draft 원문으로 폴백: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }
 
-function renderDocument(title: string, bodyHtml: string): string {
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title}</title>
-<style>
-  body { background: #f9f9f9; margin: 0; padding: 40px 16px;
-         font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; }
-  .container { max-width: 700px; margin: 0 auto; background: #fff;
-               padding: 40px; border-radius: 8px;
-               box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-  h1 { font-size: 28px; font-weight: 700; color: #111;
-       border-bottom: 2px solid #e0e0e0; padding-bottom: 16px; margin-bottom: 24px; }
-  h2 { font-size: 20px; font-weight: 700; color: #111;
-       border-left: 5px solid #2c4a7c; padding-left: 14px; margin: 32px 0 12px; }
-  h3.toc-label { font-size: 16px; font-weight: 700; color: #555; margin-bottom: 8px; }
-  p { font-size: 16px; line-height: 1.8; color: #333; }
-  p.center-text { text-align: center; }
-  ul, ol { padding-left: 24px; line-height: 1.8; }
-  li { font-size: 16px; color: #333; margin-bottom: 4px; }
-  blockquote { border-left: 4px solid #2c4a7c; background: #f0f4ff;
-               padding: 12px 20px; margin: 16px 0; border-radius: 0 8px 8px 0; }
-  mark { background: #fff3cd; padding: 1px 4px; border-radius: 3px; }
-  .handwriting { font-style: italic; color: #555; }
-  .highlight-line { font-weight: 600; color: #1e90d6; }
-  strong { font-weight: 700; color: #111; }
-  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
-  th { background: #2c4a7c; color: #fff; padding: 10px 14px; border: 1px solid #1a3a6c; }
-  td { padding: 10px 14px; border: 1px solid #e0e0e0; }
-  tr:nth-child(even) td { background: #f5f7fa; }
-  h3.toc-label + ol { list-style: none; padding: 0; text-align: center; }
-  h3.toc-label + ol li { display: inline-flex; align-items: center;
-                          justify-content: center; gap: 8px; margin: 4px 0; }
-  .tag { display: inline-block; background: #e8f4fd; color: #1e90d6;
-         padding: 3px 10px; border-radius: 20px; font-size: 13px;
-         font-weight: 600; margin: 2px; }
-  img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
-</style>
-</head>
-<body>
-<div class="container">
-<h1>${title}</h1>
-${bodyHtml}
-</div>
-</body>
-</html>`;
+function renderDocument(title: string, bodyHtml: string, shell?: string): string {
+  // 셸 템플릿의 플레이스홀더를 치환한다. 치환값에 $ 등이 있어도 안전하도록 replacer 함수를 사용.
+  const tpl = shell && shell.trim() ? shell : FALLBACK_SHELL;
+  return tpl
+    .replace(/\{\{TITLE\}\}/g, () => title)
+    .replace(/\{\{BODY\}\}/g, () => bodyHtml);
 }

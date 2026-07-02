@@ -2,7 +2,10 @@ import fs from "fs/promises";
 import type { Dirent } from "fs";
 import path from "path";
 import { type ChannelKey, CHANNELS } from "./channels";
-import { isVercelProd, githubWrite, githubDelete, githubRead, githubReadBase64, githubListDir } from "./githubStorage";
+import { githubRead, githubReadBase64, githubListDir } from "./githubStorage";
+import {
+  sbConfigured, sbReadFile, sbListPaths, sbWriteFile, sbDeleteFile, sbDeletePrefix,
+} from "./supabaseChannelFiles";
 
 import { existsSync } from "fs";
 
@@ -18,6 +21,13 @@ export interface ChannelMeta {
   description: string;
   include: string[];
   excluded_note?: string;
+  // ⑤ 생성 튜닝 (선택 — 없으면 코드 기본값 사용)
+  maxTokens?: number;        // 응답 최대 길이 (기본 4096)
+  disableThinking?: boolean; // Gemini thinking 비활성화 (JSON 구조화 채널용)
+  imageCards?: boolean;      // 이미지 카드 가이드 포함 여부 (기본 true, JSON 채널은 false)
+  // ④ 파이프라인 가이드 선택/순서 (선택 — 파이프라인 채널용)
+  researchGuides?: string[]; // 리서치 단계에 넣을 guide 파일 키 목록
+  writeOrder?: string[];     // 글쓰기 단계 guide 배치 순서 (뒤일수록 LLM이 더 주목)
 }
 
 export interface FileNode {
@@ -33,9 +43,45 @@ export function isTextFile(fileName: string): boolean {
   return ["md", "txt", "json", "csv", "html", "xml", "js", "ts", "css"].includes(ext);
 }
 
+// 평탄한 경로 목록(Supabase) → 중첩 FileNode 트리. "_"로 시작하는 세그먼트는 제외(시스템 파일).
+function buildTreeFromPaths(paths: string[], include: string[]): FileNode[] {
+  const root: FileNode[] = [];
+  for (const p of [...paths].sort()) {
+    if (p.split("/").some(seg => seg.startsWith("_"))) continue;
+    const parts = p.split("/");
+    let level = root;
+    let cur = "";
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i];
+      cur = cur ? `${cur}/${name}` : name;
+      const isFile = i === parts.length - 1;
+      let node = level.find(n => n.name === name);
+      if (!node) {
+        node = isFile
+          ? { name, path: cur, type: "file", included: include.includes(cur) }
+          : { name, path: cur, type: "dir", included: false, children: [] };
+        level.push(node);
+      }
+      if (!isFile) level = node.children!;
+    }
+  }
+  return root;
+}
+
 export async function getChannelMeta(channel: ChannelKey, token?: string): Promise<ChannelMeta> {
-  // 호스트(Vercel/render-worker/로컬)와 무관하게 항상 GitHub을 먼저 시도 —
-  // GitHub이 최신 상태의 단일 소스이고, 실패할 때만 배포 번들의 로컬 파일로 폴백한다.
+  // 1순위: Supabase (실시간 단일 소스). 실패/미설정 시 GitHub → 로컬 번들로 폴백.
+  if (sbConfigured()) {
+    try {
+      const f = await sbReadFile(channel, "_meta.json");
+      if (f) {
+        const meta = JSON.parse(f.content.replace(/^﻿/, "")) as ChannelMeta;
+        if (meta.include && meta.include.length > 0) return meta;
+      }
+    } catch (e) {
+      console.warn(`[getChannelMeta] ${channel} Supabase 읽기 실패, GitHub로 폴백:`, e);
+    }
+  }
+  // 2순위: GitHub, 3순위: 로컬 번들
   try {
     const raw = await githubRead(`data/channels/${channel}/_meta.json`, token);
     const meta = JSON.parse(raw.replace(/^﻿/, "")) as ChannelMeta;
@@ -51,6 +97,16 @@ export async function getChannelMeta(channel: ChannelKey, token?: string): Promi
 
 export async function getChannelFileTree(channel: ChannelKey, token?: string): Promise<FileNode[]> {
   const meta = await getChannelMeta(channel, token);
+
+  // 1순위: Supabase 파일 목록으로 트리 구성
+  if (sbConfigured()) {
+    try {
+      const paths = await sbListPaths(channel);
+      if (paths.length > 0) return buildTreeFromPaths(paths, meta.include);
+    } catch (e) {
+      console.warn(`[getChannelFileTree] ${channel} Supabase 조회 실패, GitHub로 폴백:`, e);
+    }
+  }
 
   async function walkGithub(repoPath: string, relBase: string): Promise<FileNode[]> {
     const entries = await githubListDir(repoPath, token);
@@ -106,6 +162,14 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
 /** 텍스트 파일 읽기 */
 export async function readChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
   const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  if (sbConfigured()) {
+    try {
+      const f = await sbReadFile(channel, safe);
+      if (f && !f.isBinary) return f.content;
+    } catch (e) {
+      console.warn(`[readChannelFile] ${channel}/${filePath} Supabase 읽기 실패, GitHub로 폴백:`, e);
+    }
+  }
   try {
     return await githubRead(`data/channels/${channel}/${safe}`, token);
   } catch (e) {
@@ -119,6 +183,14 @@ export async function readChannelFile(channel: ChannelKey, filePath: string, tok
 /** 바이너리 파일 읽기 → raw base64 반환 */
 export async function readChannelFileBase64(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
   const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  if (sbConfigured()) {
+    try {
+      const f = await sbReadFile(channel, safe);
+      if (f) return f.isBinary ? f.content : Buffer.from(f.content, "utf-8").toString("base64");
+    } catch (e) {
+      console.warn(`[readChannelFileBase64] ${channel}/${filePath} Supabase 읽기 실패, GitHub로 폴백:`, e);
+    }
+  }
   try {
     return await githubReadBase64(`data/channels/${channel}/${safe}`, token);
   } catch (e) {
@@ -139,9 +211,10 @@ export async function writeChannelFile(
   token?: string,
   isBase64 = false
 ): Promise<void> {
-  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
-  if (isVercelProd()) {
-    await githubWrite(`data/channels/${channel}/${safe.replace(/\\/g, "/")}`, content, token, isBase64);
+  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
+  // 쓰기 1순위: Supabase (실시간 반영). 미설정(로컬 dev) 시에만 로컬 파일에 쓴다.
+  if (sbConfigured()) {
+    await sbWriteFile(channel, safe, content, isBase64);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -154,24 +227,13 @@ export async function writeChannelFile(
 }
 
 export async function deleteChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<void> {
-  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
-  if (isVercelProd()) {
-    await githubDelete(`data/channels/${channel}/${safe.replace(/\\/g, "/")}`, token);
+  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
+  if (sbConfigured()) {
+    await sbDeleteFile(channel, safe);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
   await fs.unlink(full);
-}
-
-async function deleteGithubDirRecursive(repoPath: string, token?: string): Promise<void> {
-  const entries = await githubListDir(repoPath, token);
-  for (const entry of entries) {
-    if (entry.type === "file") {
-      await githubDelete(entry.path, token);
-    } else if (entry.type === "dir") {
-      await deleteGithubDirRecursive(entry.path, token);
-    }
-  }
 }
 
 export async function moveChannelFile(
@@ -193,8 +255,9 @@ export async function moveChannelFile(
 
 export async function deleteChannelFolder(channel: ChannelKey, folderPath: string, token?: string): Promise<void> {
   const safe = folderPath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
-  if (isVercelProd()) {
-    await deleteGithubDirRecursive(`data/channels/${channel}/${safe}`, token);
+  if (sbConfigured()) {
+    // 접두사(폴더) 아래 전체 삭제
+    await sbDeletePrefix(channel, safe.endsWith("/") ? safe : `${safe}/`);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe.replace(/\//g, path.sep));
@@ -202,8 +265,8 @@ export async function deleteChannelFolder(channel: ChannelKey, folderPath: strin
 }
 
 export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, token?: string): Promise<void> {
-  if (isVercelProd()) {
-    await githubWrite(`data/channels/${channel}/_meta.json`, JSON.stringify(meta, null, 2), token);
+  if (sbConfigured()) {
+    await sbWriteFile(channel, "_meta.json", JSON.stringify(meta, null, 2), false);
     return;
   }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");
@@ -233,8 +296,23 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
     }
   }
 
-  // 호스트(Vercel/render-worker/로컬)와 무관하게 항상 GitHub에서 최신 파일 목록을
-  // 먼저 조회한다 (가이드 관리 UI에서의 수정·업로드가 어디서 실행되든 즉시 반영되도록).
+  // 1순위: Supabase 파일 목록 (실시간). 시스템 파일(_·.)·CLAUDE.md 제외, 텍스트 파일만.
+  if (sbConfigured()) {
+    try {
+      const paths = await sbListPaths(channel);
+      const files = paths.filter(p => {
+        const name = p.split("/").pop() ?? "";
+        return isTextFile(name)
+          && name !== "CLAUDE.md"
+          && !p.split("/").some(seg => seg.startsWith("_") || seg.startsWith("."));
+      });
+      if (files.length > 0) return files;
+    } catch (e) {
+      console.warn(`[collectGuideFiles] ${channel} Supabase 조회 실패, GitHub로 폴백:`, e);
+    }
+  }
+
+  // 2순위: 항상 GitHub에서 최신 파일 목록을 조회 (수정·업로드가 어디서 실행되든 반영되도록).
   try {
     const githubFiles: string[] = [];
     async function walkGithub(repoPath: string, relBase: string) {

@@ -5,6 +5,7 @@ import { resolveGithubToken } from "@/lib/resolveToken";
 import { callClaude, callOpenAI, callGemini } from "@/lib/apiClients";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { dataRoot } from "@/lib/dataRoot";
 
 const MOCK_SUGGESTIONS = [
   "비용 절감 효과 비교",
@@ -17,7 +18,7 @@ const MOCK_SUGGESTIONS = [
   "아웃소싱 업체 선정 기준",
 ];
 
-const SYSTEM_PROMPT = readFileSync(join(process.cwd(), "data/prompts/suggestions.md"), "utf-8");
+const SYSTEM_PROMPT = readFileSync(join(dataRoot(), "data/prompts/suggestions.md"), "utf-8");
 
 function buildUserMessage(topic: string): string {
   return (

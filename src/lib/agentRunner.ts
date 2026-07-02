@@ -182,7 +182,7 @@ ${draft}
 }
 
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-const WEB_PIPELINE_NOTE = readFileSync(join(__dirname, "../../data/prompts/web-pipeline-note.md"), "utf-8");
+const WEB_PIPELINE_NOTE = readFileSync(join(process.cwd(), "data/prompts/web-pipeline-note.md"), "utf-8");
 
 export async function runAgentPipeline(
   channel: ChannelKey,

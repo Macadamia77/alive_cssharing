@@ -5,6 +5,7 @@ import { DEFAULT_MODELS } from "./resolveProvider";
 import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch } from "./apiClients";
+import { assembleNaverBlogHtml } from "./htmlAssembler";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -454,31 +455,18 @@ export async function runAgentPipeline(
     saveDebug("step2.5_imagemaker_final_draft", finalDraft);
   }
 
-  // ── Step 3: Assembler ──────────────────────────────────────
+  // ── Step 3: Assembler (코드 기반 — LLM 호출 없음, 토큰 한도 없음) ──
   if (statusCallback) await statusCallback("assembling");
 
-  const assemblerInstructions =
-    fileContents["agents/assembler-web.md"] ??
-    fileContents["agents/assembler.md"] ??
-    "당신은 어셈블러입니다. draft를 정제하여 완성형 HTML만 출력하세요.";
-
-  const assemblerSystem =
-    WEB_PIPELINE_NOTE +
-    assemblerInstructions +
-    sec("guide/01-writing-guide.md");
-
-  const assemblerUser =
-    `[주제]\n${topic}\n\n` +
-    `[이전 단계 출력 — draft.md]\n${finalDraft}\n\n` +
-    `위 draft.md를 정밀 파싱하고 가이드를 적용하여, 본문과 이미지 카드가 온전히 합쳐진 독립형 HTML만 출력하세요.`;
-
-  console.log(`[pipeline] ${channel} Step 3: 조립 시작`);
-  const finalHtmlRaw = await step(assemblerSystem, assemblerUser, 32000, false, true);
-  let finalHtml = stripCodeFence(finalHtmlRaw);
+  console.log(`[pipeline] ${channel} Step 3: 조립 시작 (코드 기반)`);
+  const assembled = assembleNaverBlogHtml(finalDraft);
+  if (assembled === null) {
+    console.warn(`[pipeline] ${channel} Step 3: 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
+    return draftOutput;
+  }
+  let finalHtml = assembled;
   console.log(`[pipeline] ${channel} Step 3: 조립 완료 (${finalHtml.length}자)`);
-  saveDebug("step3_assembler_raw", finalHtmlRaw);
-
-  if (!finalHtml.trim() || !finalHtml.includes("<")) return draftOutput;
+  saveDebug("step3_assembled_html", finalHtml);
 
   // 조립된 최종 HTML에서 플레이스홀더들을 실제 HTML 카드 코드로 치환 복원!
   replacedCards.forEach((cardHtml, idx) => {

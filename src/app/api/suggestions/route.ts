@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
 import { loadAIConfig, type ProviderKey } from "@/lib/aiConfig";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { callClaude, callOpenAI, callGemini } from "@/lib/apiClients";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const MOCK_SUGGESTIONS = [
   "비용 절감 효과 비교",
@@ -14,10 +17,7 @@ const MOCK_SUGGESTIONS = [
   "아웃소싱 업체 선정 기준",
 ];
 
-const SYSTEM_PROMPT =
-  "당신은 CS쉐어링(고객센터 아웃소싱 전문 기업) 마케팅 콘텐츠 기획 어시스턴트입니다. " +
-  "마케팅 콘텐츠 제작에 활용할 수 있는 관련 주제와 핵심 키워드를 추천하세요. " +
-  "JSON 배열 형식으로만 응답하세요.";
+const SYSTEM_PROMPT = readFileSync(join(process.cwd(), "data/prompts/suggestions.md"), "utf-8");
 
 function buildUserMessage(topic: string): string {
   return (
@@ -42,64 +42,6 @@ function parseJsonArray(raw: string): string[] {
   } catch {
     return MOCK_SUGGESTIONS;
   }
-}
-
-async function callClaude(apiKey: string, model: string, topic: string): Promise<string[]> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: model || "claude-sonnet-4-6",
-      max_tokens: 512,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: buildUserMessage(topic) }],
-    }),
-  });
-  if (!res.ok) throw new Error(`Claude API 오류 (HTTP ${res.status})`);
-  const data = await res.json() as { content?: Array<{ type: string; text: string }> };
-  return parseJsonArray(data.content?.[0]?.text ?? "");
-}
-
-async function callOpenAI(apiKey: string, model: string, topic: string): Promise<string[]> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: model || "gpt-4o",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserMessage(topic) },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`OpenAI API 오류 (HTTP ${res.status})`);
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return parseJsonArray(data.choices?.[0]?.message?.content ?? "");
-}
-
-async function callGemini(apiKey: string, model: string, topic: string): Promise<string[]> {
-  const fullModel = model || "gemini-2.5-flash";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${fullModel}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: "user", parts: [{ text: buildUserMessage(topic) }] }],
-        generationConfig: { maxOutputTokens: 512 },
-      }),
-    }
-  );
-  if (!res.ok) throw new Error(`Gemini API 오류 (HTTP ${res.status})`);
-  const data = await res.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  return parseJsonArray(data.candidates?.[0]?.content?.parts?.[0]?.text ?? "");
 }
 
 export async function POST(req: NextRequest) {
@@ -132,13 +74,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let suggestions: string[];
-    if (provider === "claude") suggestions = await callClaude(pc.apiKey, pc.model, topic.trim());
-    else if (provider === "openai") suggestions = await callOpenAI(pc.apiKey, pc.model, topic.trim());
-    else if (provider === "gemini") suggestions = await callGemini(pc.apiKey, pc.model, topic.trim());
-    else suggestions = MOCK_SUGGESTIONS;
+    let raw: string;
+    if (provider === "claude") raw = await callClaude(pc.apiKey, pc.model, SYSTEM_PROMPT, buildUserMessage(topic.trim()), 512);
+    else if (provider === "openai") raw = await callOpenAI(pc.apiKey, pc.model, SYSTEM_PROMPT, buildUserMessage(topic.trim()));
+    else raw = await callGemini(pc.apiKey, pc.model, SYSTEM_PROMPT, buildUserMessage(topic.trim()), 512);
 
-    return NextResponse.json({ suggestions });
+    return NextResponse.json({ suggestions: parseJsonArray(raw) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "추천 생성 실패";
     return NextResponse.json({ error: msg }, { status: 500 });

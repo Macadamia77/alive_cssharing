@@ -2,8 +2,9 @@ import { CHANNELS, type ChannelKey } from "./channels";
 import { buildSystemPrompt, hasAgentPipeline, collectGuideFiles, readChannelFile } from "./channelFiles";
 import { loadAIConfig, type Provider, type ProviderKey } from "./aiConfig";
 import { DEFAULT_MODELS } from "./resolveProvider";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
+import { callClaude, callOpenAI, callGemini, callGeminiWithSearch } from "./apiClients";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -13,129 +14,6 @@ function saveDebug(stepName: string, content: string) {
   } catch (e) {
     console.error("Failed to write debug file:", e);
   }
-}
-
-
-// ─── Claude API ───────────────────────────────────────────────
-async function callClaude(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192
-): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: model || "claude-3-5-sonnet-20240620",
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `Claude API 오류 (HTTP ${res.status})`);
-  }
-  const data = await res.json() as { content?: Array<{ type: string; text: string }> };
-  const block = data.content?.[0];
-  if (block?.type === "text") return block.text;
-  throw new Error("Claude API 응답 형식 오류");
-}
-
-// ─── OpenAI API ───────────────────────────────────────────────
-async function callOpenAI(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string
-): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: model || "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `OpenAI API 오류 (HTTP ${res.status})`);
-  }
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const text = data.choices?.[0]?.message?.content;
-  if (text) return text;
-  throw new Error("OpenAI API 응답 형식 오류");
-}
-
-// ─── Gemini API ───────────────────────────────────────────────
-async function callGemini(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192, disableThinking = false
-): Promise<string> {
-  const realModel = model || "gemini-2.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${realModel}:generateContent?key=${apiKey}`;
-
-  const generationConfig: any = { maxOutputTokens: maxTokens };
-  if (disableThinking && realModel.includes("2.5-flash")) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      generationConfig,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `Gemini API 오류 (HTTP ${res.status})`);
-  }
-  const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.map(p => p.text ?? "").join("").trim();
-  if (text) return text;
-  throw new Error("Gemini API 응답 형식 오류");
-}
-
-async function callGeminiWithSearch(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, disableThinking = false
-): Promise<string> {
-  const realModel = model || "gemini-2.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${realModel}:generateContent?key=${apiKey}`;
-
-  const generationConfig: any = { maxOutputTokens: 8192 };
-  if (disableThinking && realModel.includes("2.5-flash")) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      tools: [{ googleSearch: {} }],
-      generationConfig,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `Gemini API (Google Search) 오류 (HTTP ${res.status})`);
-  }
-  const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.map(p => p.text ?? "").join("").trim();
-  if (text) return text;
-  
-  // 구글 검색이 실패하거나 결과를 정상 획득하지 못하면 일반 호출로 폴백
-  return callGemini(apiKey, model, systemPrompt, userMessage, 8192);
 }
 
 // ─── Mock 생성기 ──────────────────────────────────────────────
@@ -304,12 +182,7 @@ ${draft}
 }
 
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-const WEB_PIPELINE_NOTE = `[웹 파이프라인 환경 — 절대 규칙]
-- 파일 저장/읽기/Python 코드 실행 불필요. 결과를 텍스트로 직접 출력한다.
-- 이전 단계 결과는 [이전 단계 출력] 섹션으로 제공된다.
-- 코드 블록(\`\`\`html, ~~~html 등)으로 감싸지 않는다.
-
-`;
+const WEB_PIPELINE_NOTE = readFileSync(join(__dirname, "../../data/prompts/web-pipeline-note.md"), "utf-8");
 
 export async function runAgentPipeline(
   channel: ChannelKey,
@@ -336,7 +209,7 @@ export async function runAgentPipeline(
   const guideKeys = allFiles.filter(k => k.startsWith("guide/") && fileContents[k]);
   const loadedKeys = Object.keys(fileContents);
   const totalBytes = loadedKeys.reduce((s, k) => s + (fileContents[k]?.length ?? 0), 0);
-  
+
   console.log(`[pipeline] ${channel}: 전체 ${loadedKeys.length}개 로드 (guide ${guideKeys.length}개, 총 ${totalBytes}바이트)`);
   if (guideKeys.length === 0) {
     console.warn(`[pipeline] ${channel}: 가이드 파일이 없습니다. 가이드 관리에서 파일을 추가해주세요.`);
@@ -390,7 +263,7 @@ export async function runAgentPipeline(
 
   // ── Step 1: Research ──────────────────────────────────────
   if (statusCallback) await statusCallback("researching");
-  
+
   const researcherInstructions =
     fileContents["agents/researcher-web.md"] ??
     fileContents["agents/researcher.md"] ??
@@ -514,10 +387,10 @@ export async function runAgentPipeline(
       }
     }
 
-    // 원래 6,600자 draft에서 [IMAGE] 마커들을 플레이스홀더 <!-- HTML_CARD_X -->로 치환하고, 카드 배열에 저장
+    // 원래 draft에서 [IMAGE] 마커들을 플레이스홀더 <!-- HTML_CARD_X -->로 치환하고, 카드 배열에 저장
     let cardIndex = 0;
     finalDraft = draftOutput.replace(/\[IMAGE:\s*([^\]]+)\]/g, (match) => {
-      const cardHtml = cards[cardIndex] || match; // AI가 생성하지 못했으면 원래 마커 유지
+      const cardHtml = cards[cardIndex] || match;
       replacedCards.push(cardHtml);
       const placeholder = `<!-- HTML_CARD_${cardIndex} -->`;
       cardIndex++;

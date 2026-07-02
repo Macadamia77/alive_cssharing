@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Copy, Check, Edit3, Save, Trash2, ChevronDown, ChevronRight,
-  Loader2, AlertCircle, BookOpen, X, Sparkles,
+  Loader2, AlertCircle, BookOpen, X, Sparkles, Download, Hash, FileCode, Images,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib/channels";
 import InstagramCardPreview, { tryParseInstagramJson } from "@/components/InstagramCardPreview";
+import {
+  copyToClipboard, htmlToText, splitHashtags, extractCards, downloadCardPng, downloadCardsZip,
+} from "@/lib/resultDownload";
 
 // ── 채널 아이콘 ──────────────────────────────────────────────
 const CHANNEL_ICONS: Record<ChannelKey, React.ReactNode> = {
@@ -63,19 +66,37 @@ function fmtDate(iso: string) {
   return d.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
 }
 
-// ── 채널 콘텐츠 편집기 ──────────────────────────────────────
-function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
-  resultId: string; channel: string; initialContent: string; onSaved(content: string): void;
+// 작은 복사 버튼
+function CopyBtn({ active, onClick, icon, label }: { active: boolean; onClick(): void; icon: React.ReactNode; label: string }) {
+  return (
+    <button onClick={onClick} className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 cursor-pointer">
+      {active ? <><Check className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600">복사됨</span></> : <>{icon}{label}</>}
+    </button>
+  );
+}
+
+// ── 채널 콘텐츠 편집기 + 게시 보조 ─────────────────────────
+function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }: {
+  resultId: string; channel: string; initialContent: string; allCards: string[]; onSaved(content: string): void;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(initialContent);
   const [saved, setSaved] = useState(initialContent);
   const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const isDirty = text !== saved;
 
   const ch = channel as ChannelKey;
   const { color, bgColor, borderColor } = CHANNEL_COLORS[ch] ?? { color: "", bgColor: "bg-slate-50", borderColor: "border-slate-200" };
+
+  const isMagazine = channel === "magazine";
+  const isNaver = channel === "naver-blog";
+  const isSocial = channel === "instagram" || channel === "facebook" || channel === "linkedin";
+  const tags = splitHashtags(text).tags;
+  const showImages = (isNaver || isSocial) && allCards.length > 0;
+
+  const flash = (label: string) => { setCopiedLabel(label); setTimeout(() => setCopiedLabel(null), 1800); };
 
   const handleSave = async () => {
     setSaving(true);
@@ -92,24 +113,38 @@ function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
     } catch { /* keep editing */ } finally { setSaving(false); }
   };
 
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const doCopy = async (content: string, label: string) => {
+    try { await copyToClipboard(content); flash(label); } catch { /* noop */ }
+  };
+
+  const runBusy = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
+    try { await fn(); } catch { alert("이미지 생성 중 오류가 발생했습니다."); } finally { setBusy(null); }
   };
 
   return (
     <div className={`rounded-2xl border overflow-hidden ${borderColor}`}>
-      {/* 채널 헤더 */}
-      <div className={`px-4 py-2.5 flex items-center justify-between ${bgColor} border-b ${borderColor}`}>
+      {/* 채널 헤더 + 복사 버튼 */}
+      <div className={`px-4 py-2.5 flex items-center justify-between flex-wrap gap-2 ${bgColor} border-b ${borderColor}`}>
         <div className={`flex items-center gap-2 font-semibold text-sm ${color}`}>
           {CHANNEL_ICONS[ch]}
           <span className="text-slate-800">{CHANNEL_LABELS[ch] ?? channel}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button onClick={handleCopy} className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 cursor-pointer">
-            {copied ? <><Check className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600">복사됨</span></> : <><Copy className="w-3 h-3" />복사</>}
-          </button>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {isMagazine && (
+            <CopyBtn active={copiedLabel === "html"} onClick={() => doCopy(text, "html")} icon={<FileCode className="w-3 h-3" />} label="HTML 복사" />
+          )}
+          {isNaver && (
+            <CopyBtn active={copiedLabel === "text"} onClick={() => doCopy(htmlToText(text), "text")} icon={<Copy className="w-3 h-3" />} label="텍스트 복사" />
+          )}
+          {isSocial && (
+            <>
+              <CopyBtn active={copiedLabel === "caption"} onClick={() => doCopy(splitHashtags(text).body, "caption")} icon={<Copy className="w-3 h-3" />} label="캡션 복사" />
+              {tags && (
+                <CopyBtn active={copiedLabel === "tags"} onClick={() => doCopy(tags, "tags")} icon={<Hash className="w-3 h-3" />} label="해시태그 복사" />
+              )}
+            </>
+          )}
           {!editing ? (
             <button onClick={() => setEditing(true)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 cursor-pointer">
               <Edit3 className="w-3 h-3" />수정
@@ -128,6 +163,14 @@ function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
           )}
         </div>
       </div>
+
+      {/* 게시 안내 */}
+      <div className="px-4 pt-2 text-[11px] text-slate-400">
+        {isMagazine && "HTML 복사 → 홈페이지 편집기에 붙여넣기 (텍스트·이미지 한 번에 완성)"}
+        {isNaver && "텍스트 복사 → 본문에 붙여넣기 + 아래 이미지 카드를 사진으로 첨부"}
+        {isSocial && "캡션·해시태그 복사 → 글/첫 댓글에 붙여넣기 + 아래 이미지 다운로드해 업로드"}
+      </div>
+
       {/* 콘텐츠 */}
       <div className="bg-white">
         {editing ? (
@@ -150,12 +193,46 @@ function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
             sandbox="allow-same-origin"
           />
         ) : (
-          <pre className="p-4 text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">{text}</pre>
+          <pre className="p-4 text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">{isNaver ? htmlToText(text) : text}</pre>
         )}
         {isDirty && editing && (
           <div className="px-4 pb-2 text-[10px] text-amber-600 font-medium">미저장 변경사항 있음</div>
         )}
       </div>
+
+      {/* 이미지 카드 (네이버 / 인스타 / 페북 / 링크드인) */}
+      {showImages && (
+        <div className="border-t border-slate-100 bg-slate-50/60 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              <Images className="w-3.5 h-3.5" />이미지 카드 {allCards.length}장
+            </div>
+            <button
+              onClick={() => runBusy("zip", () => downloadCardsZip(allCards, channel))}
+              disabled={busy !== null}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
+              {busy === "zip" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+              {busy === "zip" ? "생성 중" : "전체 ZIP"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {allCards.map((card, i) => (
+              <div key={i} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <div className="h-[110px] overflow-hidden bg-white border-b border-slate-100">
+                  <div style={{ width: 640, transform: "scale(0.28)", transformOrigin: "top left", pointerEvents: "none" }} dangerouslySetInnerHTML={{ __html: card }} />
+                </div>
+                <button
+                  onClick={() => runBusy(`img${i}`, () => downloadCardPng(card, `${channel}_${String(i + 1).padStart(2, "0")}.png`))}
+                  disabled={busy !== null}
+                  className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+                  {busy === `img${i}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  {String(i + 1).padStart(2, "0")} 다운로드
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -197,6 +274,14 @@ function ResultCard({ result, onDelete }: {
   const [channels, setChannels] = useState(result.channels);
   const [deleting, setDeleting] = useState(false);
   const channelKeys = Object.keys(channels);
+
+  // 이미지 카드(공용): 네이버블로그 콘텐츠의 카드를 우선 사용, 없으면 카드가 있는 첫 채널
+  const sharedCards = useMemo(() => {
+    const naver = channels["naver-blog"];
+    if (naver) { const c = extractCards(naver); if (c.length) return c; }
+    for (const v of Object.values(channels)) { const c = extractCards(v || ""); if (c.length) return c; }
+    return [];
+  }, [channels]);
 
   const handleDelete = async () => {
     if (!confirm("이 결과물을 삭제하시겠습니까?")) return;
@@ -284,6 +369,7 @@ function ResultCard({ result, onDelete }: {
                 resultId={result.id}
                 channel={activeChannel}
                 initialContent={channels[activeChannel]!}
+                allCards={sharedCards}
                 onSaved={newContent => setChannels(prev => ({ ...prev, [activeChannel]: newContent }))}
               />
             </div>

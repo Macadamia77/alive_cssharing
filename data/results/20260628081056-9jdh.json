@@ -1,0 +1,8 @@
+{
+  "id": "20260628081056-9jdh",
+  "topic": "성수기 CS 준비하려고 하는데, 인력 공백이 매출 손실로 이어지는 이유",
+  "createdAt": "2026-06-28T08:10:56.612Z",
+  "channels": {
+    "instagram": "{\n  \"planning\": \"성수기 CS 인력 공백이 고객 이탈과 매출 손실로 이어지는 구체적인 시그널을 운영 관점에서 분석하고, 문제의 원인과 해결책을 CS쉐어링 서비스와 연결한다.\",\n  \"content_title\": \"성수기 CS 인력 공백, 매출 손실로 이어지는 신호들\",\n  \"cards\": [\n    {\n      \"card_no\": 1,\n      \"card_type\": \"후킹 카드\",\n      \"template_name\": \"Instagram post - first\",\n      \"layout_type\": \"cover\",\n      \"cloud_label\": \"Insight\",\n      \"series_title\": \"\",\n      \"title\": \"성수기 CS 인력 공백,\\n매출 손실로 이어지는 신호들\",\n      \"highlight_text\": \"\",\n      \"subtitle\": \"CS 담당자라면 놓치지 말아야 할 운영 관점\",\n      \"body\": \"성수기 CS 인력 공백이 어떻게 매출 손실로 이어지는지, 그 구체적인 신호와 운영 관점에서 점검해야 할 지점을 알아봅니다.\",\n      \"items\": [],\n      \"cta\": \"\",\n      \"design_point\": \"\"\n    },\n    {\n      \"card_no\": 2,\n      \"card_type\": \"중간 카드\",\n      \"template_name\": \"Instagram post - middle\",\n      \"layout_type\": \"stacked_boxes\",\n      \"cloud_label\": \"\",\n      \"series_title\": \"성수기 CS 공백, 매출 손실 신호\",\n      \"title\": \"구매 전환 직전\\n고객 이탈의 시그널\",\n      \"highlight_text\": \"구매 전환 직전\",\n      \"subtitle\": \"잠재 고객의 이탈이 반복되는 지점을 확인해야 합니다\",\n      \"body\": \"구매 단계에서 발생하는 CS 공백은 직접"
+  }
+}

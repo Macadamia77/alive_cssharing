@@ -1,0 +1,13 @@
+{
+  "stages": [
+    { "id": "research",       "scope": "shared",  "persona": "researcher",       "maxTokens": 8192,  "useSearch": true },
+    { "id": "brainstorm",     "scope": "shared",  "persona": "brainstormer",     "maxTokens": 4096,  "skipIf": "draftProvided" },
+    { "id": "research-deep",  "scope": "shared",  "persona": "researcher-deep",  "maxTokens": 8192,  "useSearch": true },
+    { "id": "skeleton",       "scope": "shared",  "persona": "skeleton",         "maxTokens": 4096 },
+    { "id": "writer",         "scope": "channel", "persona": "writer",           "maxTokens": 24000 },
+    { "id": "content-review", "scope": "channel", "persona": "reviewer",         "roles": ["fact-check", "seo-check"], "maxTokens": 4096 },
+    { "id": "tone-review",    "scope": "channel", "persona": "tone-reviewer",    "roles": ["tone-check"], "maxTokens": 4096 },
+    { "id": "image-gen",      "scope": "channel", "persona": "image-maker",      "maxTokens": 12000 },
+    { "id": "image-review",   "scope": "channel", "persona": "image-reviewer",   "maxTokens": 4096 }
+  ]
+}

@@ -28,6 +28,19 @@ export interface ChannelMeta {
   // ④ 파이프라인 가이드 선택/순서 (선택 — 파이프라인 채널용)
   researchGuides?: string[]; // 리서치 단계에 넣을 guide 파일 키 목록
   writeOrder?: string[];     // 글쓰기 단계 guide 배치 순서 (뒤일수록 LLM이 더 주목)
+  // 통합 파이프라인 엔진용 (선택)
+  outputFormat?: "html" | "text" | "json"; // 최종 결과물 형식 (기본 text)
+  model?: string;            // 채널 기본 provider ("claude"|"openai"|"gemini")
+  modelId?: string;          // 채널 기본 모델 id
+  /** 단계별 토글·오버라이드. 키 = stage id (예: { "writer": { "enabled": true } }) */
+  pipeline?: Record<string, {
+    enabled?: boolean;
+    model?: string;
+    modelId?: string;
+    maxTokens?: number;
+    roles?: string[];
+    guides?: string[];
+  }>;
 }
 
 export interface FileNode {

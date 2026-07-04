@@ -1,34 +1,25 @@
+// provider별로 갈라졌던 fetch 호출을 AI SDK(generateText)로 통합.
+// 기본 호출(Claude/OpenAI/Gemini)은 아래 3함수로, 웹검색은 하단의 전용 함수(스트리밍/툴)로 유지.
+import { generateText } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
 export async function callClaude(
   apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192
 ): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
-    }),
+  const anthropic = createAnthropic({ apiKey });
+  const { text, finishReason } = await generateText({
+    model: anthropic(model),
+    system: systemPrompt,
+    prompt: userMessage,
+    maxOutputTokens: maxTokens,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `Claude API 오류 (HTTP ${res.status})`);
+  if (finishReason === "length") {
+    console.warn(`[apiClients] callClaude: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
   }
-  const data = await res.json() as {
-    content?: Array<{ type: string; text: string }>;
-    stop_reason?: string;
-  };
-  if (data.stop_reason === "max_tokens") {
-    console.warn(`[apiClients] callClaude: max_tokens(${maxTokens})에 도달해 응답이 잘렸습니다.`);
-  }
-  const block = data.content?.[0];
-  if (block?.type === "text") return block.text;
-  throw new Error("Claude API 응답 형식 오류");
+  if (!text) throw new Error("Claude API 응답이 비어 있습니다.");
+  return text;
 }
 
 interface AnthropicStreamEvent {
@@ -119,58 +110,36 @@ export async function callClaudeWithNativeSearch(
 export async function callOpenAI(
   apiKey: string, model: string, systemPrompt: string, userMessage: string
 ): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    }),
+  const openai = createOpenAI({ apiKey });
+  const { text } = await generateText({
+    model: openai(model),
+    system: systemPrompt,
+    prompt: userMessage,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `OpenAI API 오류 (HTTP ${res.status})`);
-  }
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const text = data.choices?.[0]?.message?.content;
-  if (text) return text;
-  throw new Error("OpenAI API 응답 형식 오류");
+  if (!text) throw new Error("OpenAI API 응답이 비어 있습니다.");
+  return text;
 }
 
 export async function callGemini(
   apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192, disableThinking = false
 ): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-  const generationConfig: Record<string, unknown> = { maxOutputTokens: maxTokens };
-  if (disableThinking && model.includes("2.5-flash")) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      generationConfig,
-    }),
+  const google = createGoogleGenerativeAI({ apiKey });
+  const providerOptions =
+    disableThinking && model.includes("2.5-flash")
+      ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
+      : undefined;
+  const { text, finishReason } = await generateText({
+    model: google(model),
+    system: systemPrompt,
+    prompt: userMessage,
+    maxOutputTokens: maxTokens,
+    providerOptions,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `Gemini API 오류 (HTTP ${res.status})`);
+  if (finishReason === "length") {
+    console.warn(`[apiClients] callGemini: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
   }
-  const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.map(p => p.text ?? "").join("").trim();
-  if (text) return text;
-  throw new Error("Gemini API 응답 형식 오류");
+  if (!text) throw new Error("Gemini API 응답이 비어 있습니다.");
+  return text;
 }
 
 export async function callGeminiWithSearch(

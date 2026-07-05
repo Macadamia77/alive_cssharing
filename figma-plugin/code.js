@@ -454,11 +454,15 @@ async function renderDynamicBlocks(frame, card) {
 
   var aliases = {
     stacked_boxes: "list_cards",
-    keyword_boxes: "list_cards",
     steps_vertical: "numbered_signals"
   };
 
   var layoutType = aliases[card.layout_type] || card.layout_type || "list_cards";
+
+  if (card.layout_type === "keyword_boxes") {
+    await renderGridCards(container, items, frame);
+    return;
+  }
 
   if (layoutType === "compare_2col") {
     await renderCompareBlocks(container, items, frame);
@@ -511,6 +515,31 @@ async function renderListCards(container, items, frame, cardAccentIndex) {
       container.width, boxHeight,
       "list_cards", frame,
       cardAccentIndex || 0
+    );
+  }
+}
+
+// keyword_boxes 전용: 4x1 세로 나열이 아니라 2열 그리드(2x2, 3개면 2+1)로 배치.
+// 박스 자체 스타일(강조선·색상)은 list_cards와 동일하게 재사용한다.
+async function renderGridCards(container, items, frame) {
+  var maxItems = Math.min(items.length, 4);
+  var cols = 2;
+  var rows = Math.ceil(maxItems / cols);
+  var gap = STYLE.boxGap;
+
+  var boxWidth = Math.floor((container.width - gap * (cols - 1)) / cols);
+  var boxHeight = Math.floor((container.height - gap * (rows - 1)) / rows);
+
+  for (var i = 0; i < maxItems; i++) {
+    var col = i % cols;
+    var row = Math.floor(i / cols);
+
+    await createTextBlock(
+      container, items[i],
+      col * (boxWidth + gap), row * (boxHeight + gap),
+      boxWidth, boxHeight,
+      "list_cards", frame,
+      i
     );
   }
 }

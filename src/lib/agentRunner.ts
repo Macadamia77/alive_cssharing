@@ -187,7 +187,8 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   ) ? "PASS" : "FAIL";
 
   const hashtags: any[] = Array.isArray(parsed?.hashtags) ? parsed.hashtags : [];
-  checks["해시태그_개수"] = hashtags.length >= 3 && hashtags.length <= 5 ? "PASS" : "FAIL";
+  const hasRequiredTags = REQUIRED_HASHTAGS.every((t) => hashtags.includes(t));
+  checks["해시태그_개수_필수태그"] = hashtags.length >= 12 && hashtags.length <= 15 && hasRequiredTags ? "PASS" : "FAIL";
 
   const leakText = [parsed?.caption, ...cards.map((c) => `${c.body ?? ""} ${c.design_point ?? ""}`)].join(" ");
   checks["검수정보_비노출"] = /\bplanning\b|\bdesign_point\b/i.test(leakText) ? "FAIL" : "PASS";
@@ -195,8 +196,29 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   return checks;
 }
 
+// 10_instagram_facebook_content.md 기준 필수 해시태그
+const REQUIRED_HASHTAGS = ["#CS쉐어링", "#CS대행", "#고객센터대행"];
+
+// ─── 재생성 없이 코드로 바로 고칠 수 있는 기계적 문제 보정 ───
+// parsed를 직접 변형한다 (재할당 아님 — 호출부에서 그대로 이어서 씀).
+function applyMechanicalFixes(parsed: any): void {
+  if (Array.isArray(parsed?.hashtags)) {
+    let tags: string[] = [...new Set(parsed.hashtags as string[])];
+    for (const req of REQUIRED_HASHTAGS) {
+      if (!tags.includes(req)) tags.unshift(req);
+    }
+    if (tags.length > 15) tags = tags.slice(0, 15);
+    // 12개 미만이면 내용을 지어내야 해서 여기서 안전하게 채울 수 없다 — 재생성으로 넘긴다.
+    parsed.hashtags = tags;
+  }
+}
+
+// Figma에서 수동으로 바로 고칠 수 있는 항목은 전체 판정을 막지 않는다 (재생성 낭비 방지).
+const NON_BLOCKING_AUTO_CHECKS = new Set(["highlight_text_일치"]);
+
 function computeVerdict(autoChecks: Record<string, "PASS" | "FAIL">, scores: Record<string, number>): "PASS" | "조건부 PASS" | "FAIL" {
-  const autoAllPass = Object.values(autoChecks).every((v) => v === "PASS");
+  const blockingChecks = Object.entries(autoChecks).filter(([key]) => !NON_BLOCKING_AUTO_CHECKS.has(key));
+  const autoAllPass = blockingChecks.every(([, v]) => v === "PASS");
   const values = Object.values(scores).filter((v) => typeof v === "number");
   const sum = values.reduce((a, b) => a + b, 0);
   const serviceZero = (scores["서비스_범위_정확성"] ?? 5) === 0;
@@ -236,6 +258,9 @@ async function runQcAndRegenerate(
   async function scoreOnce(text: string): Promise<{ parsed: any; report: any } | null> {
     const parsed = extractJsonObject(text);
     if (!parsed || !Array.isArray(parsed.cards)) return null;
+
+    // 재생성 없이 코드로 바로 고칠 수 있는 기계적 문제는 여기서 직접 고친다 (해시태그 5개 초과 시 자르기 등)
+    applyMechanicalFixes(parsed);
 
     const autoChecks = computeAutoChecks(parsed);
 

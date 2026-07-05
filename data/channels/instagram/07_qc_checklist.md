@@ -15,12 +15,12 @@
 | CTA 카드 필드 | items 빈 배열, highlight_text 빈 문자열 | PASS/FAIL |
 | 중간 카드 title | 줄바꿈 정확히 1번, 각 줄 12자 이내 | PASS/FAIL |
 | 중간 카드 subtitle | 줄바꿈 없이 1줄, 26자 이내 | PASS/FAIL |
-| highlight_text | middle 카드에서 title 안에 실제 포함된 문구인지 | PASS/FAIL |
+| highlight_text | middle 카드에서 title 안에 실제 포함된 문구인지 | PASS/FAIL (참고용 — Figma에서 수동으로 강조 위치를 조정할 수 있어 전체 판정을 막지 않음) |
 | items 개수 | layout_type별 규칙 준수 (steps_vertical 2~4, compare_2col 정확히 2, flow_process 3~4, keyword_boxes 3~4, stacked_boxes 2~3) | PASS/FAIL |
-| 해시태그 개수 | 3~5개 (인스타 기준 데이터에 맞춰 조정 가능) | PASS/FAIL |
+| 해시태그 개수·필수 태그 | 12~15개이며 #CS쉐어링 #CS대행 #고객센터대행 포함 (10_instagram_facebook_content.md 기준). 개수 초과 시 자동으로 15개까지 보정, 부족 시 필수 태그부터 채움 | PASS/FAIL |
 | 검수용 정보 비노출 | planning, design_point 등 내부 메모가 caption/카드 텍스트에 새어나오지 않았는지 | PASS/FAIL |
 
-이 표는 사람이 눈으로 셀 수도 있고, 나중에 코드로 자동화할 수도 있다 (JSON 파싱 후 글자수·개수 검증).
+이 표는 코드가 JSON을 파싱해서 직접 계산한다. 다만 highlight_text 항목은 실패해도 최종 판정(FAIL)에는 반영하지 않는다 — Figma 작업 단계에서 바로 고칠 수 있는 사소한 항목이기 때문이다.
 
 ---
 

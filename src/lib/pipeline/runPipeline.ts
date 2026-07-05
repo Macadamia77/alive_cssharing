@@ -23,7 +23,7 @@ import {
 } from "../apiClients";
 import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
-import { getRecentFeedback, getRecentExamples } from "../pipelineMemory";
+import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample } from "../pipelineMemory";
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -218,6 +218,12 @@ export async function runPipeline(
     : "";
   if (exampleTexts.length) console.log(`[engine] ${channel}: 우수 참고작 ${exampleTexts.length}개 주입`);
 
+  const badExamples = await getRecentBadExamples(channel).catch(() => []);
+  const badBlock = badExamples.length
+    ? `[과거 기각 사례 — 아래처럼 쓰면 검수에서 기각되니 반드시 피할 것]\n${badExamples.map((b, i) => `─ 기각 ${i + 1} (사유: ${b.reason ?? "명시 없음"}) ─\n${b.content.slice(0, 800)}`).join("\n\n")}`
+    : "";
+  if (badExamples.length) console.log(`[engine] ${channel}: 기각 사례 ${badExamples.length}개 주입(회피용)`);
+
   let draft = "";
   let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
   let writerCall: { p: Provider; apiKey: string; model: string } =
@@ -256,6 +262,7 @@ export async function runPipeline(
         `[주제]\n${topic}\n\n` +
         (contextParts.length ? `[참고 자료 — 이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
         (exampleBlock ? `${exampleBlock}\n\n` : "") +
+        (badBlock ? `${badBlock}\n\n` : "") +
         `위 자료와 시스템 프롬프트의 가이드 규칙을 철저히 적용해 ${channel} 채널 콘텐츠를 완성하세요.`;
       draft = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, meta.disableThinking ?? false));
       if (!draft.trim()) throw new Error(`[engine] ${channel} writer 단계 결과가 비어 있습니다.`);
@@ -268,6 +275,8 @@ export async function runPipeline(
       if (isRejected(review)) {
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
         console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
+        // 기각 사례 자동 저장(회피 학습용) — fire-and-forget
+        void addBadExample(channel, draft, `[${stage.id}] ${review.replace(/\s+/g, " ").slice(0, 500)}`);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
         const rewriteUser =
           `[주제]\n${topic}\n\n` +

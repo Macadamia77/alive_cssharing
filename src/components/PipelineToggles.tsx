@@ -62,6 +62,7 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   const [memLoading, setMemLoading] = useState(false);
   const [fbList, setFbList] = useState<{ id: string; text: string }[]>([]);
   const [exList, setExList] = useState<{ id: string; note: string | null; content: string }[]>([]);
+  const [badList, setBadList] = useState<{ id: string; reason: string | null; content: string }[]>([]);
   const [modelIds, setModelIds] = useState<string[]>([]);
   const [newExample, setNewExample] = useState("");
   const [exAdding, setExAdding] = useState(false);
@@ -93,9 +94,15 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
     Promise.all([
       fetch(`/api/feedback?channel=${channel}`).then(r => r.json()).catch(() => ({ feedback: [] })),
       fetch(`/api/examples?channel=${channel}`).then(r => r.json()).catch(() => ({ examples: [] })),
-    ]).then(([f, e]) => { setFbList(f.feedback ?? []); setExList(e.examples ?? []); })
+      fetch(`/api/bad-examples?channel=${channel}`).then(r => r.json()).catch(() => ({ badExamples: [] })),
+    ]).then(([f, e, b]) => { setFbList(f.feedback ?? []); setExList(e.examples ?? []); setBadList(b.badExamples ?? []); })
       .finally(() => setMemLoading(false));
   }, [memOpen, channel]);
+
+  const delBad = async (id: string) => {
+    await fetch(`/api/bad-examples?id=${id}`, { method: "DELETE" }).catch(() => {});
+    setBadList(l => l.filter(x => x.id !== id));
+  };
 
   const delFeedback = async (id: string) => {
     await fetch(`/api/feedback?id=${id}`, { method: "DELETE" }).catch(() => {});
@@ -391,6 +398,19 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                                 <div key={e.id} className="flex items-start gap-2 text-xs text-slate-600 bg-emerald-50/50 rounded-lg px-2 py-1">
                                   <span className="flex-1 truncate">{e.note || e.content.slice(0, 80)}</span>
                                   <button onClick={() => delExample(e.id)} className="text-slate-400 hover:text-red-500 cursor-pointer shrink-0"><Trash2 className="w-3 h-3" /></button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wider mb-1">기각 사례(회피용) {badList.length}</p>
+                          {badList.length === 0 ? <p className="text-xs text-slate-400">없음. 검수 반려가 나면 자동으로 쌓입니다</p> : (
+                            <div className="space-y-1">
+                              {badList.map(b => (
+                                <div key={b.id} className="flex items-start gap-2 text-xs text-slate-600 bg-red-50/50 rounded-lg px-2 py-1">
+                                  <span className="flex-1 truncate">{b.reason || b.content.slice(0, 80)}</span>
+                                  <button onClick={() => delBad(b.id)} className="text-slate-400 hover:text-red-500 cursor-pointer shrink-0"><Trash2 className="w-3 h-3" /></button>
                                 </div>
                               ))}
                             </div>

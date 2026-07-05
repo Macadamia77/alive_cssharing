@@ -7,6 +7,7 @@ import type { ChannelKey } from "./channels";
 
 export interface FeedbackRow { id: string; channel: string; text: string; active: boolean; created_at: string; }
 export interface ExampleRow { id: string; channel: string; content: string; note: string | null; created_at: string; }
+export interface BadExampleRow { id: string; channel: string; content: string; reason: string | null; created_at: string; }
 
 /** 생성 시 주입할: 활성 피드백 최근 N개 (텍스트만) */
 export async function getRecentFeedback(channel: ChannelKey, limit = 10): Promise<string[]> {
@@ -34,7 +35,38 @@ export async function getRecentExamples(channel: ChannelKey, limit = 3): Promise
   } catch { return []; }
 }
 
+/** 생성 시 주입할: 기각 사례 최근 N개 (본문 + 사유) */
+export async function getRecentBadExamples(channel: ChannelKey, limit = 3): Promise<{ content: string; reason: string | null }[]> {
+  try {
+    const { data, error } = await supabase
+      .from("pipeline_bad_examples")
+      .select("content, reason")
+      .eq("channel", channel)
+      .order("created_at", { ascending: false }).limit(limit);
+    if (error || !data) return [];
+    return data.map(r => ({ content: r.content, reason: r.reason ?? null })).filter(r => r.content);
+  } catch { return []; }
+}
+
+/** 검수 반려 시 기각 사례 저장 (엔진에서 fire-and-forget) */
+export async function addBadExample(channel: ChannelKey, content: string, reason?: string): Promise<void> {
+  try {
+    await supabase.from("pipeline_bad_examples").insert({ channel, content, reason: reason ?? null });
+  } catch { /* 학습 저장 실패는 무시 */ }
+}
+
 // ── 관리(API용) ──
+export async function listBadExamples(channel: ChannelKey): Promise<BadExampleRow[]> {
+  const { data, error } = await supabase.from("pipeline_bad_examples")
+    .select("*").eq("channel", channel).order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as BadExampleRow[];
+}
+export async function deleteBadExample(id: string): Promise<void> {
+  const { error } = await supabase.from("pipeline_bad_examples").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 export async function listFeedback(channel: ChannelKey): Promise<FeedbackRow[]> {
   const { data, error } = await supabase.from("pipeline_feedback")
     .select("*").eq("channel", channel).order("created_at", { ascending: false });

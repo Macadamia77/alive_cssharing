@@ -23,6 +23,7 @@ import {
 } from "../apiClients";
 import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
+import { getRecentFeedback, getRecentExamples } from "../pipelineMemory";
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -204,6 +205,19 @@ export async function runPipeline(
   // 누적 컨텍스트(producer 산출물) + 현재 초안
   const contextParts: string[] = [];
   if (draftProvided) contextParts.push(`[작성자 초안]\n${userDraft}`);
+
+  // 동적 컨텍스트(Phase 4): 누적 피드백(전 단계) + 우수작 퓨샷(writer 전용)
+  const feedback = await getRecentFeedback(channel).catch(() => []);
+  const exampleTexts = await getRecentExamples(channel).catch(() => []);
+  if (feedback.length) {
+    contextParts.push(`[누적 피드백 — 아래 지적을 반드시 반영]\n${feedback.map((f, i) => `${i + 1}. ${f}`).join("\n")}`);
+    console.log(`[engine] ${channel}: 누적 피드백 ${feedback.length}개 주입`);
+  }
+  const exampleBlock = exampleTexts.length
+    ? `[우수 참고작 — 이 톤·구조·품질을 따르되 내용은 주제에 맞게 새로 작성]\n${exampleTexts.map((e, i) => `─ 참고작 ${i + 1} ─\n${e}`).join("\n\n")}`
+    : "";
+  if (exampleTexts.length) console.log(`[engine] ${channel}: 우수 참고작 ${exampleTexts.length}개 주입`);
+
   let draft = "";
   let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
   let writerCall: { p: Provider; apiKey: string; model: string } =
@@ -241,6 +255,7 @@ export async function runPipeline(
       const user =
         `[주제]\n${topic}\n\n` +
         (contextParts.length ? `[참고 자료 — 이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
+        (exampleBlock ? `${exampleBlock}\n\n` : "") +
         `위 자료와 시스템 프롬프트의 가이드 규칙을 철저히 적용해 ${channel} 채널 콘텐츠를 완성하세요.`;
       draft = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, meta.disableThinking ?? false));
       if (!draft.trim()) throw new Error(`[engine] ${channel} writer 단계 결과가 비어 있습니다.`);

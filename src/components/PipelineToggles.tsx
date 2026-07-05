@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Loader2, CheckCircle, AlertCircle, Zap, Search, Users, ChevronDown, ChevronRight, Layers,
+  Loader2, CheckCircle, AlertCircle, Zap, Search, Users, ChevronDown, ChevronRight, Layers, Database, Trash2,
 } from "lucide-react";
 import { type ChannelKey } from "@/lib/channels";
 
@@ -55,6 +55,11 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   const [expanded, setExpanded] = useState<string | null>(null); // 조각 패널 펼친 단계
   const [saving, setSaving] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "ok" | "err">("idle");
+  // 학습 데이터(피드백·우수작) 관리
+  const [memOpen, setMemOpen] = useState(false);
+  const [memLoading, setMemLoading] = useState(false);
+  const [fbList, setFbList] = useState<{ id: string; text: string }[]>([]);
+  const [exList, setExList] = useState<{ id: string; note: string | null; content: string }[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -68,6 +73,26 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   }, [channel]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // 학습 데이터 로드 (섹션 펼칠 때만)
+  useEffect(() => {
+    if (!memOpen) return;
+    setMemLoading(true);
+    Promise.all([
+      fetch(`/api/feedback?channel=${channel}`).then(r => r.json()).catch(() => ({ feedback: [] })),
+      fetch(`/api/examples?channel=${channel}`).then(r => r.json()).catch(() => ({ examples: [] })),
+    ]).then(([f, e]) => { setFbList(f.feedback ?? []); setExList(e.examples ?? []); })
+      .finally(() => setMemLoading(false));
+  }, [memOpen, channel]);
+
+  const delFeedback = async (id: string) => {
+    await fetch(`/api/feedback?id=${id}`, { method: "DELETE" }).catch(() => {});
+    setFbList(l => l.filter(x => x.id !== id));
+  };
+  const delExample = async (id: string) => {
+    await fetch(`/api/examples?id=${id}`, { method: "DELETE" }).catch(() => {});
+    setExList(l => l.filter(x => x.id !== id));
+  };
 
   const engineOn = meta?.engine === "pipeline";
 
@@ -262,6 +287,53 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                   );
                 })}
               </div>
+              {/* 학습 데이터 (누적 피드백 · 우수작) */}
+              <div className="mt-3 rounded-xl border border-slate-100 overflow-hidden">
+                <button onClick={() => setMemOpen(v => !v)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 cursor-pointer">
+                  {memOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  <Database className="w-3 h-3 text-slate-400" />
+                  <span className="font-medium">학습 데이터</span>
+                  <span className="text-slate-400">— 누적 피드백·우수작(다음 생성에 자동 주입)</span>
+                </button>
+                {memOpen && (
+                  <div className="px-3 pb-3 pt-1 space-y-3 border-t border-slate-100">
+                    {memLoading ? (
+                      <p className="text-xs text-slate-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />불러오는 중...</p>
+                    ) : (
+                      <>
+                        <div>
+                          <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wider mb-1">피드백 {fbList.length}</p>
+                          {fbList.length === 0 ? <p className="text-xs text-slate-400">없음. 결과 카드의 "피드백"으로 추가</p> : (
+                            <div className="space-y-1">
+                              {fbList.map(f => (
+                                <div key={f.id} className="flex items-start gap-2 text-xs text-slate-600 bg-amber-50/50 rounded-lg px-2 py-1">
+                                  <span className="flex-1">{f.text}</span>
+                                  <button onClick={() => delFeedback(f.id)} className="text-slate-400 hover:text-red-500 cursor-pointer shrink-0"><Trash2 className="w-3 h-3" /></button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider mb-1">우수작 {exList.length}</p>
+                          {exList.length === 0 ? <p className="text-xs text-slate-400">없음. 결과 카드의 "우수작"으로 저장</p> : (
+                            <div className="space-y-1">
+                              {exList.map(e => (
+                                <div key={e.id} className="flex items-start gap-2 text-xs text-slate-600 bg-emerald-50/50 rounded-lg px-2 py-1">
+                                  <span className="flex-1 truncate">{e.note || e.content.slice(0, 80)}</span>
+                                  <button onClick={() => delExample(e.id)} className="text-slate-400 hover:text-red-500 cursor-pointer shrink-0"><Trash2 className="w-3 h-3" /></button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="mt-3 flex items-start gap-1.5 text-[11px] text-slate-400 leading-relaxed">
                 <Users className="w-3 h-3 shrink-0 mt-0.5" />
                 <p>

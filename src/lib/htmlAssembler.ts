@@ -91,9 +91,14 @@ function isCodeFence(trimmed: string): boolean {
 
 // 가이드 문구가 "🔍 📊 ⚡ 💬 📞 📦 🚚 🎯 📈 등"으로 예시만 들고 고정 목록이 아님을 명시하므로,
 // 특정 이모지 목록을 하드코딩하지 않고 "이모지로 시작하는 짧은 단독 행"을 일반적으로 탐지한다.
+// 단, "📩 도입 검토 단계라면...만듭니다." 같은 이모지로 시작하는 완결된 CTA 문장은 소제목이
+// 아니다 — 가이드의 모든 소제목 예시는 짧은 명사구/의문형이며 마침표로 끝나는 평서문이 없으므로,
+// 평서문 종결(~다./~요./~죠./~네요.)로 끝나는 행은 길이와 무관하게 소제목에서 제외한다.
+const DECLARATIVE_ENDING = /(다|요|죠|네요)\.$/;
 function isSubheading(trimmed: string): boolean {
   if (!trimmed || trimmed.length > 60) return false;
   if (trimmed.startsWith("✅") || trimmed.startsWith("-") || trimmed.startsWith("📑")) return false;
+  if (DECLARATIVE_ENDING.test(trimmed)) return false;
   return EMOJI_START.test(trimmed);
 }
 

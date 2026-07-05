@@ -144,7 +144,7 @@ function extractJsonObject(text: string): any {
   return null;
 }
 
-// ─── 자동 검수 (07_qc_checklist.md 1번 항목, 코드로 직접 계산) ───
+// ─── 자동 검수 (guide/08-qc-checklist.md 1번 항목, 코드로 직접 계산) ───
 function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   const cards: any[] = Array.isArray(parsed?.cards) ? parsed.cards : [];
   const checks: Record<string, "PASS" | "FAIL"> = {};
@@ -191,6 +191,16 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     !c.highlight_text || (c.title || "").includes(c.highlight_text)
   ) ? "PASS" : "FAIL";
 
+  // title/subtitle에 "N단계", "N가지"처럼 숫자를 명시했으면 items 개수가 실제로 N개인지 대조
+  checks["숫자_문구_일치"] = middles.every((c) => {
+    const text = `${c.title || ""} ${c.subtitle || ""}`;
+    const match = text.match(/(\d+)\s*(단계|가지|개)/);
+    if (!match) return true;
+    const claimed = parseInt(match[1], 10);
+    const n = c.items?.length ?? 0;
+    return claimed === n;
+  }) ? "PASS" : "FAIL";
+
   const hashtags: any[] = Array.isArray(parsed?.hashtags) ? parsed.hashtags : [];
   const hasRequiredTags = REQUIRED_HASHTAGS.every((t) => hashtags.includes(t));
   checks["해시태그_개수_필수태그"] = hashtags.length >= 12 && hashtags.length <= 15 && hasRequiredTags ? "PASS" : "FAIL";
@@ -201,7 +211,7 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   return checks;
 }
 
-// 10_instagram_facebook_content.md 기준 필수 해시태그
+// guide/06-content-rules.md 기준 필수 해시태그
 const REQUIRED_HASHTAGS = ["#CS쉐어링", "#CS대행", "#고객센터대행"];
 
 // ─── 재생성 없이 코드로 바로 고칠 수 있는 기계적 문제 보정 ───
@@ -232,7 +242,7 @@ function computeVerdict(autoChecks: Record<string, "PASS" | "FAIL">, scores: Rec
   return "조건부 PASS";
 }
 
-// ─── 검수 체크리스트(07_qc_checklist.md 등) 기반 채점 + 재생성 ───
+// ─── 검수 체크리스트(guide/08-qc-checklist.md 등) 기반 채점 + 재생성 ───
 // 채널 폴더에 검수 체크리스트 파일이 있을 때만 동작. 없거나 카드 JSON이 아니면 원본 그대로 반환.
 async function runQcAndRegenerate(
   channel: ChannelKey,
@@ -247,7 +257,7 @@ async function runQcAndRegenerate(
 ): Promise<string> {
   let qcChecklist = "";
   try {
-    qcChecklist = (await readChannelFile(channel, "07_qc_checklist.md", token)).trim();
+    qcChecklist = (await readChannelFile(channel, "guide/08-qc-checklist.md", token)).trim();
   } catch {
     return content;
   }
@@ -271,7 +281,7 @@ async function runQcAndRegenerate(
 
     const qcPrompt = `다음은 방금 생성된 카드뉴스 콘텐츠와 검수 체크리스트다. 체크리스트의 "2. 정성 평가" 6개 항목을 각각 1~5점(서비스 범위 정확성은 0~5점)으로 엄격하게 채점하라.
 
-- 후킹력: 1장 title/subtitle이 06_hook_pattern_library.md 유형 중 하나로 명확히 분류되는지. 어느 유형에도 안 걸리고 "~한데 ~인지"류 안전한 반문형이면 3점 이하.
+- 후킹력: 1장 title/subtitle이 05-hook-patterns.md 유형 중 하나로 명확히 분류되는지. 어느 유형에도 안 걸리고 "~한데 ~인지"류 안전한 반문형이면 3점 이하.
 - 서비스 범위 정확성: 아래 [검증된 회사 정보]에 없는 서비스명·기능을 지어냈으면 반드시 0점. 수치는 출처가 있거나 가상 예시 표시가 있어야 함.
 
 [검증된 회사 정보]
@@ -369,7 +379,8 @@ export async function generateContent(
   provider: Provider,
   token?: string,
   suggestions?: string[],
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  angle?: string
 ): Promise<string> {
   // 채널 설정(_meta.json)에서 생성 튜닝 로드 (없으면 코드 기본값)
   const meta = await getChannelMeta(channel, token).catch(() => null);
@@ -392,16 +403,18 @@ export async function generateContent(
     }
   }
 
+  const angleContext = angle ? `\n\n[선택된 방향]\n${angle}` : "";
+
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
 
 [주제]
-${topic}${suggestionContext}
+${topic}${suggestionContext}${angleContext}
 
 [작성자 초안]
 ${draft}
 
-위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요. 단, 초안에 등장하는 구체적 수치가 출처 없는 것이라면 "예를 들어" 같은 표현으로 가상 예시임을 밝히고, 김 대리 같은 인물도 실존 인물처럼 단정하지 말고 가상의 예시로 서술하세요.
+위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요. [선택된 방향]이 명시되어 있다면 그 방향에 맞는 카드 흐름 구조를 채널 가이드에서 찾아 적용하세요. 단, 초안에 등장하는 구체적 수치가 출처 없는 것이라면 "예를 들어" 같은 표현으로 가상 예시임을 밝히고, 김 대리 같은 인물도 실존 인물처럼 단정하지 말고 가상의 예시로 서술하세요.
 
 [중요] 이 요청에는 이미 작성자 초안이 포함되어 있습니다. 기획 방향(A/B/C) 제안 절차는 건너뛰고, 위 초안의 핵심 질문과 주장을 선택된 방향으로 간주하여 최종 완성 콘텐츠를 즉시 생성하세요. 방향을 묻거나 제안하는 응답은 하지 마세요.${imageCardGuide}`
     : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}${imageCardGuide}`;

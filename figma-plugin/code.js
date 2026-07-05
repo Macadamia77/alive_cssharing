@@ -2,9 +2,9 @@ figma.showUI(__html__, { width: 440, height: 480 });
 
 var STYLE = {
   numberFontSize: 40,
-  boxTitleFontSize: 40,
-  boxTitleFontSizeCompare: 40,
-  boxTitleFontSizeKeyword: 40,
+  boxTitleFontSize: 44,
+  boxTitleFontSizeCompare: 44,
+  boxTitleFontSizeKeyword: 44,
   boxBodyFontSize: 40,
   boxBodyFontSizeCompare: 40,
   boxBodyFontSizeKeyword: 40,
@@ -16,7 +16,7 @@ var STYLE = {
   minBoxTitleFontSize: 48,
   minBoxBodyFontSize: 40,
 
-  flowTitleFontSize: 40,
+  flowTitleFontSize: 44,
   flowBodyFontSize: 40,
   flowMinTitleFontSize: 40,
   flowMinBodyFontSize: 40,
@@ -519,11 +519,12 @@ async function renderListCards(container, items, frame, cardAccentIndex) {
   }
 }
 
-// keyword_boxes 전용: 4x1 세로 나열이 아니라 2열 그리드(2x2, 3개면 2+1)로 배치.
+// keyword_boxes 전용: 4x1 세로 나열이 아니라 그리드로 배치.
+// 4개면 2열 그리드(2x2), 3개면 2+1 그리드가 아니라 한 줄에 3칸(3x1)으로 배치한다.
 // 박스 자체 스타일(강조선·색상)은 list_cards와 동일하게 재사용한다.
 async function renderGridCards(container, items, frame) {
   var maxItems = Math.min(items.length, 4);
-  var cols = 2;
+  var cols = maxItems === 3 ? 3 : 2;
   var rows = Math.ceil(maxItems / cols);
   var gap = STYLE.boxGap;
 
@@ -545,7 +546,7 @@ async function renderGridCards(container, items, frame) {
 }
 
 async function renderNumberedSignals(container, items, frame) {
-  var maxItems = Math.min(items.length, 3);
+  var maxItems = Math.min(items.length, 4);
   var gap = STYLE.boxGap;
   var boxHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
 
@@ -686,13 +687,50 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   }
 
   var showNumber = !!item.number;
+  var showTone = layoutType === "compare_2col" && (item.tone === "bad" || item.tone === "good");
 
   var barOffset = isListCard ? 10 : 0;
   var textLeft = 24 + barOffset;
   var topPadding = isFlow ? 20 : 22;
   var bodyTop = isFlow ? 86 : 84;
 
-  if (showNumber) {
+  if (showTone) {
+    var toneBadgeSize = 58;
+    var isBad = item.tone === "bad";
+
+    var toneBadge = figma.createFrame();
+
+    toneBadge.name = "generated_tone_badge";
+    toneBadge.x = 22;
+    toneBadge.y = 22;
+    toneBadge.resize(toneBadgeSize, toneBadgeSize);
+    toneBadge.fills = [{ type: "SOLID", color: hexToRgb(isBad ? "#F04452" : "#00AEEF") }];
+    toneBadge.cornerRadius = 14;
+    toneBadge.clipsContent = false;
+
+    box.appendChild(toneBadge);
+
+    var toneText = figma.createText();
+
+    toneText.name = "generated_tone_symbol";
+
+    await applyFont(toneText, getFontFromLayer(frame, "title"));
+
+    toneText.characters = isBad ? "X" : "O";
+    toneText.fontSize = STYLE.numberFontSize;
+    toneText.fills = [{ type: "SOLID", color: hexToRgb("#FFFFFF") }];
+    toneText.textAlignHorizontal = "CENTER";
+    toneText.textAlignVertical = "CENTER";
+    toneText.resize(toneBadgeSize, toneBadgeSize);
+    toneText.x = 0;
+    toneText.y = 0;
+
+    toneBadge.appendChild(toneText);
+
+    textLeft = 98;
+    topPadding = 24;
+    bodyTop = 92;
+  } else if (showNumber) {
     var badgeSize = isFlow ? 40 : 58;
     var badgeRadius = isFlow ? 10 : 14;
 

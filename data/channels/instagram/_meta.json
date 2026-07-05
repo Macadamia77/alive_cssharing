@@ -3,7 +3,15 @@
   "type": "single",
   "description": "B2B 감성 + 정보 콘텐츠 생성",
   "include": [
-    "guide.md"
+    "guide/00-brand-scope.md",
+    "guide/01-direction-story.md",
+    "guide/02-content-quality.md",
+    "guide/03-expression-dictionary.md",
+    "guide/04-reference-examples.md",
+    "guide/05-hook-patterns.md",
+    "guide/06-content-rules.md",
+    "guide/07-figma-contract.md",
+    "guide/08-qc-checklist.md"
   ],
   "maxTokens": 16000,
   "disableThinking": true,

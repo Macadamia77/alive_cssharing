@@ -25,6 +25,14 @@ interface SNSCard {
   design_point: string;
 }
 
+interface QcReport {
+  auto_checks?: Record<string, "PASS" | "FAIL">;
+  scores?: Record<string, number>;
+  average?: number;
+  verdict?: "PASS" | "조건부 PASS" | "FAIL";
+  feedback?: string;
+}
+
 interface SNSJson {
   planning?: string;
   content_title?: string;
@@ -32,6 +40,7 @@ interface SNSJson {
   caption?: string;
   hashtags?: string[];
   article_body?: string;
+  qc_report?: QcReport;
 }
 
 function isValidSNS(parsed: Record<string, unknown>): parsed is Record<string, unknown> {
@@ -380,12 +389,72 @@ function Section({ label, copyText, children }: {
   );
 }
 
+// ── 검수 결과 ────────────────────────────────────────────────
+function verdictStyle(verdict?: string) {
+  if (verdict === "PASS") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (verdict === "조건부 PASS") return "bg-amber-50 text-amber-700 border-amber-200";
+  return "bg-red-50 text-red-700 border-red-200";
+}
+
+function QcReportView({ report }: { report: QcReport }) {
+  const scores = report.scores ?? {};
+  const autoChecks = report.auto_checks ?? {};
+  const scoreEntries = Object.entries(scores);
+  const sum = scoreEntries.reduce((acc, [, v]) => acc + (typeof v === "number" ? v : 0), 0);
+
+  return (
+    <div className="px-4 py-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${verdictStyle(report.verdict)}`}>
+          {report.verdict ?? "미판정"}
+        </span>
+        <span className="text-sm font-bold text-slate-700">
+          평균 {report.average ?? "-"}/5 <span className="text-slate-400 font-normal">(합계 {sum}/{scoreEntries.length * 5})</span>
+        </span>
+      </div>
+
+      {scoreEntries.length > 0 && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {scoreEntries.map(([key, val]) => (
+            <div key={key} className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">{key.replace(/_/g, " ")}</span>
+              <span className={`font-bold ${val >= 4 ? "text-emerald-600" : val >= 2 ? "text-amber-600" : "text-red-600"}`}>{val}/5</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {Object.keys(autoChecks).length > 0 && (
+        <div className="pt-2 border-t border-slate-100">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">자동 검수</p>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(autoChecks).map(([key, val]) => (
+              <span
+                key={key}
+                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                  val === "PASS" ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-red-50 text-red-600 border-red-100"
+                }`}
+              >
+                {key.replace(/_/g, " ")} {val}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {report.feedback && (
+        <p className="text-xs text-slate-500 pt-2 border-t border-slate-100 leading-relaxed">{report.feedback}</p>
+      )}
+    </div>
+  );
+}
+
 // ── 메인 컴포넌트 ────────────────────────────────────────────
 export default function InstagramCardPreview({ content }: { content: string }) {
   const data = tryParseInstagramJson(content);
   if (!data) return null;
 
-  const { cards, caption, hashtags, content_title, article_body } = data;
+  const { cards, caption, hashtags, content_title, article_body, qc_report } = data;
   const captionText = caption ?? article_body ?? "";
 
   return (
@@ -422,6 +491,12 @@ export default function InstagramCardPreview({ content }: { content: string }) {
               </span>
             ))}
           </div>
+        </Section>
+      )}
+
+      {qc_report && (
+        <Section label="검수 결과">
+          <QcReportView report={qc_report} />
         </Section>
       )}
     </div>

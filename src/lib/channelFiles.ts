@@ -368,6 +368,16 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
   }
 
   const parts: string[] = [];
+
+  // 회사 서비스 관련 검증된 사실 정보는 채널 공용으로 항상 포함 (지어낸 서비스·수치 방지)
+  try {
+    const factsPath = path.join(rootDir, "data", "company-facts.md");
+    const facts = (await fs.readFile(factsPath, "utf-8")).trim();
+    if (facts) parts.push(`\n\n${"=".repeat(60)}\n# company-facts.md\n${"=".repeat(60)}\n\n${facts}`);
+  } catch (e) {
+    console.warn(`[buildSystemPrompt] company-facts.md 로드 실패:`, e);
+  }
+
   for (const relPath of guideFiles) {
     try {
       const content = await readChannelFile(channel, relPath, token);
@@ -383,11 +393,12 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
     return "";
   }
 
-  const guideList = guideFiles.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
+  const displayFiles = ["company-facts.md", ...guideFiles];
+  const guideList = displayFiles.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
 
   const header = `당신은 ${meta.label} 채널 전용 마케팅 콘텐츠 작성 AI입니다.
 
-아래 가이드 문서 ${guideFiles.length}개를 반드시 숙지하고 철저히 따라 콘텐츠를 작성하세요.
+아래 가이드 문서 ${displayFiles.length}개를 반드시 숙지하고 철저히 따라 콘텐츠를 작성하세요.
 가이드에 명시된 형식·구조·어조·금지 사항을 그대로 적용하세요.
 
 [참조 가이드 목록]

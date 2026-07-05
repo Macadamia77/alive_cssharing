@@ -53,6 +53,7 @@ var FIGMA_THEMES = {
   summer3: { first: "summer3_first", cta: "summer3_CTA" },
   summer4: { first: "summer4_first", cta: "summer4_CTA" },
   summer5: { first: "summer5_first", cta: "summer5_CTA" },
+  week2:   { first: "week2_first",   cta: "week2_CTA"   },
 };
 
 function applyThemeToCards(cards, theme) {
@@ -242,6 +243,12 @@ async function createCards(cards) {
 
     // CTA 템플릿은 텍스트 레이어만 채우고 디자인은 유지
     if (card.template_name === "Instagram post - CTA" || cardTemplateName.endsWith("_CTA")) {
+      if (card.title) {
+        await setLayerText(clone, "title", card.title);
+      }
+      if (card.subtitle) {
+        await setLayerText(clone, "subtitle", card.subtitle);
+      }
       if (card.cta) {
         await setLayerText(clone, "cta", card.cta);
       }

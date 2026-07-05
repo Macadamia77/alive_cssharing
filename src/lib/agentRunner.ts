@@ -108,6 +108,228 @@ function stripCodeFence(text: string): string {
   return m ? m[1].trim() : s;
 }
 
+// ─── 카드 JSON 추출 (마크다운 펜스·잡텍스트 안에 섞여있어도 파싱) ───
+function extractJsonObject(text: string): any {
+  const trimmed = text.trim();
+  try { return JSON.parse(trimmed); } catch { /* fall through */ }
+
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+  if (fenceMatch) {
+    try { return JSON.parse(fenceMatch[1]); } catch { /* fall through */ }
+  }
+
+  const start = trimmed.indexOf("{");
+  if (start !== -1) {
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (esc) { esc = false; continue; }
+      if (ch === "\\" && inStr) { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(trimmed.slice(start, i + 1)); } catch { return null; }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// ─── 자동 검수 (07_qc_checklist.md 1번 항목, 코드로 직접 계산) ───
+function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
+  const cards: any[] = Array.isArray(parsed?.cards) ? parsed.cards : [];
+  const checks: Record<string, "PASS" | "FAIL"> = {};
+
+  checks["카드_구성"] = cards.length === 5 || cards.length === 6 ? "PASS" : "FAIL";
+
+  const first = cards[0];
+  const last = cards[cards.length - 1];
+  checks["카드_순서"] = first?.layout_type === "cover" && last?.layout_type === "cta" ? "PASS" : "FAIL";
+
+  checks["첫장_필드"] = first
+    ? ((first.items?.length ?? 0) === 0 && !first.highlight_text ? "PASS" : "FAIL")
+    : "FAIL";
+
+  checks["CTA_필드"] = last
+    ? ((last.items?.length ?? 0) === 0 && !last.highlight_text ? "PASS" : "FAIL")
+    : "FAIL";
+
+  const middles = cards.slice(1, -1);
+
+  checks["중간카드_title_줄바꿈"] = middles.length > 0 && middles.every((c) => {
+    const title: string = c.title || "";
+    const lineBreaks = (title.match(/\n/g) || []).length;
+    return lineBreaks === 1 && title.split("\n").every((l) => l.length <= 12);
+  }) ? "PASS" : "FAIL";
+
+  checks["중간카드_subtitle"] = middles.every((c) => {
+    const sub: string = c.subtitle || "";
+    return !sub.includes("\n") && sub.length <= 26;
+  }) ? "PASS" : "FAIL";
+
+  const layoutRange: Record<string, [number, number]> = {
+    steps_vertical: [2, 4], compare_2col: [2, 2], flow_process: [3, 4],
+    keyword_boxes: [3, 4], stacked_boxes: [2, 3],
+  };
+  checks["items_개수"] = middles.every((c) => {
+    const range = layoutRange[c.layout_type];
+    if (!range) return true;
+    const n = (c.items?.length ?? 0);
+    return n >= range[0] && n <= range[1];
+  }) ? "PASS" : "FAIL";
+
+  checks["highlight_text_일치"] = middles.every((c) =>
+    !c.highlight_text || (c.title || "").includes(c.highlight_text)
+  ) ? "PASS" : "FAIL";
+
+  const hashtags: any[] = Array.isArray(parsed?.hashtags) ? parsed.hashtags : [];
+  checks["해시태그_개수"] = hashtags.length >= 3 && hashtags.length <= 5 ? "PASS" : "FAIL";
+
+  const leakText = [parsed?.caption, ...cards.map((c) => `${c.body ?? ""} ${c.design_point ?? ""}`)].join(" ");
+  checks["검수정보_비노출"] = /\bplanning\b|\bdesign_point\b/i.test(leakText) ? "FAIL" : "PASS";
+
+  return checks;
+}
+
+function computeVerdict(autoChecks: Record<string, "PASS" | "FAIL">, scores: Record<string, number>): "PASS" | "조건부 PASS" | "FAIL" {
+  const autoAllPass = Object.values(autoChecks).every((v) => v === "PASS");
+  const values = Object.values(scores).filter((v) => typeof v === "number");
+  const sum = values.reduce((a, b) => a + b, 0);
+  const serviceZero = (scores["서비스_범위_정확성"] ?? 5) === 0;
+  if (!autoAllPass || sum < 20 || serviceZero) return "FAIL";
+  if (sum >= 24) return "PASS";
+  return "조건부 PASS";
+}
+
+// ─── 검수 체크리스트(07_qc_checklist.md 등) 기반 채점 + 재생성 ───
+// 채널 폴더에 검수 체크리스트 파일이 있을 때만 동작. 없거나 카드 JSON이 아니면 원본 그대로 반환.
+async function runQcAndRegenerate(
+  channel: ChannelKey,
+  content: string,
+  systemPrompt: string,
+  userMessage: string,
+  provider: Provider,
+  pc: { apiKey: string; model: string },
+  maxTok: number,
+  disableThinking: boolean,
+  token?: string
+): Promise<string> {
+  let qcChecklist = "";
+  try {
+    qcChecklist = (await readChannelFile(channel, "07_qc_checklist.md", token)).trim();
+  } catch {
+    return content;
+  }
+  if (!qcChecklist) return content;
+
+  let companyFacts = "";
+  try {
+    companyFacts = readFileSync(join(dataRoot(), "data", "company-facts.md"), "utf-8").trim();
+  } catch {
+    // 없으면 서비스 실존 여부 대조 없이 진행
+  }
+
+  async function scoreOnce(text: string): Promise<{ parsed: any; report: any } | null> {
+    const parsed = extractJsonObject(text);
+    if (!parsed || !Array.isArray(parsed.cards)) return null;
+
+    const autoChecks = computeAutoChecks(parsed);
+
+    const qcPrompt = `다음은 방금 생성된 카드뉴스 콘텐츠와 검수 체크리스트다. 체크리스트의 "2. 정성 평가" 6개 항목을 각각 1~5점(서비스 범위 정확성은 0~5점)으로 엄격하게 채점하라.
+
+- 후킹력: 1장 title/subtitle이 06_hook_pattern_library.md 유형 중 하나로 명확히 분류되는지. 어느 유형에도 안 걸리고 "~한데 ~인지"류 안전한 반문형이면 3점 이하.
+- 서비스 범위 정확성: 아래 [검증된 회사 정보]에 없는 서비스명·기능을 지어냈으면 반드시 0점. 수치는 출처가 있거나 가상 예시 표시가 있어야 함.
+
+[검증된 회사 정보]
+${companyFacts || "(제공되지 않음 — 서비스 실존 여부는 판단하지 말고 다른 항목만 채점)"}
+
+[검수 체크리스트]
+${qcChecklist}
+
+[방금 생성된 콘텐츠]
+${text}
+
+아래 JSON 형식으로만 답하라. 다른 설명은 출력하지 마라.
+{
+  "scores": {
+    "문장_자연스러움": 1~5 정수,
+    "서비스_범위_정확성": 0~5 정수,
+    "고객_문제_반영": 1~5 정수,
+    "채널_적합성": 1~5 정수,
+    "후킹력": 1~5 정수,
+    "CTA_연결성": 1~5 정수
+  },
+  "feedback": "무엇이 문제고 어떻게 고쳐야 하는지 한국어로 2~3문장"
+}`;
+
+    let verdictRaw: string;
+    try {
+      if (provider === "claude") verdictRaw = await callClaude(pc.apiKey, pc.model, "", qcPrompt, 1024);
+      else if (provider === "gemini") verdictRaw = await callGemini(pc.apiKey, pc.model, "", qcPrompt, 1024, disableThinking);
+      else if (provider === "openai") verdictRaw = await callOpenAI(pc.apiKey, pc.model, "", qcPrompt);
+      else return null;
+    } catch {
+      return null;
+    }
+
+    let scoreResult: { scores?: Record<string, number>; feedback?: string };
+    try {
+      scoreResult = JSON.parse(stripCodeFence(verdictRaw));
+    } catch {
+      return null;
+    }
+
+    const scores = scoreResult.scores ?? {};
+    const values = Object.values(scores).filter((v) => typeof v === "number");
+    const average = values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100 : 0;
+    const verdict = computeVerdict(autoChecks, scores);
+
+    return {
+      parsed,
+      report: { auto_checks: autoChecks, scores, average, verdict, feedback: scoreResult.feedback ?? "" },
+    };
+  }
+
+  const first = await scoreOnce(content);
+  if (!first) return content; // 카드 JSON이 아니면 검수 자체를 건너뜀
+
+  let finalParsed = first.parsed;
+  let finalReport = first.report;
+
+  if (finalReport.verdict === "FAIL") {
+    const retryMessage = `${userMessage}
+
+[검수 피드백 — 반드시 반영해서 전체를 다시 작성]
+이전 시도가 검수를 통과하지 못했습니다 (평균 ${finalReport.average}/5, 자동검수: ${JSON.stringify(finalReport.auto_checks)}).
+${finalReport.feedback || "검수 기준 미달"}
+전체 콘텐츠를 처음부터 다시 생성하세요.`;
+
+    let retried: string | null = null;
+    try {
+      if (provider === "claude") retried = await callClaude(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok);
+      else if (provider === "gemini") retried = await callGemini(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok, disableThinking);
+      else if (provider === "openai") retried = await callOpenAI(pc.apiKey, pc.model, systemPrompt, retryMessage);
+    } catch {
+      retried = null;
+    }
+
+    if (retried) {
+      const second = await scoreOnce(retried);
+      if (second) {
+        finalParsed = second.parsed;
+        finalReport = second.report;
+      }
+    }
+  }
+
+  finalParsed.qc_report = finalReport;
+  return "```json\n" + JSON.stringify(finalParsed, null, 2) + "\n```";
+}
+
 // ─── 단순 채널 콘텐츠 생성 (guide 파일만 있는 채널) ───────────
 export async function generateContent(
   channel: ChannelKey,
@@ -149,7 +371,7 @@ ${topic}${suggestionContext}
 [작성자 초안]
 ${draft}
 
-위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요.
+위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요. 단, 초안에 등장하는 구체적 수치가 출처 없는 것이라면 "예를 들어" 같은 표현으로 가상 예시임을 밝히고, 김 대리 같은 인물도 실존 인물처럼 단정하지 말고 가상의 예시로 서술하세요.
 
 [중요] 이 요청에는 이미 작성자 초안이 포함되어 있습니다. 기획 방향(A/B/C) 제안 절차는 건너뛰고, 위 초안의 핵심 질문과 주장을 선택된 방향으로 간주하여 최종 완성 콘텐츠를 즉시 생성하세요. 방향을 묻거나 제안하는 응답은 하지 마세요.${imageCardGuide}`
     : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}${imageCardGuide}`;
@@ -175,9 +397,17 @@ ${draft}
     // 응답 길이·thinking은 _meta.json에서 (JSON 구조화 채널은 길게 + thinking off)
     const maxTok = meta?.maxTokens ?? 4096;
     const disableThinking = meta?.disableThinking ?? false;
-    if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
-    if (provider === "openai") return callOpenAI(pc.apiKey, pc.model, systemPrompt, userMessage);
-    if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok, disableThinking);
+
+    let firstPass: string;
+    if (provider === "claude") firstPass = await callClaude(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);
+    else if (provider === "openai") firstPass = await callOpenAI(pc.apiKey, pc.model, systemPrompt, userMessage);
+    else if (provider === "gemini") firstPass = await callGemini(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok, disableThinking);
+    else return mockGenerate(channel, topic, systemPrompt ? `[가이드 ${Math.round(systemPrompt.length / 100)}백자]` : "");
+
+    return await runQcAndRegenerate(
+      channel, firstPass, systemPrompt, userMessage, provider,
+      { apiKey: pc.apiKey, model: pc.model }, maxTok, disableThinking, token
+    );
   }
 
   return mockGenerate(channel, topic, systemPrompt ? `[가이드 ${Math.round(systemPrompt.length / 100)}백자]` : "");

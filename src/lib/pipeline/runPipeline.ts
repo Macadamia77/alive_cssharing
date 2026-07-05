@@ -24,6 +24,7 @@ import {
 import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample } from "../pipelineMemory";
+import { assembleNaverBlogHtml } from "../htmlAssembler";
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -228,6 +229,7 @@ export async function runPipeline(
   let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
   let writerCall: { p: Provider; apiKey: string; model: string } =
     { p: provider, apiKey: baseAuth.apiKey, model: baseAuth.model }; // 재작성은 writer 모델로
+  let replacedCards: string[] = []; // image 단계에서 만든 카드 HTML (플레이스홀더 → 최종 치환용)
 
   for (const stage of stages) {
     const kind = stageKind(stage.id);
@@ -291,7 +293,43 @@ export async function runPipeline(
       }
 
     } else if (kind === "image") {
-      console.log(`[engine] ${channel} · ${stage.id} (이미지 단계 미구현, 통과)`);
+      const imageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
+      if (imageMarkers.length === 0) {
+        console.log(`[engine] ${channel} · ${stage.id}: [IMAGE:...] 마커 없음 → 건너뜀`);
+        continue;
+      }
+      const system = persona + stageGuides;
+      const user =
+        `[주제]\n${topic}\n\n` +
+        `아래 draft 전문에서 [IMAGE: ...] 마커(${imageMarkers.length}개)들의 설명에 부합하는 브랜드 카드 HTML+CSS 코드를 작성하세요.\n\n` +
+        `[작성 규칙]\n` +
+        `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
+        `- 오직 각 마커에 들어갈 HTML 카드 코드블록들만 순서대로 작성하십시오.\n` +
+        `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
+        `- **첫 번째 마커 (인덱스 0)**는 블로그 대표 썸네일이므로, 720x720px 크기에 파란색/하늘색 배경(#18A0E8)을 가진 대표 이미지 프레임을 사용하십시오.\n` +
+        `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 800px 너비에 흰색 배경을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오.\n\n` +
+        `[입력 draft 전문]\n${draft}`;
+      const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
+
+      const cards: string[] = [];
+      const cardRegex = /<!-- CARD_START -->([\s\S]*?)<!-- CARD_END -->/g;
+      let cm;
+      while ((cm = cardRegex.exec(cardsRaw)) !== null) cards.push(cm[1].trim());
+      if (cards.length === 0) {
+        const divRegex = /<div style="font-family:[\s\S]*?<\/div>\s*<\/div>/g;
+        let dm;
+        while ((dm = divRegex.exec(cardsRaw)) !== null) cards.push(dm[0].trim());
+      }
+
+      let cardIndex = 0;
+      draft = draft.replace(/\[IMAGE:\s*([^\]]+)\]/g, (match) => {
+        const cardHtml = cards[cardIndex] || match;
+        replacedCards.push(cardHtml);
+        const placeholder = `<!-- HTML_CARD_${cardIndex} -->`;
+        cardIndex++;
+        return placeholder;
+      });
+      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${cards.length}/${imageMarkers.length}개 생성`);
     }
   }
 
@@ -302,8 +340,17 @@ export async function runPipeline(
   // ── 최종 조립 (outputFormat별) ──
   const fmt = meta.outputFormat ?? "text";
   if (fmt === "html") {
-    // TODO: assembleNaverBlogHtml + 이미지 카드 (네이버는 아직 legacy runAgentPipeline 사용)
-    return draft;
+    const shell = await readChannelFile(channel, "templates/blog-shell.html", token).catch(() => undefined);
+    const assembled = assembleNaverBlogHtml(draft, shell);
+    if (assembled === null) {
+      console.warn(`[engine] ${channel}: HTML 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
+      return draft;
+    }
+    let finalHtml = assembled;
+    replacedCards.forEach((cardHtml, idx) => {
+      finalHtml = finalHtml.replace(new RegExp(`<!--\\s*HTML_CARD_${idx}\\s*-->`, "g"), cardHtml);
+    });
+    return finalHtml;
   }
   // json / text: writer가 이미 형식대로 출력 → 그대로 반환
   return draft;

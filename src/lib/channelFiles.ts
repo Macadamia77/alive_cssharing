@@ -369,13 +369,16 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
 
   const parts: string[] = [];
 
-  // 회사 서비스 관련 검증된 사실 정보는 채널 공용으로 항상 포함 (지어낸 서비스·수치 방지)
-  try {
-    const factsPath = path.join(rootDir, "data", "company-facts.md");
-    const facts = (await fs.readFile(factsPath, "utf-8")).trim();
-    if (facts) parts.push(`\n\n${"=".repeat(60)}\n# company-facts.md\n${"=".repeat(60)}\n\n${facts}`);
-  } catch (e) {
-    console.warn(`[buildSystemPrompt] company-facts.md 로드 실패:`, e);
+  // 회사 서비스 관련 검증된 사실 정보(지어낸 서비스·수치 방지)는 인스타그램/페이스북 채널에만 포함한다.
+  // 다른 채널은 구조가 달라 그대로 적용하면 안 맞을 수 있어, 필요해지면 그 채널 전용으로 따로 검토한다.
+  if (channel === "instagram") {
+    try {
+      const factsPath = path.join(rootDir, "data", "company-facts.md");
+      const facts = (await fs.readFile(factsPath, "utf-8")).trim();
+      if (facts) parts.push(`\n\n${"=".repeat(60)}\n# company-facts.md\n${"=".repeat(60)}\n\n${facts}`);
+    } catch (e) {
+      console.warn(`[buildSystemPrompt] company-facts.md 로드 실패:`, e);
+    }
   }
 
   for (const relPath of guideFiles) {
@@ -393,7 +396,7 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
     return "";
   }
 
-  const displayFiles = ["company-facts.md", ...guideFiles];
+  const displayFiles = channel === "instagram" ? ["company-facts.md", ...guideFiles] : guideFiles;
   const guideList = displayFiles.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
 
   const header = `당신은 ${meta.label} 채널 전용 마케팅 콘텐츠 작성 AI입니다.

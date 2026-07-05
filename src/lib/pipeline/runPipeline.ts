@@ -97,16 +97,17 @@ async function loadAllGuides(channel: ChannelKey, token?: string): Promise<Guide
 // 한 단계에 주입할 조각 텍스트를 조립한다.
 // 우선순위: ① _meta.pipeline[단계].guides(명시 할당) → ② frontmatter stages 태그
 //          → ③ (writer 한정) 태그 없는 파일 전부 (기존 호환)
-function guidesForStage(all: GuideFile[], stage: ResolvedStage): string {
-  let selected: GuideFile[];
+function selectGuides(all: GuideFile[], stage: ResolvedStage): GuideFile[] {
   if (stage.guides !== undefined) {
     // 명시 할당(빈 배열이면 "아무것도 안 붙임"을 의미)
-    selected = all.filter(g => stage.guides!.includes(g.path));
-  } else {
-    selected = all.filter(g =>
-      g.stages.includes(stage.id) || (stage.id === "writer" && g.stages.length === 0)
-    );
+    return all.filter(g => stage.guides!.includes(g.path));
   }
+  return all.filter(g =>
+    g.stages.includes(stage.id) || (stage.id === "writer" && g.stages.length === 0)
+  );
+}
+
+function guidesText(selected: GuideFile[]): string {
   if (selected.length === 0) return "";
   return selected
     .map(g => `\n\n${"=".repeat(60)}\n# ${g.path}\n${"=".repeat(60)}\n\n${g.body}`)
@@ -202,10 +203,11 @@ export async function runPipeline(
       console.warn(`[engine] ${channel}/${stage.id}: 페르소나 '${stage.persona ?? stage.id}' 파일 없음 → 단계 건너뜀`);
       continue;
     }
-    const stageGuides = guidesForStage(allGuides, stage);
+    const selected = selectGuides(allGuides, stage);
+    const stageGuides = guidesText(selected);
     const maxTok = stage.maxTokens ?? 4096;
     if (statusCallback) await statusCallback(stage.id);
-    console.log(`[engine] ${channel} · ${stage.id}(${kind}) 시작 — 조각 ${stageGuides ? stageGuides.match(/^# /gm)?.length ?? "?" : 0}개`);
+    console.log(`[engine] ${channel} · ${stage.id}(${kind}) 시작 — 조각 ${selected.length}개${selected.length ? " [" + selected.map(g => g.path).join(", ") + "]" : ""}`);
 
     if (kind === "producer") {
       const system = persona + stageGuides;
@@ -235,7 +237,7 @@ export async function runPipeline(
       const review = stripCodeFence(await call(persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
       if (isRejected(review)) {
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
-        console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성`);
+        console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
         const rewriteUser =
           `[주제]\n${topic}\n\n` +

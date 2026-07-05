@@ -4,5 +4,7 @@
   "description": "사고 리더십 전문 포스팅 생성",
   "include": [
     "guide.md"
-  ]
+  ],
+  "engine": "pipeline",
+  "outputFormat": "text"
 }

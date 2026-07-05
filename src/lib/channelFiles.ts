@@ -29,6 +29,7 @@ export interface ChannelMeta {
   researchGuides?: string[]; // 리서치 단계에 넣을 guide 파일 키 목록
   writeOrder?: string[];     // 글쓰기 단계 guide 배치 순서 (뒤일수록 LLM이 더 주목)
   // 통합 파이프라인 엔진용 (선택)
+  engine?: "pipeline" | "legacy"; // "pipeline"이면 통합 엔진(runPipeline) 사용. 없으면 기존 경로.
   outputFormat?: "html" | "text" | "json"; // 최종 결과물 형식 (기본 text)
   model?: string;            // 채널 기본 provider ("claude"|"openai"|"gemini")
   modelId?: string;          // 채널 기본 모델 id

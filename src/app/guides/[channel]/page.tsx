@@ -1,4 +1,5 @@
 import GuideEditor from "@/components/GuideEditor";
+import PipelineToggles from "@/components/PipelineToggles";
 import Navbar from "@/components/Navbar";
 import { type ChannelKey } from "@/components/ChannelResultCard";
 import { notFound } from "next/navigation";
@@ -20,6 +21,7 @@ export default async function GuideDetailPage({
     <div className="gradient-bg min-h-screen">
       <Navbar />
       <main className="pt-28 pb-20 px-4">
+        <PipelineToggles channel={channel as ChannelKey} />
         <GuideEditor channel={channel as ChannelKey} />
       </main>
     </div>

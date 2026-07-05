@@ -84,6 +84,11 @@ function isCardPlaceholder(trimmed: string): boolean {
   return /^<!--\s*HTML_CARD_\d+\s*-->$/.test(trimmed);
 }
 
+// LLM이 남긴 마크다운 코드펜스 줄(```html, ```, ~~~ 등). 본문에 그대로 노출되면 안 되므로 스킵한다.
+function isCodeFence(trimmed: string): boolean {
+  return /^(?:```|~~~)[a-zA-Z0-9]*$/.test(trimmed);
+}
+
 // 가이드 문구가 "🔍 📊 ⚡ 💬 📞 📦 🚚 🎯 📈 등"으로 예시만 들고 고정 목록이 아님을 명시하므로,
 // 특정 이모지 목록을 하드코딩하지 않고 "이모지로 시작하는 짧은 단독 행"을 일반적으로 탐지한다.
 function isSubheading(trimmed: string): boolean {
@@ -122,7 +127,7 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
 
     const lines = publishMatch[1].replace(/^﻿/, "").split(/\r?\n/);
 
-    const titleIdx = lines.findIndex(l => l.trim().length > 0);
+    const titleIdx = lines.findIndex(l => l.trim().length > 0 && !isCodeFence(l.trim()));
     if (titleIdx === -1) return null;
     const title = lines[titleIdx].trim().replace(/^#\s*/, "");
 
@@ -140,6 +145,9 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
       const trimmed = rawLine.trim();
 
       if (!trimmed) { flushList(); continue; }
+
+      // 코드펜스 줄(```html, ``` 등)은 LLM 잔여물이므로 출력하지 않고 스킵
+      if (isCodeFence(trimmed)) { continue; }
 
       if (isCardPlaceholder(trimmed)) { flushList(); htmlParts.push(trimmed); continue; }
 

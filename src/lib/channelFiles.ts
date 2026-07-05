@@ -28,6 +28,20 @@ export interface ChannelMeta {
   // ④ 파이프라인 가이드 선택/순서 (선택 — 파이프라인 채널용)
   researchGuides?: string[]; // 리서치 단계에 넣을 guide 파일 키 목록
   writeOrder?: string[];     // 글쓰기 단계 guide 배치 순서 (뒤일수록 LLM이 더 주목)
+  // 통합 파이프라인 엔진용 (선택)
+  engine?: "pipeline" | "legacy"; // "pipeline"이면 통합 엔진(runPipeline) 사용. 없으면 기존 경로.
+  outputFormat?: "html" | "text" | "json"; // 최종 결과물 형식 (기본 text)
+  model?: string;            // 채널 기본 provider ("claude"|"openai"|"gemini")
+  modelId?: string;          // 채널 기본 모델 id
+  /** 단계별 토글·오버라이드. 키 = stage id (예: { "writer": { "enabled": true } }) */
+  pipeline?: Record<string, {
+    enabled?: boolean;
+    model?: string;
+    modelId?: string;
+    maxTokens?: number;
+    roles?: string[];
+    guides?: string[];
+  }>;
 }
 
 export interface FileNode {
@@ -165,7 +179,11 @@ export async function readChannelFile(channel: ChannelKey, filePath: string, tok
   if (sbConfigured()) {
     try {
       const f = await sbReadFile(channel, safe);
-      if (f && !f.isBinary) return f.content;
+      if (f) {
+        if (!f.isBinary) return f.content;
+        // 텍스트 파일인데 is_binary=true(base64)로 잘못 저장된 구 데이터 → 디코드해 복구
+        if (isTextFile(safe.split("/").pop() ?? "")) return Buffer.from(f.content, "base64").toString("utf-8");
+      }
     } catch (e) {
       console.warn(`[readChannelFile] ${channel}/${filePath} Supabase 읽기 실패, GitHub로 폴백:`, e);
     }
@@ -212,17 +230,26 @@ export async function writeChannelFile(
   isBase64 = false
 ): Promise<void> {
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
+  const fileName = safe.split("/").pop() ?? "";
+  // is_binary는 프론트의 encoding이 아니라 "실제 파일 확장자"로 판단한다.
+  // 프론트가 텍스트도 base64로 보내므로(코드 단순화), 텍스트인데 base64면 디코드해 원문으로 저장.
+  const storeAsBinary = !isTextFile(fileName);
+  const decoded =
+    isBase64 && !storeAsBinary
+      ? Buffer.from(content, "base64").toString("utf-8") // 텍스트인데 base64 → 디코드
+      : content;                                          // 텍스트 원문 또는 진짜 바이너리(base64 그대로)
+
   // 쓰기 1순위: Supabase (실시간 반영). 미설정(로컬 dev) 시에만 로컬 파일에 쓴다.
   if (sbConfigured()) {
-    await sbWriteFile(channel, safe, content, isBase64);
+    await sbWriteFile(channel, safe, decoded, storeAsBinary);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
   await fs.mkdir(path.dirname(full), { recursive: true });
-  if (isBase64) {
+  if (storeAsBinary) {
     await fs.writeFile(full, Buffer.from(content, "base64"));
   } else {
-    await fs.writeFile(full, content, "utf-8");
+    await fs.writeFile(full, decoded, "utf-8");
   }
 }
 

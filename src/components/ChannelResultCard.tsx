@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check, BookOpen } from "lucide-react";
+import { Copy, Check, BookOpen, ThumbsUp, MessageSquarePlus, Loader2 } from "lucide-react";
 import { type ChannelKey, CHANNEL_LABELS, CHANNEL_COLORS } from "@/lib/channels";
 import InstagramCardPreview, { tryParseInstagramJson } from "./InstagramCardPreview";
 
@@ -59,6 +59,10 @@ function SkeletonBlock() {
 export default function ChannelResultCard({ channel, status, content, stage }: Props) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [exState, setExState] = useState<"" | "saving" | "ok" | "err">("");
+  const [showFb, setShowFb] = useState(false);
+  const [fbText, setFbText] = useState("");
+  const [fbState, setFbState] = useState<"" | "saving" | "ok">("");
   const { color, bgColor, borderColor } = CHANNEL_COLORS[channel];
   const label = CHANNEL_LABELS[channel];
   const icon = CHANNEL_ICONS[channel];
@@ -68,6 +72,35 @@ export default function ChannelResultCard({ channel, status, content, stage }: P
     await navigator.clipboard.writeText(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // 이 결과를 "우수작"으로 저장 → 다음 생성 시 퓨샷(참고작)으로 주입
+  const saveExample = async () => {
+    if (!content || exState === "saving") return;
+    setExState("saving");
+    try {
+      const r = await fetch("/api/examples", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, content }),
+      });
+      setExState(r.ok ? "ok" : "err");
+    } catch { setExState("err"); }
+    setTimeout(() => setExState(""), 2200);
+  };
+
+  // 이 채널 생성에 반영할 피드백 저장 → 다음 생성 시 프롬프트에 주입
+  const sendFeedback = async () => {
+    const t = fbText.trim();
+    if (!t || fbState === "saving") return;
+    setFbState("saving");
+    try {
+      await fetch("/api/feedback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, text: t }),
+      });
+      setFbState("ok"); setFbText("");
+      setTimeout(() => { setFbState(""); setShowFb(false); }, 1400);
+    } catch { setFbState(""); }
   };
 
   const preview = content ? content.slice(0, 300) : "";
@@ -100,20 +133,60 @@ export default function ChannelResultCard({ channel, status, content, stage }: P
             </span>
           )}
           {status === "done" && content && (
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all duration-200 cursor-pointer"
-              aria-label={`${label} 콘텐츠 복사`}
-            >
-              {copied ? (
-                <><Check className="w-3 h-3 text-emerald-500" aria-hidden="true" /><span className="text-emerald-600">복사됨</span></>
-              ) : (
-                <><Copy className="w-3 h-3" aria-hidden="true" />복사</>
-              )}
-            </button>
+            <>
+              <button
+                onClick={saveExample}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-emerald-50 hover:border-emerald-300 transition-all duration-200 cursor-pointer"
+                title="이 결과를 우수작으로 저장 (다음 생성 시 참고작으로 주입)"
+              >
+                {exState === "saving" ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : exState === "ok" ? <><Check className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600">저장됨</span></>
+                  : exState === "err" ? <span className="text-red-500">실패</span>
+                  : <><ThumbsUp className="w-3 h-3" />우수작</>}
+              </button>
+              <button
+                onClick={() => setShowFb(v => !v)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-amber-50 hover:border-amber-300 transition-all duration-200 cursor-pointer"
+                title="이 채널 생성에 반영할 피드백 남기기"
+              >
+                <MessageSquarePlus className="w-3 h-3" />피드백
+              </button>
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all duration-200 cursor-pointer"
+                aria-label={`${label} 콘텐츠 복사`}
+              >
+                {copied ? (
+                  <><Check className="w-3 h-3 text-emerald-500" aria-hidden="true" /><span className="text-emerald-600">복사됨</span></>
+                ) : (
+                  <><Copy className="w-3 h-3" aria-hidden="true" />복사</>
+                )}
+              </button>
+            </>
           )}
         </div>
       </div>
+
+      {/* 피드백 입력 */}
+      {status === "done" && showFb && (
+        <div className="px-5 py-2.5 border-b border-amber-100 bg-amber-50/50 flex items-center gap-2">
+          <input
+            value={fbText}
+            onChange={e => setFbText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") void sendFeedback(); }}
+            placeholder="다음 생성에 반영할 피드백 (예: 더 데이터 중심으로, 소상공인 표현 금지)"
+            className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-amber-200 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+            autoFocus
+          />
+          <button
+            onClick={sendFeedback}
+            disabled={!fbText.trim() || fbState === "saving"}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+          >
+            {fbState === "saving" ? "저장 중" : fbState === "ok" ? "저장됨 ✓" : "저장"}
+          </button>
+        </div>
+      )}
 
       {/* Content */}
       <div className="p-5">

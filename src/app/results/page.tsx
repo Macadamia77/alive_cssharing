@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Copy, Check, Edit3, Save, Trash2, ChevronDown, ChevronRight,
   Loader2, AlertCircle, BookOpen, X, Sparkles, Download, Hash, FileCode, Images,
+  ThumbsUp, MessageSquarePlus,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib/channels";
@@ -85,7 +86,38 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
   const [saving, setSaving] = useState(false);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [exState, setExState] = useState<"" | "saving" | "ok" | "err">("");
+  const [showFb, setShowFb] = useState(false);
+  const [fbText, setFbText] = useState("");
+  const [fbState, setFbState] = useState<"" | "saving" | "ok">("");
   const isDirty = text !== saved;
+
+  // 우수작 저장 → 다음 생성 퓨샷 / 피드백 → 다음 생성 반영
+  const saveExample = async () => {
+    if (!saved || exState === "saving") return;
+    setExState("saving");
+    try {
+      const r = await fetch("/api/examples", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, content: saved }),
+      });
+      setExState(r.ok ? "ok" : "err");
+    } catch { setExState("err"); }
+    setTimeout(() => setExState(""), 2200);
+  };
+  const sendFeedback = async () => {
+    const t = fbText.trim();
+    if (!t || fbState === "saving") return;
+    setFbState("saving");
+    try {
+      await fetch("/api/feedback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, text: t }),
+      });
+      setFbState("ok"); setFbText("");
+      setTimeout(() => { setFbState(""); setShowFb(false); }, 1400);
+    } catch { setFbState(""); }
+  };
 
   const ch = channel as ChannelKey;
   const { color, bgColor, borderColor } = CHANNEL_COLORS[ch] ?? { color: "", bgColor: "bg-slate-50", borderColor: "border-slate-200" };
@@ -145,6 +177,21 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
               )}
             </>
           )}
+          {!editing && (
+            <>
+              <button onClick={saveExample} title="이 결과를 우수작으로 저장 (다음 생성 시 참고작 주입)"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-emerald-50 hover:border-emerald-300 cursor-pointer">
+                {exState === "saving" ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : exState === "ok" ? <><Check className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600">저장됨</span></>
+                  : exState === "err" ? <span className="text-red-500">실패</span>
+                  : <><ThumbsUp className="w-3 h-3" />우수작</>}
+              </button>
+              <button onClick={() => setShowFb(v => !v)} title="이 채널 생성에 반영할 피드백"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-amber-50 hover:border-amber-300 cursor-pointer">
+                <MessageSquarePlus className="w-3 h-3" />피드백
+              </button>
+            </>
+          )}
           {!editing ? (
             <button onClick={() => setEditing(true)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 cursor-pointer">
               <Edit3 className="w-3 h-3" />수정
@@ -163,6 +210,24 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
           )}
         </div>
       </div>
+
+      {/* 피드백 입력 */}
+      {showFb && (
+        <div className="px-4 py-2.5 border-b border-amber-100 bg-amber-50/50 flex items-center gap-2">
+          <input
+            value={fbText}
+            onChange={e => setFbText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") void sendFeedback(); }}
+            placeholder="다음 생성에 반영할 피드백 (예: 더 데이터 중심으로, 소상공인 표현 금지)"
+            className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-amber-200 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+            autoFocus
+          />
+          <button onClick={sendFeedback} disabled={!fbText.trim() || fbState === "saving"}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
+            {fbState === "saving" ? "저장 중" : fbState === "ok" ? "저장됨 ✓" : "저장"}
+          </button>
+        </div>
+      )}
 
       {/* 게시 안내 */}
       <div className="px-4 pt-2 text-[11px] text-slate-400">

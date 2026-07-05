@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { createClient } from "@supabase/supabase-js";
 import { runAgentPipeline, generateContent } from "../src/lib/agentRunner";
-import { hasAgentPipeline, buildSystemPrompt } from "../src/lib/channelFiles";
+import { hasAgentPipeline, buildSystemPrompt, getChannelMeta } from "../src/lib/channelFiles";
+import { runPipeline } from "../src/lib/pipeline/runPipeline";
 
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
@@ -25,7 +26,10 @@ async function processTask(task: any) {
     console.log(`[Worker] 작업 시작 (ID: ${task.id}, 채널: ${task.channel}, 주제: ${task.topic})`);
 
     const token = task.github_token || undefined;
-    const isPipeline = await hasAgentPipeline(task.channel, token);
+    // 채널 설정에서 엔진 선택: "pipeline"이면 통합 엔진, 아니면 기존 경로.
+    const meta = await getChannelMeta(task.channel, token).catch(() => null);
+    const useEngine = meta?.engine === "pipeline";
+    const isPipeline = !useEngine && (await hasAgentPipeline(task.channel, token));
 
     // 진행 상태 실시간 콜백
     const statusCallback = async (stage: string) => {
@@ -37,7 +41,17 @@ async function processTask(task: any) {
     };
 
     let content = "";
-    if (isPipeline) {
+    if (useEngine) {
+      content = await runPipeline(
+        task.channel,
+        task.topic,
+        task.draft || "",
+        token,
+        task.provider || "mock",
+        statusCallback,
+        task.api_key || undefined
+      );
+    } else if (isPipeline) {
       content = await runAgentPipeline(
         task.channel,
         task.topic,

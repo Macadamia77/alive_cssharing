@@ -1,5 +1,5 @@
 // 통합 파이프라인 엔진.
-// 흐름(단계 순서·scope·토글)은 config(pipeline.json + _meta.pipeline)로,
+// 흐름(단계 순서·scope·토글·조각할당)은 config(pipeline.json + _meta.pipeline)로,
 // 프롬프트·역할은 data 파일(frontmatter 태그 매칭)로 결정한다. — 하드코딩 금지 원칙.
 //
 // 기존 generateContent(단일 호출)·runAgentPipeline(네이버 전용)을 대체하는 3번째 경로.
@@ -63,42 +63,66 @@ async function loadPersona(
   return null;
 }
 
-// ─── 채널 가이드 텍스트 수집 (agents/·템플릿 제외, writer용) ────
-async function gatherGuides(channel: ChannelKey, token?: string): Promise<string> {
+// ─── 채널 조각(가이드) 파일 전체 로딩 (frontmatter stages 태그 포함) ──
+interface GuideFile { path: string; body: string; stages: string[]; }
+
+async function loadAllGuides(channel: ChannelKey, token?: string): Promise<GuideFile[]> {
   let keys: string[];
   try {
     keys = await collectGuideFiles(channel, token);
   } catch {
-    return "";
+    return [];
   }
   const guideKeys = keys.filter(
     k => isTextFile(k.split("/").pop() ?? "")
       && !k.startsWith("agents/")
       && !k.startsWith("templates/")
   );
-  const parts: string[] = [];
+  const out: GuideFile[] = [];
   for (const k of guideKeys) {
     try {
-      const c = await readChannelFile(channel, k, token);
-      if (c.trim()) parts.push(`\n\n${"=".repeat(60)}\n# ${k}\n${"=".repeat(60)}\n\n${c}`);
+      const raw = await readChannelFile(channel, k, token);
+      if (!raw.trim()) continue;
+      const parsed = parseFrontmatter(raw);
+      out.push({
+        path: k,
+        body: (parsed.body.trim() || raw.trim()),
+        stages: parsed.meta.stages ?? [],
+      });
     } catch { /* skip */ }
   }
-  return parts.join("");
+  return out;
+}
+
+// 한 단계에 주입할 조각 텍스트를 조립한다.
+// 우선순위: ① _meta.pipeline[단계].guides(명시 할당) → ② frontmatter stages 태그
+//          → ③ (writer 한정) 태그 없는 파일 전부 (기존 호환)
+function guidesForStage(all: GuideFile[], stage: ResolvedStage): string {
+  let selected: GuideFile[];
+  if (stage.guides !== undefined) {
+    // 명시 할당(빈 배열이면 "아무것도 안 붙임"을 의미)
+    selected = all.filter(g => stage.guides!.includes(g.path));
+  } else {
+    selected = all.filter(g =>
+      g.stages.includes(stage.id) || (stage.id === "writer" && g.stages.length === 0)
+    );
+  }
+  if (selected.length === 0) return "";
+  return selected
+    .map(g => `\n\n${"=".repeat(60)}\n# ${g.path}\n${"=".repeat(60)}\n\n${g.body}`)
+    .join("");
 }
 
 // ─── 검수 결과 판정 (JSON verdict 또는 텍스트 PASS/FAIL/REJECT) ─
 function isRejected(reviewOutput: string): boolean {
   const s = reviewOutput.trim();
-  // JSON verdict
   const vm = s.match(/"verdict"\s*:\s*"([^"]+)"/i);
   if (vm) return /reject|fail/i.test(vm[1]);
   const nm = s.match(/"is_natural"\s*:\s*(true|false)/i);
   if (nm) return nm[1].toLowerCase() === "false";
-  // 텍스트 첫 줄
   const first = s.split("\n")[0]?.trim().toUpperCase() ?? "";
   if (first.startsWith("REJECT") || first.startsWith("FAIL")) return true;
   if (first.startsWith("APPROVE") || first.startsWith("PASS")) return false;
-  // 본문에 REJECT/반려가 뚜렷하면 반려로 간주
   return /\bREJECT\b|반려/i.test(s) && !/\bAPPROVED\b|승인/i.test(s);
 }
 
@@ -121,7 +145,6 @@ export async function runPipeline(
     throw new Error(`[engine] ${channel}: 활성화된 파이프라인 단계가 없습니다. pipeline.json / _meta.pipeline을 확인하세요.`);
   }
 
-  // Mock 모드
   if (provider === "mock") {
     return `[engine mock] ${channel} · ${topic} · 단계: ${stages.map(s => s.id).join(">")}`;
   }
@@ -164,12 +187,13 @@ export async function runPipeline(
     return "";
   };
 
-  const guides = await gatherGuides(channel, token);
+  const allGuides = await loadAllGuides(channel, token);
 
   // 누적 컨텍스트(producer 산출물) + 현재 초안
   const contextParts: string[] = [];
   if (draftProvided) contextParts.push(`[작성자 초안]\n${userDraft}`);
   let draft = "";
+  let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
 
   for (const stage of stages) {
     const kind = stageKind(stage.id);
@@ -178,12 +202,13 @@ export async function runPipeline(
       console.warn(`[engine] ${channel}/${stage.id}: 페르소나 '${stage.persona ?? stage.id}' 파일 없음 → 단계 건너뜀`);
       continue;
     }
+    const stageGuides = guidesForStage(allGuides, stage);
     const maxTok = stage.maxTokens ?? 4096;
     if (statusCallback) await statusCallback(stage.id);
-    console.log(`[engine] ${channel} · ${stage.id}(${kind}) 시작`);
+    console.log(`[engine] ${channel} · ${stage.id}(${kind}) 시작 — 조각 ${stageGuides ? stageGuides.match(/^# /gm)?.length ?? "?" : 0}개`);
 
     if (kind === "producer") {
-      const system = persona;
+      const system = persona + stageGuides;
       const user =
         `[주제]\n${topic}\n\n` +
         (contextParts.length ? `[이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
@@ -194,7 +219,8 @@ export async function runPipeline(
       console.log(`[engine] ${channel} · ${stage.id} 완료 (${out.length}자)`);
 
     } else if (kind === "writer") {
-      const system = persona + guides;
+      const system = persona + stageGuides;
+      writerSystemBase = system;
       const user =
         `[주제]\n${topic}\n\n` +
         (contextParts.length ? `[참고 자료 — 이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
@@ -205,13 +231,12 @@ export async function runPipeline(
 
     } else if (kind === "reviewer") {
       if (!draft.trim()) { console.warn(`[engine] ${channel}/${stage.id}: 검수할 초안 없음 → 건너뜀`); continue; }
-      const review = stripCodeFence(await call(persona, `[검수 대상]\n${draft}`, maxTok, false, false));
+      // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
+      const review = stripCodeFence(await call(persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
       if (isRejected(review)) {
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
         console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성`);
-        // 재작성: writer 페르소나 + 가이드로 피드백 반영 (writer 페르소나 재로딩)
-        const writerPersona = await loadPersona(channel, "writer", token);
-        const rewriteSystem = (writerPersona ?? "") + guides;
+        const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
         const rewriteUser =
           `[주제]\n${topic}\n\n` +
           (contextParts.length ? `[참고 자료]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
@@ -224,7 +249,6 @@ export async function runPipeline(
       }
 
     } else if (kind === "image") {
-      // 이미지 단계(html 카드 조립 등)는 후속 구현 — 현재는 no-op로 통과
       console.log(`[engine] ${channel} · ${stage.id} (이미지 단계 미구현, 통과)`);
     }
   }

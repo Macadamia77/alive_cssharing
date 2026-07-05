@@ -28,6 +28,8 @@ interface StageOverride {
 interface Meta {
   engine?: "pipeline" | "legacy";
   outputFormat?: string;
+  model?: string;
+  modelId?: string;
   pipeline?: Record<string, StageOverride>;
 }
 interface GuideInfo { path: string; stages: string[]; }
@@ -190,6 +192,30 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
             </p>
           ) : (
             <>
+              {/* 채널 기본 모델 (모든 단계의 기본값 — 단계별 오버라이드가 우선) */}
+              <div className="mb-3 rounded-xl border border-slate-100 bg-slate-50/40 px-3 py-2.5 flex items-center gap-2 text-xs flex-wrap">
+                <span className="text-[10px] text-slate-500 font-medium">채널 기본 모델</span>
+                <select
+                  value={meta?.model ?? ""}
+                  onChange={e => save({ model: e.target.value || undefined }, "channel-model")}
+                  className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer">
+                  <option value="">기본(생성 시 선택)</option>
+                  <option value="claude">claude</option>
+                  <option value="openai">openai</option>
+                  <option value="gemini">gemini</option>
+                </select>
+                <input
+                  type="text" placeholder="모델 ID (선택 · 예: gemini-3.5-flash)"
+                  defaultValue={meta?.modelId ?? ""}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    if (v !== (meta?.modelId ?? "")) save({ modelId: v || undefined }, "channel-model");
+                  }}
+                  className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs flex-1 min-w-[160px] focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                {saving === "channel-model" && <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
+                <span className="text-[10px] text-slate-400 w-full">이 채널 전 단계의 기본 모델. 단계별 "조각 N"의 모델이 있으면 그게 우선합니다.</span>
+              </div>
+
               <div className="space-y-1.5">
                 {stages.map(s => {
                   const on = effectiveEnabled(s);

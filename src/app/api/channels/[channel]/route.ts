@@ -5,6 +5,7 @@ import {
   getChannelFileTree,
   updateChannelMeta,
 } from "@/lib/channelFiles";
+import { loadPipelineConfig } from "@/lib/pipeline/loadConfig";
 import { resolveGithubToken } from "@/lib/resolveToken";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "linkedin", "magazine"];
@@ -27,7 +28,9 @@ export async function GET(
       getChannelMeta(channel, token),
       getChannelFileTree(channel, token),
     ]);
-    return NextResponse.json({ channel, meta, tree });
+    // 전역 파이프라인 단계 정의(토글 UI가 어떤 단계가 있는지 알아야 함)
+    const pipelineStages = loadPipelineConfig().stages;
+    return NextResponse.json({ channel, meta, tree, pipelineStages });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
@@ -46,8 +49,14 @@ export async function PUT(
     const token = resolveGithubToken(req);
     const meta = await getChannelMeta(channel, token);
     if (Array.isArray(body.include)) meta.include = body.include;
+    // 통합 파이프라인 엔진 토글
+    if (body.engine === "pipeline" || body.engine === "legacy") meta.engine = body.engine;
+    // 단계별 오버라이드 병합 (예: { "skeleton": { "enabled": true } })
+    if (body.pipeline && typeof body.pipeline === "object") {
+      meta.pipeline = { ...(meta.pipeline ?? {}), ...body.pipeline };
+    }
     await updateChannelMeta(channel, meta, token);
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, meta });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

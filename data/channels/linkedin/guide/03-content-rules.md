@@ -1,7 +1,7 @@
 ---
 type: guide
 role: content-rules
-stages: [content-review]
+stages: [writer, content-review]
 ---
 
 # 내용/규칙 검수 기준 (하나라도 위반 시 REJECT)

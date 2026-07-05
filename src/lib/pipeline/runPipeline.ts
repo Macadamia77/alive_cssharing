@@ -220,7 +220,7 @@ export async function runPipeline(
 
   const badExamples = await getRecentBadExamples(channel).catch(() => []);
   const badBlock = badExamples.length
-    ? `[과거 기각 사례 — 아래처럼 쓰면 검수에서 기각되니 반드시 피할 것]\n${badExamples.map((b, i) => `─ 기각 ${i + 1} (사유: ${b.reason ?? "명시 없음"}) ─\n${b.content.slice(0, 800)}`).join("\n\n")}`
+    ? `[과거 기각 사례 — 검수에서 지적된 문제. 아래 같은 표현·패턴을 반드시 피할 것]\n${badExamples.map((b, i) => `${i + 1}. (${b.reason ?? ""}) ${b.content.slice(0, 500)}`).join("\n")}`
     : "";
   if (badExamples.length) console.log(`[engine] ${channel}: 기각 사례 ${badExamples.length}개 주입(회피용)`);
 
@@ -275,8 +275,8 @@ export async function runPipeline(
       if (isRejected(review)) {
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
         console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
-        // 기각 사례 자동 저장(회피 학습용) — fire-and-forget
-        void addBadExample(channel, draft, `[${stage.id}] ${review.replace(/\s+/g, " ").slice(0, 500)}`);
+        // 기각 사례 자동 저장(회피 학습용) — 초안 통째가 아니라 "검수 피드백(사유+문제 문장)"만 저장. fire-and-forget
+        void addBadExample(channel, review.replace(/\s+/g, " ").slice(0, 700), stage.id);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
         const rewriteUser =
           `[주제]\n${topic}\n\n` +

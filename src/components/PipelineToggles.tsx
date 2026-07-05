@@ -22,6 +22,8 @@ interface StageOverride {
   maxTokens?: number;
   roles?: string[];
   guides?: string[];
+  model?: string;
+  modelId?: string;
 }
 interface Meta {
   engine?: "pipeline" | "legacy";
@@ -112,6 +114,11 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
     const next = cur.includes(path) ? cur.filter(p => p !== path) : [...cur, path];
     setMeta(m => m ? { ...m, pipeline: { ...(m.pipeline ?? {}), [s.id]: { ...(m.pipeline?.[s.id] ?? {}), guides: next } } } : m);
     void save({ pipeline: { [s.id]: { guides: next } } }, `${s.id}-guides`);
+  };
+
+  const saveStageField = (s: StageDef, patch: Partial<StageOverride>) => {
+    setMeta(m => m ? { ...m, pipeline: { ...(m.pipeline ?? {}), [s.id]: { ...(m.pipeline?.[s.id] ?? {}), ...patch } } } : m);
+    void save({ pipeline: { [s.id]: patch } }, `${s.id}-model`);
   };
 
   if (loading) {
@@ -226,6 +233,29 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                             </div>
                           )}
                           {saving === `${s.id}-guides` && <p className="text-[10px] text-blue-500 mt-1 flex items-center gap-1"><Loader2 className="w-2.5 h-2.5 animate-spin" />저장 중...</p>}
+
+                          {/* 모델 티어링 오버라이드 */}
+                          <div className="mt-2.5 pt-2 border-t border-slate-100/70 flex items-center gap-2 text-xs flex-wrap">
+                            <span className="text-[10px] text-slate-400">모델</span>
+                            <select
+                              value={meta?.pipeline?.[s.id]?.model ?? ""}
+                              onChange={e => saveStageField(s, { model: e.target.value || undefined })}
+                              className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer">
+                              <option value="">기본</option>
+                              <option value="claude">claude</option>
+                              <option value="openai">openai</option>
+                              <option value="gemini">gemini</option>
+                            </select>
+                            <input
+                              type="text" placeholder="모델 ID (선택 · 예: claude-haiku-4-5)"
+                              defaultValue={meta?.pipeline?.[s.id]?.modelId ?? ""}
+                              onBlur={e => {
+                                const v = e.target.value.trim();
+                                if (v !== (meta?.pipeline?.[s.id]?.modelId ?? "")) saveStageField(s, { modelId: v || undefined });
+                              }}
+                              className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs flex-1 min-w-[150px] focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                            {saving === `${s.id}-model` && <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />}
+                          </div>
                         </div>
                       )}
                     </div>

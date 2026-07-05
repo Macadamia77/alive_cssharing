@@ -150,41 +150,52 @@ export async function runPipeline(
     return `[engine mock] ${channel} · ${topic} · 단계: ${stages.map(s => s.id).join(">")}`;
   }
 
-  // ── Provider 인증 (기존 경로와 동일) ──
-  const envKey = process.env[`${provider.toUpperCase()}_API_KEY`]?.trim();
-  const envModel = process.env[`${provider.toUpperCase()}_MODEL`]?.trim();
-  let pc = envKey ? { apiKey: envKey, model: envModel || DEFAULT_MODELS[provider] } : null;
-  if (!pc) {
-    pc = await loadAIConfig(token).then(c => c.providers[provider as ProviderKey]).catch(() => null);
-  }
-  if (apiKeyOverride) {
-    pc = { apiKey: apiKeyOverride, model: pc?.model || envModel || DEFAULT_MODELS[provider] };
-  }
-  if (!pc?.apiKey) {
+  // ── Provider 인증 (단계별 모델 티어링: provider별 키/모델을 캐시) ──
+  const authCache = new Map<string, { apiKey: string; model: string } | null>();
+  const resolveAuth = async (p: Provider): Promise<{ apiKey: string; model: string } | null> => {
+    if (authCache.has(p)) return authCache.get(p)!;
+    const eKey = process.env[`${p.toUpperCase()}_API_KEY`]?.trim();
+    const eModel = process.env[`${p.toUpperCase()}_MODEL`]?.trim();
+    let pc = eKey ? { apiKey: eKey, model: eModel || DEFAULT_MODELS[p as ProviderKey] } : null;
+    if (!pc) pc = await loadAIConfig(token).then(c => c.providers[p as ProviderKey]).catch(() => null);
+    // apiKeyOverride는 사용자가 선택한 기본 provider에만 적용
+    if (p === provider && apiKeyOverride) pc = { apiKey: apiKeyOverride, model: pc?.model || eModel || DEFAULT_MODELS[p as ProviderKey] };
+    const result = pc?.apiKey ? { apiKey: pc.apiKey, model: pc.model || DEFAULT_MODELS[p as ProviderKey] } : null;
+    authCache.set(p, result);
+    return result;
+  };
+
+  const baseAuth = await resolveAuth(provider);
+  if (!baseAuth) {
     throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
   }
-  const auth = pc;
 
-  // ── 단계별 LLM 호출 헬퍼 ──
+  // 단계의 provider/model 해석 (오버라이드 provider 키가 없으면 기본으로 폴백)
+  const resolveStageModel = async (s: ResolvedStage): Promise<{ p: Provider; apiKey: string; model: string }> => {
+    let p = (s.model as Provider) || provider;
+    let a = await resolveAuth(p);
+    if (!a) { p = provider; a = baseAuth; }
+    return { p, apiKey: a.apiKey, model: s.modelId || a.model };
+  };
+
+  // ── LLM 호출 헬퍼 (provider·model을 인자로 받음) ──
   const call = async (
-    system: string,
-    user: string,
-    maxTokens: number,
-    useSearch: boolean,
-    disableThinking: boolean,
+    p: Provider, apiKey: string, model: string,
+    system: string, user: string, maxTokens: number,
+    useSearch: boolean, disableThinking: boolean,
     onSource?: (n: number) => void
   ): Promise<string> => {
-    if (provider === "gemini") {
+    if (p === "gemini") {
       return useSearch
-        ? callGeminiWithSearch(auth.apiKey, auth.model, system, user, disableThinking)
-        : callGemini(auth.apiKey, auth.model, system, user, maxTokens, disableThinking);
+        ? callGeminiWithSearch(apiKey, model, system, user, disableThinking)
+        : callGemini(apiKey, model, system, user, maxTokens, disableThinking);
     }
-    if (provider === "claude") {
+    if (p === "claude") {
       return useSearch
-        ? callClaudeWithNativeSearch(auth.apiKey, auth.model, system, user, maxTokens, onSource)
-        : callClaude(auth.apiKey, auth.model, system, user, maxTokens);
+        ? callClaudeWithNativeSearch(apiKey, model, system, user, maxTokens, onSource)
+        : callClaude(apiKey, model, system, user, maxTokens);
     }
-    if (provider === "openai") return callOpenAI(auth.apiKey, auth.model, system, user);
+    if (p === "openai") return callOpenAI(apiKey, model, system, user);
     return "";
   };
 
@@ -195,6 +206,8 @@ export async function runPipeline(
   if (draftProvided) contextParts.push(`[작성자 초안]\n${userDraft}`);
   let draft = "";
   let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
+  let writerCall: { p: Provider; apiKey: string; model: string } =
+    { p: provider, apiKey: baseAuth.apiKey, model: baseAuth.model }; // 재작성은 writer 모델로
 
   for (const stage of stages) {
     const kind = stageKind(stage.id);
@@ -206,8 +219,9 @@ export async function runPipeline(
     const selected = selectGuides(allGuides, stage);
     const stageGuides = guidesText(selected);
     const maxTok = stage.maxTokens ?? 4096;
+    const { p: sp, apiKey: sk, model: sm } = await resolveStageModel(stage);
     if (statusCallback) await statusCallback(stage.id);
-    console.log(`[engine] ${channel} · ${stage.id}(${kind}) 시작 — 조각 ${selected.length}개${selected.length ? " [" + selected.map(g => g.path).join(", ") + "]" : ""}`);
+    console.log(`[engine] ${channel} · ${stage.id}(${kind}) — 모델 ${sp}/${sm} · 조각 ${selected.length}개${selected.length ? " [" + selected.map(g => g.path).join(", ") + "]" : ""}`);
 
     if (kind === "producer") {
       const system = persona + stageGuides;
@@ -215,7 +229,7 @@ export async function runPipeline(
         `[주제]\n${topic}\n\n` +
         (contextParts.length ? `[이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
         `위 정보를 바탕으로 이 단계의 역할을 수행해 결과를 직접 출력하세요.`;
-      const out = stripCodeFence(await call(system, user, maxTok, stage.useSearch, stage.disableThinking,
+      const out = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, stage.useSearch, stage.disableThinking,
         (n) => { if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`); }));
       if (out.trim()) contextParts.push(`[${stage.id} 산출물]\n${out}`);
       console.log(`[engine] ${channel} · ${stage.id} 완료 (${out.length}자)`);
@@ -223,18 +237,19 @@ export async function runPipeline(
     } else if (kind === "writer") {
       const system = persona + stageGuides;
       writerSystemBase = system;
+      writerCall = { p: sp, apiKey: sk, model: sm };
       const user =
         `[주제]\n${topic}\n\n` +
         (contextParts.length ? `[참고 자료 — 이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
         `위 자료와 시스템 프롬프트의 가이드 규칙을 철저히 적용해 ${channel} 채널 콘텐츠를 완성하세요.`;
-      draft = stripCodeFence(await call(system, user, maxTok, false, meta.disableThinking ?? false));
+      draft = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, meta.disableThinking ?? false));
       if (!draft.trim()) throw new Error(`[engine] ${channel} writer 단계 결과가 비어 있습니다.`);
       console.log(`[engine] ${channel} · writer 완료 (${draft.length}자)`);
 
     } else if (kind === "reviewer") {
       if (!draft.trim()) { console.warn(`[engine] ${channel}/${stage.id}: 검수할 초안 없음 → 건너뜀`); continue; }
       // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
-      const review = stripCodeFence(await call(persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
+      const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
       if (isRejected(review)) {
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
         console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
@@ -244,7 +259,8 @@ export async function runPipeline(
           (contextParts.length ? `[참고 자료]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
           `[이전 원고]\n${draft}\n\n` +
           `[검수 피드백 — 아래 문제를 모두 해결해 전체를 다시 작성]\n${review}`;
-        const revised = stripCodeFence(await call(rewriteSystem, rewriteUser, meta.maxTokens ?? 24000, false, meta.disableThinking ?? false));
+        // 재작성은 writer 모델로 (검수기 모델이 아니라)
+        const revised = stripCodeFence(await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, rewriteUser, meta.maxTokens ?? 24000, false, meta.disableThinking ?? false));
         if (revised.trim()) draft = revised;
       } else {
         console.log(`[engine] ${channel} · ${stage.id} 통과`);

@@ -1,6 +1,7 @@
 {
   "stages": [
     { "id": "research",       "scope": "shared",  "persona": "researcher",       "maxTokens": 8192,  "useSearch": true, "enabled": false },
+    { "id": "research-voice", "scope": "shared",  "persona": "researcher-voice", "maxTokens": 8192,  "useSearch": true, "enabled": false },
     { "id": "brainstorm",     "scope": "shared",  "persona": "brainstormer",     "maxTokens": 4096,  "skipIf": "draftProvided", "enabled": false },
     { "id": "research-deep",  "scope": "shared",  "persona": "researcher-deep",  "maxTokens": 8192,  "useSearch": true, "enabled": false },
     { "id": "skeleton",       "scope": "shared",  "persona": "skeleton",         "maxTokens": 4096,  "enabled": false },

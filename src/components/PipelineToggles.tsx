@@ -30,7 +30,8 @@ interface Meta {
 
 // ─── 단계별 한글 라벨/설명 ──────────────────────────────────
 const STAGE_INFO: Record<string, { label: string; desc: string }> = {
-  "research":       { label: "1차 리서치", desc: "웹 검색으로 산업 자료 폭넓게 수집" },
+  "research":       { label: "웹서치 · 전문 정보", desc: "통계·사례·전문 자료를 웹에서 수집" },
+  "research-voice": { label: "웹서치 · 현장 목소리", desc: "직장인·CS담당자의 실제 경험·고민을 웹에서 수집" },
   "brainstorm":     { label: "기획", desc: "주제 후보 발산 → 최적 주제 선정 (초안 있으면 자동 생략)" },
   "research-deep":  { label: "심화 리서치", desc: "확정 주제로 통계·사례·출처 심층 수집" },
   "skeleton":       { label: "뼈대 설계", desc: "채널 무관 논리 구조·섹션 설계" },

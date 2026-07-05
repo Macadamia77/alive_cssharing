@@ -62,6 +62,9 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   const [memLoading, setMemLoading] = useState(false);
   const [fbList, setFbList] = useState<{ id: string; text: string }[]>([]);
   const [exList, setExList] = useState<{ id: string; note: string | null; content: string }[]>([]);
+  const [modelIds, setModelIds] = useState<string[]>([]);
+  const [newExample, setNewExample] = useState("");
+  const [exAdding, setExAdding] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -75,6 +78,13 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   }, [channel]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // 모델 ID 자동완성 목록 로드
+  useEffect(() => {
+    fetch("/api/models").then(r => r.json())
+      .then(d => setModelIds(Array.from(new Set(Object.values(d.models ?? {}).flat() as string[]))))
+      .catch(() => {});
+  }, []);
 
   // 학습 데이터 로드 (섹션 펼칠 때만)
   useEffect(() => {
@@ -94,6 +104,21 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   const delExample = async (id: string) => {
     await fetch(`/api/examples?id=${id}`, { method: "DELETE" }).catch(() => {});
     setExList(l => l.filter(x => x.id !== id));
+  };
+  // 우수작(퓨샷)을 직접 입력해 추가 — 생성 결과가 아니어도 됨
+  const addExampleManual = async () => {
+    const c = newExample.trim();
+    if (!c || exAdding) return;
+    setExAdding(true);
+    try {
+      await fetch("/api/examples", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, content: c, note: "직접 추가" }),
+      });
+      setNewExample("");
+      const d = await fetch(`/api/examples?channel=${channel}`).then(r => r.json()).catch(() => ({ examples: [] }));
+      setExList(d.examples ?? []);
+    } catch { /* noop */ } finally { setExAdding(false); }
   };
 
   const engineOn = meta?.engine === "pipeline";
@@ -160,6 +185,10 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
 
   return (
     <div className="max-w-7xl mx-auto glass-card rounded-2xl mb-4 overflow-hidden">
+      {/* 모델 ID 자동완성 목록 (모든 모델칸 공용) */}
+      <datalist id="csai-model-ids">
+        {modelIds.map(m => <option key={m} value={m} />)}
+      </datalist>
       {/* 헤더 */}
       <button onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50/50 cursor-pointer text-left">
@@ -205,7 +234,7 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                   <option value="gemini">gemini</option>
                 </select>
                 <input
-                  type="text" placeholder="모델 ID (선택 · 예: gemini-3.5-flash)"
+                  type="text" list="csai-model-ids" placeholder="모델 ID (선택 · 목록에서 고르거나 입력)"
                   defaultValue={meta?.modelId ?? ""}
                   onBlur={e => {
                     const v = e.target.value.trim();
@@ -298,7 +327,7 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                               <option value="gemini">gemini</option>
                             </select>
                             <input
-                              type="text" placeholder="모델 ID (선택 · 예: claude-haiku-4-5)"
+                              type="text" list="csai-model-ids" placeholder="모델 ID (선택 · 목록/입력)"
                               defaultValue={meta?.pipeline?.[s.id]?.modelId ?? ""}
                               onBlur={e => {
                                 const v = e.target.value.trim();
@@ -342,8 +371,21 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                           )}
                         </div>
                         <div>
-                          <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider mb-1">우수작 {exList.length}</p>
-                          {exList.length === 0 ? <p className="text-xs text-slate-400">없음. 결과 카드의 "우수작"으로 저장</p> : (
+                          <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider mb-1">우수작(퓨샷) {exList.length}</p>
+                          {/* 직접 예시 추가 (생성 결과가 아니어도 됨) */}
+                          <div className="flex items-start gap-1.5 mb-1.5">
+                            <textarea
+                              value={newExample}
+                              onChange={e => setNewExample(e.target.value)}
+                              rows={2}
+                              placeholder="직접 예시(퓨샷) 붙여넣기 → 다음 생성 시 writer 참고작으로 주입"
+                              className="flex-1 text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white resize-none focus:outline-none focus:ring-1 focus:ring-emerald-400" />
+                            <button onClick={addExampleManual} disabled={!newExample.trim() || exAdding}
+                              className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 cursor-pointer whitespace-nowrap shrink-0">
+                              {exAdding ? "추가 중" : "예시 추가"}
+                            </button>
+                          </div>
+                          {exList.length === 0 ? <p className="text-xs text-slate-400">없음. 위에 직접 넣거나 결과 카드의 "우수작"으로 저장</p> : (
                             <div className="space-y-1">
                               {exList.map(e => (
                                 <div key={e.id} className="flex items-start gap-2 text-xs text-slate-600 bg-emerald-50/50 rounded-lg px-2 py-1">

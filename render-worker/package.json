@@ -9,7 +9,11 @@
     "dev": "ts-node index.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.8",
+    "@ai-sdk/google": "^4.0.8",
+    "@ai-sdk/openai": "^4.0.7",
     "@supabase/supabase-js": "^2.39.8",
+    "ai": "^7.0.15",
     "dotenv": "^16.4.5",
     "playwright": "^1.61.1"
   },

@@ -198,6 +198,9 @@ export default function HomePage() {
   const [resultChannels, setResultChannels] = useState<ChannelKey[]>([]);
 
   const resultsRef = useRef<HTMLDivElement>(null);
+  // generating state는 리렌더 후에야 반영되므로, 같은 이벤트 루프 틱 안에서 들어오는
+  // 중복 클릭(더블클릭 등)을 막으려면 동기적으로 즉시 갱신되는 ref 락이 필요하다.
+  const generatingRef = useRef(false);
 
   // 사용 가능한 AI 제공사 목록 로드
   useEffect(() => {
@@ -305,7 +308,7 @@ export default function HomePage() {
 
   // ── Step 2: 채널 콘텐츠 생성 ────────────────────────────────
   const handleGenerate = useCallback(async () => {
-    if (generating || assignedChannels.length === 0) return;
+    if (generatingRef.current || generating || assignedChannels.length === 0) return;
 
     // 초안별 배정 채널 묶기
     const draftAssignments: Array<{ draftIndex: number; channels: ChannelKey[] }> = [];
@@ -315,6 +318,7 @@ export default function HomePage() {
     }
     if (draftAssignments.length === 0) return;
 
+    generatingRef.current = true;
     setGenerating(true); setGenError(null);
     const targeted = assignedChannels;
     setResultChannels(targeted);
@@ -336,10 +340,11 @@ export default function HomePage() {
 
       for (const { draftIndex, channels } of draftAssignments) {
         const draft = draftBodies[draftIndex] ?? drafts[draftIndex]?.body ?? "";
+        const angle = drafts[draftIndex]?.angle ?? "";
         const res = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic: topic.trim(), draft, channels, provider: selectedProvider }),
+          body: JSON.stringify({ topic: topic.trim(), draft, angle, channels, provider: selectedProvider }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "생성 실패");
@@ -389,7 +394,12 @@ export default function HomePage() {
 
       await Promise.all(pollPromises);
 
-      if (Object.keys(channelsMap).length > 0) {
+      // 로컬(Supabase 미설정) 모드에서는 /api/generate가 백그라운드에서 이미
+      // data/results/<id>.json으로 자체 저장하므로, 여기서 또 저장하면
+      // 같은 결과가 서로 다른 id로 두 번 저장된다. taskId의 "local_" 접두사로 구분해
+      // 로컬 모드에서는 건너뛰고, Supabase 모드(자체 저장 로직이 없는 경우)에만 저장한다.
+      const isLocalMode = allTasks.length > 0 && allTasks.every(t => t.taskId.startsWith("local_"));
+      if (!isLocalMode && Object.keys(channelsMap).length > 0) {
         void fetch("/api/results", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -410,6 +420,7 @@ export default function HomePage() {
         return next;
       });
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
     }
   }, [generating, assignedChannels, drafts, draftBodies, channelMap, topic, selectedProvider]);

@@ -149,7 +149,7 @@ function extractJsonObject(text: string): any {
   return null;
 }
 
-// ─── 자동 검수 (07_qc_checklist.md 1번 항목, 코드로 직접 계산) ───
+// ─── 자동 검수 (guide/08-qc-checklist.md 1번 항목, 코드로 직접 계산) ───
 function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   const cards: any[] = Array.isArray(parsed?.cards) ? parsed.cards : [];
   const checks: Record<string, "PASS" | "FAIL"> = {};
@@ -167,6 +167,30 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   checks["CTA_필드"] = last
     ? ((last.items?.length ?? 0) === 0 && !last.highlight_text ? "PASS" : "FAIL")
     : "FAIL";
+
+  // 05-hook-patterns.md의 데모 문장을 그대로(또는 토씨만 바꿔) 베끼지 않았는지 확인.
+  // 실제로 이 문장 그대로 쓰면 3인칭 일반론이라 공감이 안 되는 밋밋한 후킹이 된다.
+  const HOOK_DEMO_PHRASES = [
+    "1년을 못 채우고 그만둡니다",
+    "올해도 처음부터 다시 시작하시나요",
+    "3개월 만에 퇴사",
+    "떠난 고객은 다시 오지 않습니다",
+    "CS쉐어링은 '구독'입니다",
+    "매년 이맘때 채용공고 올리는 CS팀장님",
+    "경쟁사는 이미 인력 운영 방식을 바꿨습니다",
+    "이번 달에도 그 문의 또 왔어요",
+    "문의가 안 줄어드는 CS팀의 흔한 유형 3가지",
+    "문의가 반복되면 보통 상담사 탓을 합니다",
+    "고객이 화내는 건 응대가 늦어서가 아니라, 대답이 매번 달라서입니다",
+    "같은 문의 100건, 몇 건이 운영 문제일까",
+    "그 문의, 이번 달에도\n또 들어왔다면\n상담사 탓이 아닙니다",
+  ].map((s) => s.replace(/\s+/g, ""));
+  checks["후킹_예시문장_재사용"] = first
+    ? (() => {
+        const normalized = `${first.title || ""}${first.subtitle || ""}`.replace(/\s+/g, "");
+        return HOOK_DEMO_PHRASES.some((p) => normalized.includes(p)) ? "FAIL" : "PASS";
+      })()
+    : "PASS";
 
   const middles = cards.slice(1, -1);
 
@@ -196,6 +220,16 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     !c.highlight_text || (c.title || "").includes(c.highlight_text)
   ) ? "PASS" : "FAIL";
 
+  // title/subtitle에 "N단계", "N가지"처럼 숫자를 명시했으면 items 개수가 실제로 N개인지 대조
+  checks["숫자_문구_일치"] = middles.every((c) => {
+    const text = `${c.title || ""} ${c.subtitle || ""}`;
+    const match = text.match(/(\d+)\s*(단계|가지|개)/);
+    if (!match) return true;
+    const claimed = parseInt(match[1], 10);
+    const n = c.items?.length ?? 0;
+    return claimed === n;
+  }) ? "PASS" : "FAIL";
+
   const hashtags: any[] = Array.isArray(parsed?.hashtags) ? parsed.hashtags : [];
   const hasRequiredTags = REQUIRED_HASHTAGS.every((t) => hashtags.includes(t));
   checks["해시태그_개수_필수태그"] = hashtags.length >= 12 && hashtags.length <= 15 && hasRequiredTags ? "PASS" : "FAIL";
@@ -206,7 +240,7 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   return checks;
 }
 
-// 10_instagram_facebook_content.md 기준 필수 해시태그
+// guide/06-content-rules.md 기준 필수 해시태그
 const REQUIRED_HASHTAGS = ["#CS쉐어링", "#CS대행", "#고객센터대행"];
 
 // ─── 재생성 없이 코드로 바로 고칠 수 있는 기계적 문제 보정 ───
@@ -237,7 +271,7 @@ function computeVerdict(autoChecks: Record<string, "PASS" | "FAIL">, scores: Rec
   return "조건부 PASS";
 }
 
-// ─── 검수 체크리스트(07_qc_checklist.md 등) 기반 채점 + 재생성 ───
+// ─── 검수 체크리스트(guide/08-qc-checklist.md 등) 기반 채점 + 재생성 ───
 // 채널 폴더에 검수 체크리스트 파일이 있을 때만 동작. 없거나 카드 JSON이 아니면 원본 그대로 반환.
 async function runQcAndRegenerate(
   channel: ChannelKey,
@@ -252,7 +286,7 @@ async function runQcAndRegenerate(
 ): Promise<string> {
   let qcChecklist = "";
   try {
-    qcChecklist = (await readChannelFile(channel, "07_qc_checklist.md", token)).trim();
+    qcChecklist = (await readChannelFile(channel, "guide/08-qc-checklist.md", token)).trim();
   } catch {
     return content;
   }
@@ -276,7 +310,7 @@ async function runQcAndRegenerate(
 
     const qcPrompt = `다음은 방금 생성된 카드뉴스 콘텐츠와 검수 체크리스트다. 체크리스트의 "2. 정성 평가" 6개 항목을 각각 1~5점(서비스 범위 정확성은 0~5점)으로 엄격하게 채점하라.
 
-- 후킹력: 1장 title/subtitle이 06_hook_pattern_library.md 유형 중 하나로 명확히 분류되는지. 어느 유형에도 안 걸리고 "~한데 ~인지"류 안전한 반문형이면 3점 이하.
+- 후킹력: 1장 title/subtitle이 05-hook-patterns.md 유형 중 하나로 명확히 분류되는지. 어느 유형에도 안 걸리고 "~한데 ~인지"류 안전한 반문형이면 3점 이하.
 - 서비스 범위 정확성: 아래 [검증된 회사 정보]에 없는 서비스명·기능을 지어냈으면 반드시 0점. 수치는 출처가 있거나 가상 예시 표시가 있어야 함.
 
 [검증된 회사 정보]
@@ -329,8 +363,30 @@ ${text}
     };
   }
 
-  const first = await scoreOnce(content);
-  if (!first) return content; // 카드 JSON이 아니면 검수 자체를 건너뜀
+  let first = await scoreOnce(content);
+  if (!first) {
+    // JSON으로 파싱조차 안 되면(잡담·설명 텍스트 섞임, 이스케이프 깨짐 등) 검수를 건너뛰고
+    // 깨진 콘텐츠를 그대로 사용자에게 보여주지 않는다 — JSON만 다시 출력하도록 1회 재시도한다.
+    const retryMessage = `${userMessage}
+
+[중요] 방금 응답이 유효한 JSON으로 파싱되지 않았습니다. 설명 문구나 코드펜스 밖 텍스트 없이, 순수한 JSON 객체 하나만 다시 출력하세요.`;
+
+    let reformatted: string | null = null;
+    try {
+      if (provider === "claude") reformatted = await callClaude(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok);
+      else if (provider === "gemini") reformatted = await callGemini(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok, disableThinking);
+      else if (provider === "openai") reformatted = await callOpenAI(pc.apiKey, pc.model, systemPrompt, retryMessage);
+    } catch {
+      reformatted = null;
+    }
+
+    if (reformatted) {
+      first = await scoreOnce(reformatted);
+      if (!first) return reformatted; // 재시도도 파싱 실패면 그거라도 최선으로 반환
+    } else {
+      return content;
+    }
+  }
 
   let finalParsed = first.parsed;
   let finalReport = first.report;
@@ -365,6 +421,43 @@ ${finalReport.feedback || "검수 기준 미달"}
   return "```json\n" + JSON.stringify(finalParsed, null, 2) + "\n```";
 }
 
+// ─── 통합 파이프라인 엔진(runPipeline) 결과물에 인스타그램 전용 구조 검수를 덧씌운다 ───
+// runPipeline.ts(공용 엔진)는 건드리지 않고, 그 결과를 넘겨받아 여기서만 기계적 검증
+// (카드 수·items 개수·숫자 문구 일치·해시태그 자동 보정·JSON 파싱 재시도)을 적용한다.
+// 다른 채널은 이 함수를 호출하지 않으므로 영향이 없다.
+export async function runInstagramStructuralQc(
+  channel: ChannelKey,
+  content: string,
+  topic: string,
+  draft: string,
+  provider: Provider,
+  token?: string,
+  apiKeyOverride?: string
+): Promise<string> {
+  if (provider === "mock") return content;
+
+  const systemPrompt = await buildSystemPrompt(channel, token).catch(() => "");
+  if (!systemPrompt) return content;
+
+  const meta = await getChannelMeta(channel, token).catch(() => null);
+
+  const envKey = process.env[`${provider.toUpperCase()}_API_KEY`]?.trim();
+  const envModel = process.env[`${provider.toUpperCase()}_MODEL`]?.trim();
+  let pc = envKey ? { apiKey: envKey, model: envModel || DEFAULT_MODELS[provider] } : null;
+  if (!pc) pc = await loadAIConfig(token).then(c => c.providers[provider as ProviderKey]).catch(() => null);
+  if (apiKeyOverride) pc = { apiKey: apiKeyOverride, model: pc?.model || envModel || DEFAULT_MODELS[provider] };
+  if (!pc?.apiKey) return content; // 키 없으면 검수 없이 파이프라인 결과 그대로 사용
+
+  const userMessage = draft
+    ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요.\n\n[주제]\n${topic}\n\n[작성자 초안]\n${draft}`
+    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요.\n\n[주제]\n${topic}`;
+
+  return runQcAndRegenerate(
+    channel, content, systemPrompt, userMessage, provider, pc,
+    meta?.maxTokens ?? 4096, meta?.disableThinking ?? false, token
+  );
+}
+
 // ─── 단순 채널 콘텐츠 생성 (guide 파일만 있는 채널) ───────────
 export async function generateContent(
   channel: ChannelKey,
@@ -374,7 +467,8 @@ export async function generateContent(
   provider: Provider,
   token?: string,
   suggestions?: string[],
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  angle?: string
 ): Promise<string> {
   // 채널 설정(_meta.json)에서 생성 튜닝 로드 (없으면 코드 기본값)
   const meta = await getChannelMeta(channel, token).catch(() => null);
@@ -397,16 +491,18 @@ export async function generateContent(
     }
   }
 
+  const angleContext = angle ? `\n\n[선택된 방향]\n${angle}` : "";
+
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
 
 [주제]
-${topic}${suggestionContext}
+${topic}${suggestionContext}${angleContext}
 
 [작성자 초안]
 ${draft}
 
-위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요. 단, 초안에 등장하는 구체적 수치가 출처 없는 것이라면 "예를 들어" 같은 표현으로 가상 예시임을 밝히고, 김 대리 같은 인물도 실존 인물처럼 단정하지 말고 가상의 예시로 서술하세요.
+위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요. [선택된 방향]이 명시되어 있다면 그 방향에 맞는 카드 흐름 구조를 채널 가이드에서 찾아 적용하세요. 단, 초안에 등장하는 구체적 수치가 출처 없는 것이라면 "예를 들어" 같은 표현으로 가상 예시임을 밝히고, 김 대리 같은 인물도 실존 인물처럼 단정하지 말고 가상의 예시로 서술하세요.
 
 [중요] 이 요청에는 이미 작성자 초안이 포함되어 있습니다. 기획 방향(A/B/C) 제안 절차는 건너뛰고, 위 초안의 핵심 질문과 주장을 선택된 방향으로 간주하여 최종 완성 콘텐츠를 즉시 생성하세요. 방향을 묻거나 제안하는 응답은 하지 마세요.${imageCardGuide}`
     : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}${imageCardGuide}`;

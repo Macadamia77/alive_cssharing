@@ -15,5 +15,10 @@
   ],
   "maxTokens": 16000,
   "disableThinking": true,
-  "imageCards": false
+  "imageCards": false,
+  "pipeline": {
+    "research-voice": {
+      "enabled": true
+    }
+  }
 }

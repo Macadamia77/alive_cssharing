@@ -487,16 +487,18 @@ async function renderDynamicBlocks(frame, card) {
   await renderListCards(container, items, frame, card.card_no || 0);
 }
 
+// 좌우 2열(1x2)로 나누면 폭이 좁아져 텍스트가 어색하게 줄바꿈된다.
+// 위아래로 쌓는 2x1로 배치해 각 박스가 카드 전체 폭을 쓰게 한다(웹 미리보기와 동일 방식).
 async function renderCompareBlocks(container, items, frame) {
   var gap = STYLE.compareGap;
   var maxItems = Math.min(items.length, 2);
-  var boxWidth = (container.width - gap) / 2;
-  var boxHeight = container.height;
+  var boxWidth = container.width;
+  var boxHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
 
   for (var i = 0; i < maxItems; i++) {
     await createTextBlock(
       container, items[i],
-      i * (boxWidth + gap), 0,
+      0, i * (boxHeight + gap),
       boxWidth, boxHeight,
       "compare_2col", frame
     );

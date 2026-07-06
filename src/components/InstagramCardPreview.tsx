@@ -184,8 +184,11 @@ function Compare2Col({ items }: { items: CardItem[] }) {
   const fallbackBox = ["bg-blue-50 border-blue-100", "bg-slate-50 border-slate-200"];
   const fallbackTitle = ["text-blue-900", "text-slate-700"];
 
+  // 2열 그리드(좌/우 narrow column)로 나누면 텍스트가 좁은 폭에 갇혀 어색하게
+  // 줄바꿈되고, 두 칸 높이가 grid stretch로 강제로 맞춰지며 빈 공간이 생긴다.
+  // 각 그룹을 카드 전체 너비로 세로 스택하면 헤더 바(X/O)도 자연히 전체 폭으로 늘어난다.
   return (
-    <div className="mt-2 grid grid-cols-2 gap-2">
+    <div className="mt-2 space-y-2.5">
       {groups.map((group, gi) => {
         const tone = (group[0] as CardItem | undefined)?.tone;
         const isBad = tone === "bad";
@@ -196,19 +199,21 @@ function Compare2Col({ items }: { items: CardItem[] }) {
         const headerLabel = isBad ? "✕" : isGood ? "○" : fallbackLabel[gi];
 
         return (
-          <div className="space-y-1.5" key={gi}>
-            <div className={`${headerColor} text-white text-[10px] font-bold px-2 py-1 rounded-lg text-center tracking-wider`}>
+          <div key={gi}>
+            <div className={`${headerColor} text-white text-xs font-bold px-3 py-1.5 rounded-lg text-center tracking-wider`}>
               {headerLabel}
             </div>
-            {group.map((raw, i) => {
-              const { title, body } = getItemFields(raw);
-              return (
-                <div key={i} className={`${boxColor} border rounded-lg px-2.5 py-2`}>
-                  {title && <p className={`text-xs font-semibold ${titleColor} leading-tight`}>{title}</p>}
-                  {body && <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{body}</p>}
-                </div>
-              );
-            })}
+            <div className="space-y-1.5 mt-1.5">
+              {group.map((raw, i) => {
+                const { title, body } = getItemFields(raw);
+                return (
+                  <div key={i} className={`${boxColor} border rounded-lg px-3 py-2.5`}>
+                    {title && <p className={`text-sm font-semibold ${titleColor} leading-tight`}>{title}</p>}
+                    {body && <p className="text-xs text-slate-500 mt-1 leading-snug">{body}</p>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })}

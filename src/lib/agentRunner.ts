@@ -163,6 +163,30 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     ? ((last.items?.length ?? 0) === 0 && !last.highlight_text ? "PASS" : "FAIL")
     : "FAIL";
 
+  // 05-hook-patterns.md의 데모 문장을 그대로(또는 토씨만 바꿔) 베끼지 않았는지 확인.
+  // 실제로 이 문장 그대로 쓰면 3인칭 일반론이라 공감이 안 되는 밋밋한 후킹이 된다.
+  const HOOK_DEMO_PHRASES = [
+    "1년을 못 채우고 그만둡니다",
+    "올해도 처음부터 다시 시작하시나요",
+    "3개월 만에 퇴사",
+    "떠난 고객은 다시 오지 않습니다",
+    "CS쉐어링은 '구독'입니다",
+    "매년 이맘때 채용공고 올리는 CS팀장님",
+    "경쟁사는 이미 인력 운영 방식을 바꿨습니다",
+    "이번 달에도 그 문의 또 왔어요",
+    "문의가 안 줄어드는 CS팀의 흔한 유형 3가지",
+    "문의가 반복되면 보통 상담사 탓을 합니다",
+    "고객이 화내는 건 응대가 늦어서가 아니라, 대답이 매번 달라서입니다",
+    "같은 문의 100건, 몇 건이 운영 문제일까",
+    "그 문의, 이번 달에도\n또 들어왔다면\n상담사 탓이 아닙니다",
+  ].map((s) => s.replace(/\s+/g, ""));
+  checks["후킹_예시문장_재사용"] = first
+    ? (() => {
+        const normalized = `${first.title || ""}${first.subtitle || ""}`.replace(/\s+/g, "");
+        return HOOK_DEMO_PHRASES.some((p) => normalized.includes(p)) ? "FAIL" : "PASS";
+      })()
+    : "PASS";
+
   const middles = cards.slice(1, -1);
 
   checks["중간카드_title_줄바꿈"] = middles.length > 0 && middles.every((c) => {
@@ -334,8 +358,30 @@ ${text}
     };
   }
 
-  const first = await scoreOnce(content);
-  if (!first) return content; // 카드 JSON이 아니면 검수 자체를 건너뜀
+  let first = await scoreOnce(content);
+  if (!first) {
+    // JSON으로 파싱조차 안 되면(잡담·설명 텍스트 섞임, 이스케이프 깨짐 등) 검수를 건너뛰고
+    // 깨진 콘텐츠를 그대로 사용자에게 보여주지 않는다 — JSON만 다시 출력하도록 1회 재시도한다.
+    const retryMessage = `${userMessage}
+
+[중요] 방금 응답이 유효한 JSON으로 파싱되지 않았습니다. 설명 문구나 코드펜스 밖 텍스트 없이, 순수한 JSON 객체 하나만 다시 출력하세요.`;
+
+    let reformatted: string | null = null;
+    try {
+      if (provider === "claude") reformatted = await callClaude(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok);
+      else if (provider === "gemini") reformatted = await callGemini(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok, disableThinking);
+      else if (provider === "openai") reformatted = await callOpenAI(pc.apiKey, pc.model, systemPrompt, retryMessage);
+    } catch {
+      reformatted = null;
+    }
+
+    if (reformatted) {
+      first = await scoreOnce(reformatted);
+      if (!first) return reformatted; // 재시도도 파싱 실패면 그거라도 최선으로 반환
+    } else {
+      return content;
+    }
+  }
 
   let finalParsed = first.parsed;
   let finalReport = first.report;

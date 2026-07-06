@@ -57,12 +57,14 @@ export async function POST(req: NextRequest) {
     const {
       topic,
       draft = "",
+      angle = "",
       channels: requestedChannels,
       provider: providerOverride,
       suggestions,
     } = (await req.json()) as {
       topic: string;
       draft?: string;
+      angle?: string;
       channels?: string[];
       provider?: string;
       suggestions?: string[];
@@ -122,7 +124,8 @@ export async function POST(req: NextRequest) {
                   activeProvider as import("@/lib/aiConfig").Provider,
                   token ?? undefined,
                   suggestions ?? [],
-                  activeApiKey ?? undefined
+                  activeApiKey ?? undefined,
+                  angle
                 );
               }
               channelResults[channel] = content;

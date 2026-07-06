@@ -44,6 +44,17 @@ const STAGE_LABELS: Record<string, string> = {
   "making-images": "이미지 카드 삽입 중",
   assembling: "레이아웃 조립 중",
   generating: "글쓰기 진행 중",
+  // 통합 파이프라인 엔진(runPipeline)의 단계 id — data/pipeline.json 기준
+  research: "1차 리서치 중",
+  "research-voice": "현장 목소리 리서치 중",
+  brainstorm: "기획 중",
+  "research-deep": "심층 리서치 중",
+  skeleton: "뼈대 설계 중",
+  writer: "원고 집필 중",
+  "content-review": "내용·규칙 검수 중",
+  "tone-review": "AI 톤 검수 중",
+  "image-gen": "이미지 생성 중",
+  "image-review": "이미지 검수 중",
 };
 
 function SkeletonBlock() {

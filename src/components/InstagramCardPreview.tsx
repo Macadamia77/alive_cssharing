@@ -7,6 +7,7 @@ interface CardItem {
   number?: string;
   title: string;
   body: string;
+  tone?: "bad" | "good";
 }
 
 interface SNSCard {
@@ -150,6 +151,8 @@ function StackedBoxes({ items }: { items: CardItem[] }) {
  * 번호·선 없음. 키워드 중심의 밀집 배치.
  */
 function KeywordBoxes({ items }: { items: CardItem[] }) {
+  // 4개는 2열 그리드(2x2), 3개는 2+1로 어중간하게 쪼개지 않고 한 줄에 3칸(3x1)으로 배치한다.
+  const minWidthClass = items.length === 3 ? "min-w-[30%]" : "min-w-[42%]";
   return (
     <div className="mt-2 flex flex-wrap gap-2">
       {items.map((raw, i) => {
@@ -157,7 +160,7 @@ function KeywordBoxes({ items }: { items: CardItem[] }) {
         return (
           <div
             key={i}
-            className="flex-1 min-w-[42%] bg-blue-600 rounded-xl px-3 py-3 text-center"
+            className={`flex-1 ${minWidthClass} bg-blue-600 rounded-xl px-3 py-3 text-center`}
           >
             <p className="text-xs font-bold text-white leading-tight">{title || `키워드 ${i + 1}`}</p>
             {body && <p className="text-[10px] text-blue-100 mt-1 leading-snug">{body}</p>}
@@ -175,38 +178,45 @@ function KeywordBoxes({ items }: { items: CardItem[] }) {
  */
 function Compare2Col({ items }: { items: CardItem[] }) {
   const mid = Math.ceil(items.length / 2);
-  const left = items.slice(0, mid);
-  const right = items.slice(mid);
+  const groups = [items.slice(0, mid), items.slice(mid)];
+  const fallbackLabel = ["A", "B"];
+  const fallbackHeader = ["bg-blue-600", "bg-slate-500"];
+  const fallbackBox = ["bg-blue-50 border-blue-100", "bg-slate-50 border-slate-200"];
+  const fallbackTitle = ["text-blue-900", "text-slate-700"];
+
+  // 2열 그리드(좌/우 narrow column)로 나누면 텍스트가 좁은 폭에 갇혀 어색하게
+  // 줄바꿈되고, 두 칸 높이가 grid stretch로 강제로 맞춰지며 빈 공간이 생긴다.
+  // 각 그룹을 카드 전체 너비로 세로 스택하면 헤더 바(X/O)도 자연히 전체 폭으로 늘어난다.
   return (
-    <div className="mt-2 grid grid-cols-2 gap-2">
-      <div className="space-y-1.5">
-        <div className="bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-lg text-center tracking-wider">
-          A
-        </div>
-        {left.map((raw, i) => {
-          const { title, body } = getItemFields(raw);
-          return (
-            <div key={i} className="bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2">
-              {title && <p className="text-xs font-semibold text-blue-900 leading-tight">{title}</p>}
-              {body && <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{body}</p>}
+    <div className="mt-2 space-y-2.5">
+      {groups.map((group, gi) => {
+        const tone = (group[0] as CardItem | undefined)?.tone;
+        const isBad = tone === "bad";
+        const isGood = tone === "good";
+        const headerColor = isBad ? "bg-red-500" : isGood ? "bg-blue-600" : fallbackHeader[gi];
+        const boxColor = isBad ? "bg-red-50 border-red-100" : isGood ? "bg-blue-50 border-blue-100" : fallbackBox[gi];
+        const titleColor = isBad ? "text-red-900" : isGood ? "text-blue-900" : fallbackTitle[gi];
+        const headerLabel = isBad ? "✕" : isGood ? "○" : fallbackLabel[gi];
+
+        return (
+          <div key={gi}>
+            <div className={`${headerColor} text-white text-xs font-bold px-3 py-1.5 rounded-lg text-center tracking-wider`}>
+              {headerLabel}
             </div>
-          );
-        })}
-      </div>
-      <div className="space-y-1.5">
-        <div className="bg-slate-500 text-white text-[10px] font-bold px-2 py-1 rounded-lg text-center tracking-wider">
-          B
-        </div>
-        {right.map((raw, i) => {
-          const { title, body } = getItemFields(raw);
-          return (
-            <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
-              {title && <p className="text-xs font-semibold text-slate-700 leading-tight">{title}</p>}
-              {body && <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{body}</p>}
+            <div className="space-y-1.5 mt-1.5">
+              {group.map((raw, i) => {
+                const { title, body } = getItemFields(raw);
+                return (
+                  <div key={i} className={`${boxColor} border rounded-lg px-3 py-2.5`}>
+                    {title && <p className={`text-sm font-semibold ${titleColor} leading-tight`}>{title}</p>}
+                    {body && <p className="text-xs text-slate-500 mt-1 leading-snug">{body}</p>}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

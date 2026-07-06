@@ -1,3 +1,9 @@
+---
+type: guide
+role: figma-contract
+stages: [writer, content-review]
+---
+
 # Instagram / Facebook Figma 출력 계약
 
 ## 고정 필드
@@ -77,7 +83,8 @@
 ```
 
 ## items 필드 규칙
-- items 배열 내 각 객체는 반드시 `title`과 `body` 두 필드만 사용한다.
+- items 배열 내 각 객체는 기본적으로 `title`과 `body` 두 필드만 사용한다.
 - `title`: 박스 안 핵심 키워드 또는 짧은 제목 (1줄)
 - `body`: 박스 안 설명 문장 (1~2줄, 짧게)
 - 다른 필드명(text, label, description, content 등)은 사용하지 않는다.
+- 예외: compare_2col은 기본적으로 나쁨/좋음이 갈리는 대비 구도로 간주하며, 이 경우 각 item에 `tone` 필드("bad" 또는 "good")를 붙인다. Figma·미리보기에서 bad는 빨간 X 배지, good은 파란 O 배지로 표시된다. 역할 분담이나 병렬 긍정 나열처럼 나쁨/좋음이 없는 예외적인 경우에만 tone을 생략한다(06-content-rules.md 참고).

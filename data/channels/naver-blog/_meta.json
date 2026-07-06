@@ -2,25 +2,18 @@
   "label": "네이버 블로그",
   "type": "single",
   "description": "SEO 최적화 블로그 포스트 생성",
+  "engine": "pipeline",
+  "outputFormat": "html",
   "include": [
     "guide/01-writing-guide.md",
     "guide/02-examples.md",
     "guide/03-quality-check.md",
-    "guide/06-brand-cta-reference.md",
-    "guide/07-recatch-style.md",
-    "guide/08-naver-seo.md"
-  ],
-  "researchGuides": [
-    "guide/06-brand-cta-reference.md",
-    "guide/08-naver-seo.md"
-  ],
-  "writeOrder": [
     "guide/04-image-guide.md",
-    "guide/02-examples.md",
-    "guide/03-quality-check.md",
-    "guide/08-naver-seo.md",
-    "guide/06-brand-cta-reference.md",
-    "guide/07-recatch-style.md",
-    "guide/01-writing-guide.md"
-  ]
+    "guide/05-brand-cta-reference.md",
+    "guide/06-naver-seo.md"
+  ],
+  "pipeline": {
+    "research": { "enabled": true },
+    "image-gen": { "enabled": true }
+  }
 }

@@ -7,6 +7,11 @@ import { join } from "path";
 import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch } from "./apiClients";
 import { assembleNaverBlogHtml } from "./htmlAssembler";
 import { dataRoot } from "./dataRoot";
+import { spliceImageCards } from "./pipeline/imageCards";
+import type { CardAsset } from "./pipeline/cardStorage";
+// captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
+// import하면, 이 파일을 함께 import하는 Vercel(Next.js API route) 쪽에서도 모듈 로드
+// 시점에 번들링/로딩이 실패한다 — 아래 Step 2.5 안에서만 동적 import로 지연 로드한다.
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -549,7 +554,10 @@ export async function runAgentPipeline(
   token: string | undefined,
   provider: Provider,
   statusCallback?: (status: string) => Promise<void>,
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
+  // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
+  onCardAssets?: (assets: CardAsset[]) => void
 ): Promise<string> {
   // 채널 설정(_meta.json) — 리서치/글쓰기 가이드 선택·순서를 여기서 읽는다 (하드코딩 금지)
   const meta = await getChannelMeta(channel, token).catch(() => null);
@@ -791,7 +799,7 @@ export async function runAgentPipeline(
       `- 오직 각 마커에 들어갈 HTML 카드 코드블록들만 순서대로 작성하십시오.\n` +
       `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
       `- **첫 번째 마커 (인덱스 0)**는 블로그 대표 썸네일이므로, 반드시 720x720px 크기에 파란색/하늘색 배경(#18A0E8)을 가진 **대표 이미지 (썸네일) 프레임**을 사용하여 작성하십시오.\n` +
-      `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 반드시 800px 너비에 흰색 배경을 가진 **본문 이미지 브랜드 카드 프레임**을 사용하여 작성하십시오.\n\n` +
+      `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 반드시 800px 너비에 옅은 회색 배경(#F3F3F3)을 가진 **본문 이미지 브랜드 카드 프레임**을 사용하여 작성하십시오 (순백 #ffffff 금지 — 네이버 블로그 본문 배경도 흰색이라 카드 경계가 사라집니다).\n\n` +
       `[입력 draft.md 전문]\n${draftOutput}`;
 
     console.log(`[pipeline] ${channel} Step 2.5: 이미지 카드 작성 시작 (${imageMarkers.length}개 감지)`);
@@ -799,33 +807,33 @@ export async function runAgentPipeline(
     console.log(`[pipeline] ${channel} Step 2.5: 이미지 카드 작성 완료 (${finalDraftRaw.length}자)`);
     saveDebug("step2.5_imagemaker_raw", finalDraftRaw);
 
-    // 카드들 추출
-    const cards: string[] = [];
-    const cardRegex = /<!-- CARD_START -->([\s\S]*?)<!-- CARD_END -->/g;
-    let match;
-    while ((match = cardRegex.exec(finalDraftRaw)) !== null) {
-      cards.push(match[1].trim());
-    }
-
-    // 폴백: 만약 AI가 주석 마커를 빼먹었다면 div 스타일 감지로 카드 추출 시도
-    if (cards.length === 0) {
-      const divRegex = /<div style="font-family:[\s\S]*?<\/div>\s*<\/div>/g;
-      let divMatch;
-      while ((divMatch = divRegex.exec(finalDraftRaw)) !== null) {
-        cards.push(divMatch[0].trim());
-      }
-    }
-
-    // 원래 draft에서 [IMAGE] 마커들을 플레이스홀더 <!-- HTML_CARD_X -->로 치환하고, 카드 배열에 저장
-    let cardIndex = 0;
-    finalDraft = draftOutput.replace(/\[IMAGE:\s*([^\]]+)\]/g, (match) => {
-      const cardHtml = cards[cardIndex] || match;
-      replacedCards.push(cardHtml);
-      const placeholder = `<!-- HTML_CARD_${cardIndex} -->`;
-      cardIndex++;
-      return placeholder;
-    });
+    // 원래 draft에서 [IMAGE] 마커들을 플레이스홀더 <!-- HTML_CARD_X -->로 치환하고, 카드 배열에 저장.
+    // 카드 개수가 마커 개수보다 적으면(응답 잘림 등) spliceImageCards가 예외를 던진다 —
+    // 원본 [IMAGE: ...] 텍스트를 그대로 흘려보내지 않기 위함.
+    const spliced = spliceImageCards(draftOutput, finalDraftRaw);
+    finalDraft = spliced.draft;
+    replacedCards.push(...spliced.cards);
     saveDebug("step2.5_imagemaker_final_draft", finalDraft);
+
+    // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). 어떤 이유로든 실패해도 기존
+    // inline HTML 카드 흐름은 그대로 유지된다(폴백) — 이 블록은 finalDraft를 건드리지 않는다.
+    try {
+      const { captureCards } = await import("./pipeline/cardCapture");
+      const { cards: captured, warnings } = await captureCards(spliced.cards);
+      if (warnings.length > 0) {
+        console.warn(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
+      } else {
+        console.log(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 통과`);
+      }
+      if (onCardAssets) {
+        const { uploadCards } = await import("./pipeline/cardStorage");
+        const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const assets = await uploadCards(channel, jobId, captured);
+        onCardAssets(assets);
+      }
+    } catch (e) {
+      console.warn(`[pipeline] ${channel} Step 2.5 서버사이드 캡처/업로드 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   // ── Step 3: Assembler (코드 기반 — LLM 호출 없음, 토큰 한도 없음) ──

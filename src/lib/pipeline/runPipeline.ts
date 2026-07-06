@@ -24,6 +24,13 @@ import {
 import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample, addResearch } from "../pipelineMemory";
+import { assembleNaverBlogHtml } from "../htmlAssembler";
+import { spliceImageCards } from "./imageCards";
+import type { CardAsset } from "./cardStorage";
+// captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
+// import하면, 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에
+// 번들링/로딩이 실패한다 — 이 파일이 render-worker와 Next.js API route 양쪽에서 import되기
+// 때문에, 아래 image 단계 안에서만 동적 import(await import)로 지연 로드한다.
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -135,7 +142,10 @@ export async function runPipeline(
   token: string | undefined,
   provider: Provider,
   statusCallback?: (status: string) => Promise<void>,
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
+  // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
+  onCardAssets?: (assets: CardAsset[]) => void
 ): Promise<string> {
   const meta: ChannelMeta = await getChannelMeta(channel, token);
   const draftProvided = !!(userDraft && userDraft.trim());
@@ -228,6 +238,7 @@ export async function runPipeline(
   let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
   let writerCall: { p: Provider; apiKey: string; model: string } =
     { p: provider, apiKey: baseAuth.apiKey, model: baseAuth.model }; // 재작성은 writer 모델로
+  let replacedCards: string[] = []; // image 단계에서 만든 카드 HTML (플레이스홀더 → 최종 치환용)
 
   for (const stage of stages) {
     const kind = stageKind(stage.id);
@@ -295,7 +306,49 @@ export async function runPipeline(
       }
 
     } else if (kind === "image") {
-      console.log(`[engine] ${channel} · ${stage.id} (이미지 단계 미구현, 통과)`);
+      const imageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
+      if (imageMarkers.length === 0) {
+        console.log(`[engine] ${channel} · ${stage.id}: [IMAGE:...] 마커 없음 → 건너뜀`);
+        continue;
+      }
+      const system = persona + stageGuides;
+      const user =
+        `[주제]\n${topic}\n\n` +
+        `아래 draft 전문에서 [IMAGE: ...] 마커(${imageMarkers.length}개)들의 설명에 부합하는 브랜드 카드 HTML+CSS 코드를 작성하세요.\n\n` +
+        `[작성 규칙]\n` +
+        `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
+        `- 오직 각 마커에 들어갈 HTML 카드 코드블록들만 순서대로 작성하십시오.\n` +
+        `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
+        `- **첫 번째 마커 (인덱스 0)**는 블로그 대표 썸네일이므로, 720x720px 크기에 파란색/하늘색 배경(#18A0E8)을 가진 대표 이미지 프레임을 사용하십시오.\n` +
+        `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 800px 너비에 옅은 회색 배경(#F3F3F3)을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오 (순백 #ffffff 금지 — 네이버 블로그 본문 배경도 흰색이라 카드 경계가 사라집니다).\n\n` +
+        `[입력 draft 전문]\n${draft}`;
+      const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
+
+      const spliced = spliceImageCards(draft, cardsRaw);
+      draft = spliced.draft;
+      replacedCards.push(...spliced.cards);
+      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${spliced.cards.length}/${imageMarkers.length}개 생성`);
+
+      // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). Chromium 미설치나 업로드 실패
+      // 등 어떤 이유로든 실패해도 기존 inline HTML 카드 흐름은 그대로 유지된다(폴백) —
+      // 이 블록은 draft를 건드리지 않는다.
+      try {
+        const { captureCards } = await import("./cardCapture");
+        const { cards: captured, warnings } = await captureCards(spliced.cards);
+        if (warnings.length > 0) {
+          console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
+        } else {
+          console.log(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 통과`);
+        }
+        if (onCardAssets) {
+          const { uploadCards } = await import("./cardStorage");
+          const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const assets = await uploadCards(channel, jobId, captured);
+          onCardAssets(assets);
+        }
+      } catch (e) {
+        console.warn(`[engine] ${channel} · ${stage.id} 서버사이드 캡처/업로드 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 
@@ -306,8 +359,17 @@ export async function runPipeline(
   // ── 최종 조립 (outputFormat별) ──
   const fmt = meta.outputFormat ?? "text";
   if (fmt === "html") {
-    // TODO: assembleNaverBlogHtml + 이미지 카드 (네이버는 아직 legacy runAgentPipeline 사용)
-    return draft;
+    const shell = await readChannelFile(channel, "templates/blog-shell.html", token).catch(() => undefined);
+    const assembled = assembleNaverBlogHtml(draft, shell);
+    if (assembled === null) {
+      console.warn(`[engine] ${channel}: HTML 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
+      return draft;
+    }
+    let finalHtml = assembled;
+    replacedCards.forEach((cardHtml, idx) => {
+      finalHtml = finalHtml.replace(new RegExp(`<!--\\s*HTML_CARD_${idx}\\s*-->`, "g"), cardHtml);
+    });
+    return finalHtml;
   }
   // json / text: writer가 이미 형식대로 출력 → 그대로 반환
   return draft;

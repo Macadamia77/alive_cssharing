@@ -91,9 +91,14 @@ function isCodeFence(trimmed: string): boolean {
 
 // 가이드 문구가 "🔍 📊 ⚡ 💬 📞 📦 🚚 🎯 📈 등"으로 예시만 들고 고정 목록이 아님을 명시하므로,
 // 특정 이모지 목록을 하드코딩하지 않고 "이모지로 시작하는 짧은 단독 행"을 일반적으로 탐지한다.
+// 단, "📩 도입 검토 단계라면...만듭니다." 같은 이모지로 시작하는 완결된 CTA 문장은 소제목이
+// 아니다 — 가이드의 모든 소제목 예시는 짧은 명사구/의문형이며 마침표로 끝나는 평서문이 없으므로,
+// 평서문 종결(~다./~요./~죠./~네요.)로 끝나는 행은 길이와 무관하게 소제목에서 제외한다.
+const DECLARATIVE_ENDING = /(다|요|죠|네요)\.$/;
 function isSubheading(trimmed: string): boolean {
   if (!trimmed || trimmed.length > 60) return false;
   if (trimmed.startsWith("✅") || trimmed.startsWith("-") || trimmed.startsWith("📑")) return false;
+  if (DECLARATIVE_ENDING.test(trimmed)) return false;
   return EMOJI_START.test(trimmed);
 }
 
@@ -110,6 +115,22 @@ function isGateFailed(notes: string): boolean {
 interface PendingList {
   type: "ul" | "ol";
   items: string[];
+}
+
+// 마크다운 표 행(`| a | b |`) 감지 및 셀 분리. 표는 헤더 행 + 구분선(`|---|---|`) + 데이터 행으로 구성된다.
+function isTableRow(trimmed: string): boolean {
+  return /^\|.*\|$/.test(trimmed);
+}
+
+function isTableSeparatorRow(trimmed: string): boolean {
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(trimmed);
+}
+
+function splitTableCells(trimmed: string): string[] {
+  let s = trimmed.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map(c => c.trim());
 }
 
 /**
@@ -133,6 +154,7 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
 
     const htmlParts: string[] = [];
     let pendingList: PendingList | null = null;
+    let pendingTable: string[][] | null = null; // 누적 행(첫 행 = 헤더)
 
     const flushList = () => {
       if (!pendingList) return;
@@ -141,13 +163,35 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
       pendingList = null;
     };
 
+    const flushTable = () => {
+      if (!pendingTable || pendingTable.length === 0) return;
+      const [header, ...rows] = pendingTable;
+      const thead = `<thead><tr>${header.map(c => `<th>${applyInline(c)}</th>`).join("")}</tr></thead>`;
+      const tbody = rows.length
+        ? `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${applyInline(c)}</td>`).join("")}</tr>`).join("")}</tbody>`
+        : "";
+      htmlParts.push(`<table>${thead}${tbody}</table>`);
+      pendingTable = null;
+    };
+
     for (const rawLine of lines.slice(titleIdx + 1)) {
       const trimmed = rawLine.trim();
 
-      if (!trimmed) { flushList(); continue; }
+      if (!trimmed) { flushList(); flushTable(); continue; }
 
       // 코드펜스 줄(```html, ``` 등)은 LLM 잔여물이므로 출력하지 않고 스킵
       if (isCodeFence(trimmed)) { continue; }
+
+      // 표 구분선(`|---|---|`)은 이미 누적 중인 표의 헤더 아래 줄이므로 그대로 건너뛴다
+      if (pendingTable && isTableSeparatorRow(trimmed)) { continue; }
+
+      if (isTableRow(trimmed)) {
+        flushList();
+        if (!pendingTable) pendingTable = [];
+        pendingTable.push(splitTableCells(trimmed));
+        continue;
+      }
+      flushTable();
 
       if (isCardPlaceholder(trimmed)) { flushList(); htmlParts.push(trimmed); continue; }
 
@@ -202,6 +246,7 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
       htmlParts.push(`<p>${applyInline(trimmed)}</p>`);
     }
     flushList();
+    flushTable();
 
     const bodyHtml = htmlParts.join("\n");
     if (!bodyHtml.trim()) return null;

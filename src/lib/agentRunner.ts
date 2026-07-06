@@ -9,6 +9,7 @@ import { assembleNaverBlogHtml } from "./htmlAssembler";
 import { dataRoot } from "./dataRoot";
 import { spliceImageCards } from "./pipeline/imageCards";
 import { captureCards } from "./pipeline/cardCapture";
+import { uploadCards, type CardAsset } from "./pipeline/cardStorage";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -455,7 +456,10 @@ export async function runAgentPipeline(
   token: string | undefined,
   provider: Provider,
   statusCallback?: (status: string) => Promise<void>,
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
+  // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
+  onCardAssets?: (assets: CardAsset[]) => void
 ): Promise<string> {
   // 채널 설정(_meta.json) — 리서치/글쓰기 가이드 선택·순서를 여기서 읽는다 (하드코딩 금지)
   const meta = await getChannelMeta(channel, token).catch(() => null);
@@ -713,18 +717,22 @@ export async function runAgentPipeline(
     replacedCards.push(...spliced.cards);
     saveDebug("step2.5_imagemaker_final_draft", finalDraft);
 
-    // 서버사이드 캡처(품질 확인·높이 게이트) — 저장소 연동 전 단계이므로 결과는 로그만 남기고
-    // 최종 결과물(finalDraft)에는 아직 반영하지 않는다. Chromium 미설치 등으로 실패해도 기존
-    // inline HTML 카드 흐름은 그대로 유지된다(폴백).
+    // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). 어떤 이유로든 실패해도 기존
+    // inline HTML 카드 흐름은 그대로 유지된다(폴백) — 이 블록은 finalDraft를 건드리지 않는다.
     try {
-      const { warnings } = await captureCards(spliced.cards);
+      const { cards: captured, warnings } = await captureCards(spliced.cards);
       if (warnings.length > 0) {
         console.warn(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
       } else {
         console.log(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 통과`);
       }
+      if (onCardAssets) {
+        const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const assets = await uploadCards(channel, jobId, captured);
+        onCardAssets(assets);
+      }
     } catch (e) {
-      console.warn(`[pipeline] ${channel} Step 2.5 서버사이드 캡처 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
+      console.warn(`[pipeline] ${channel} Step 2.5 서버사이드 캡처/업로드 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
     }
   }
 

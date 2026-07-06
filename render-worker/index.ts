@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { runAgentPipeline, generateContent } from "../src/lib/agentRunner";
 import { hasAgentPipeline, buildSystemPrompt, getChannelMeta } from "../src/lib/channelFiles";
 import { runPipeline } from "../src/lib/pipeline/runPipeline";
+import type { CardAsset } from "../src/lib/pipeline/cardStorage";
 
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
@@ -40,6 +41,10 @@ async function processTask(task: any) {
         .eq("id", task.id);
     };
 
+    // 이미지 카드가 실제 PNG로 캡처·업로드되면 여기 담긴다(image-gen 스테이지가 없는 채널은 계속 빈 배열).
+    let cardAssets: CardAsset[] | undefined;
+    const onCardAssets = (assets: CardAsset[]) => { cardAssets = assets; };
+
     let content = "";
     if (useEngine) {
       content = await runPipeline(
@@ -49,7 +54,8 @@ async function processTask(task: any) {
         token,
         task.provider || "mock",
         statusCallback,
-        task.api_key || undefined
+        task.api_key || undefined,
+        onCardAssets
       );
     } else if (isPipeline) {
       content = await runAgentPipeline(
@@ -59,7 +65,8 @@ async function processTask(task: any) {
         token,
         task.provider || "mock",
         statusCallback,
-        task.api_key || undefined
+        task.api_key || undefined,
+        onCardAssets
       );
     } else {
       await statusCallback("generating");
@@ -76,14 +83,23 @@ async function processTask(task: any) {
       );
     }
 
-    // 완료 업데이트
-    await supabase
-      .from("tasks")
-      .update({
-        status: "completed",
-        result: content,
-      })
-      .eq("id", task.id);
+    // 완료 업데이트. card_assets 컬럼이 아직 없는 환경(마이그레이션 전)에서도 작업 완료
+    // 자체는 항상 성공해야 하므로, 먼저 포함해서 시도하고 실패하면 그 필드만 빼고 재시도한다.
+    if (cardAssets && cardAssets.length > 0) {
+      const { error: withAssetsError } = await supabase
+        .from("tasks")
+        .update({ status: "completed", result: content, card_assets: cardAssets })
+        .eq("id", task.id);
+      if (withAssetsError) {
+        console.warn(`[Worker] card_assets 저장 실패(컬럼 미존재 가능성) — 기본 필드만 재저장: ${withAssetsError.message}`);
+        await supabase.from("tasks").update({ status: "completed", result: content }).eq("id", task.id);
+      }
+    } else {
+      await supabase
+        .from("tasks")
+        .update({ status: "completed", result: content })
+        .eq("id", task.id);
+    }
 
     console.log(`[Worker] 작업 완료 (ID: ${task.id})`);
   } catch (e: any) {

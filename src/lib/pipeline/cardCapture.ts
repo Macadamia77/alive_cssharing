@@ -3,6 +3,11 @@
 // 그림자·그라디언트·폰트 렌더링이 최종 디자인과 미묘하게 어긋날 수 있다. 로컬 blog/ 파이프라인이
 // 이미 검증한 방식(Playwright 헤드리스 브라우저로 1회 실행해 순차 캡처)을 그대로 재사용한다.
 // 참고: data 채널의 guide/04-image-guide.md 4절 캡처 코드, agents/image-maker.md 4.5단계(높이 검증).
+//
+// page.evaluate() 콜백은 Playwright가 브라우저 컨텍스트에서 실행하므로 런타임에는 document가
+// 항상 존재한다 — 아래 참조는 render-worker(별도 tsconfig, lib에 "dom" 미포함)에서도 타입
+// 체크가 통과하도록 이 파일에만 DOM lib을 명시적으로 끌어온다.
+/// <reference lib="dom" />
 
 import { chromium, type Browser } from "playwright";
 

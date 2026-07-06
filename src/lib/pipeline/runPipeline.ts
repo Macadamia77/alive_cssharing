@@ -25,6 +25,7 @@ import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
+import { spliceImageCards } from "./imageCards";
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -307,29 +308,14 @@ export async function runPipeline(
         `- 오직 각 마커에 들어갈 HTML 카드 코드블록들만 순서대로 작성하십시오.\n` +
         `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
         `- **첫 번째 마커 (인덱스 0)**는 블로그 대표 썸네일이므로, 720x720px 크기에 파란색/하늘색 배경(#18A0E8)을 가진 대표 이미지 프레임을 사용하십시오.\n` +
-        `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 800px 너비에 흰색 배경을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오.\n\n` +
+        `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 800px 너비에 옅은 회색 배경(#F3F3F3)을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오 (순백 #ffffff 금지 — 네이버 블로그 본문 배경도 흰색이라 카드 경계가 사라집니다).\n\n` +
         `[입력 draft 전문]\n${draft}`;
       const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
 
-      const cards: string[] = [];
-      const cardRegex = /<!-- CARD_START -->([\s\S]*?)<!-- CARD_END -->/g;
-      let cm;
-      while ((cm = cardRegex.exec(cardsRaw)) !== null) cards.push(cm[1].trim());
-      if (cards.length === 0) {
-        const divRegex = /<div style="font-family:[\s\S]*?<\/div>\s*<\/div>/g;
-        let dm;
-        while ((dm = divRegex.exec(cardsRaw)) !== null) cards.push(dm[0].trim());
-      }
-
-      let cardIndex = 0;
-      draft = draft.replace(/\[IMAGE:\s*([^\]]+)\]/g, (match) => {
-        const cardHtml = cards[cardIndex] || match;
-        replacedCards.push(cardHtml);
-        const placeholder = `<!-- HTML_CARD_${cardIndex} -->`;
-        cardIndex++;
-        return placeholder;
-      });
-      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${cards.length}/${imageMarkers.length}개 생성`);
+      const spliced = spliceImageCards(draft, cardsRaw);
+      draft = spliced.draft;
+      replacedCards.push(...spliced.cards);
+      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${spliced.cards.length}/${imageMarkers.length}개 생성`);
     }
   }
 

@@ -8,8 +8,10 @@ import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWit
 import { assembleNaverBlogHtml } from "./htmlAssembler";
 import { dataRoot } from "./dataRoot";
 import { spliceImageCards } from "./pipeline/imageCards";
-import { captureCards } from "./pipeline/cardCapture";
-import { uploadCards, type CardAsset } from "./pipeline/cardStorage";
+import type { CardAsset } from "./pipeline/cardStorage";
+// captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
+// import하면, 이 파일을 함께 import하는 Vercel(Next.js API route) 쪽에서도 모듈 로드
+// 시점에 번들링/로딩이 실패한다 — 아래 Step 2.5 안에서만 동적 import로 지연 로드한다.
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -720,6 +722,7 @@ export async function runAgentPipeline(
     // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). 어떤 이유로든 실패해도 기존
     // inline HTML 카드 흐름은 그대로 유지된다(폴백) — 이 블록은 finalDraft를 건드리지 않는다.
     try {
+      const { captureCards } = await import("./pipeline/cardCapture");
       const { cards: captured, warnings } = await captureCards(spliced.cards);
       if (warnings.length > 0) {
         console.warn(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
@@ -727,6 +730,7 @@ export async function runAgentPipeline(
         console.log(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 통과`);
       }
       if (onCardAssets) {
+        const { uploadCards } = await import("./pipeline/cardStorage");
         const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const assets = await uploadCards(channel, jobId, captured);
         onCardAssets(assets);

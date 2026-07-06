@@ -26,8 +26,11 @@ import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCards } from "./imageCards";
-import { captureCards } from "./cardCapture";
-import { uploadCards, type CardAsset } from "./cardStorage";
+import type { CardAsset } from "./cardStorage";
+// captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
+// import하면, 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에
+// 번들링/로딩이 실패한다 — 이 파일이 render-worker와 Next.js API route 양쪽에서 import되기
+// 때문에, 아래 image 단계 안에서만 동적 import(await import)로 지연 로드한다.
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -326,6 +329,7 @@ export async function runPipeline(
       // 등 어떤 이유로든 실패해도 기존 inline HTML 카드 흐름은 그대로 유지된다(폴백) —
       // 이 블록은 draft를 건드리지 않는다.
       try {
+        const { captureCards } = await import("./cardCapture");
         const { cards: captured, warnings } = await captureCards(spliced.cards);
         if (warnings.length > 0) {
           console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
@@ -333,6 +337,7 @@ export async function runPipeline(
           console.log(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 통과`);
         }
         if (onCardAssets) {
+          const { uploadCards } = await import("./cardStorage");
           const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const assets = await uploadCards(channel, jobId, captured);
           onCardAssets(assets);

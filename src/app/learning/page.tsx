@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Loader2, Trash2, Search, ChevronDown, ChevronRight, Plus,
-  MessageSquare, Star, Paperclip, Ban, Library, AlertCircle,
+  MessageSquare, Star, Paperclip, Ban, Library, AlertCircle, Globe,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { CHANNELS, CHANNEL_LABELS, CHANNEL_COLORS, type ChannelKey } from "@/lib/channels";
@@ -15,6 +15,7 @@ interface Row { id: string; created_at: string; main: string; meta?: string | nu
 interface FeedbackRow { id: string; text: string; created_at: string; }
 interface ExampleRow { id: string; content: string; note: string | null; created_at: string; }
 interface BadRow { id: string; content: string; reason: string | null; created_at: string; }
+interface ResearchRow { id: string; stage: string; topic: string | null; content: string; created_at: string; }
 
 const REF_NOTE = "직접 추가"; // 참고자료 구분용 note 값
 
@@ -25,12 +26,12 @@ function fmtDate(iso: string) {
 
 // ── 섹션(피드백/우수작/참고자료/기각 공통) ──
 function Section({
-  title, icon, tone, items, addPlaceholder, onAdd, onDelete, multiline,
+  title, icon, tone, items, addPlaceholder, onAdd, onDelete, multiline, readOnly,
 }: {
-  title: string; icon: React.ReactNode; tone: "amber" | "emerald" | "sky" | "red";
-  items: Row[]; addPlaceholder: string;
-  onAdd: (value: string) => Promise<void>; onDelete: (id: string) => Promise<void>;
-  multiline: boolean;
+  title: string; icon: React.ReactNode; tone: "amber" | "emerald" | "sky" | "red" | "slate";
+  items: Row[]; addPlaceholder?: string;
+  onAdd?: (value: string) => Promise<void>; onDelete: (id: string) => Promise<void>;
+  multiline?: boolean; readOnly?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [val, setVal] = useState("");
@@ -42,6 +43,7 @@ function Section({
     emerald: { chip: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "text-emerald-500", btn: "bg-emerald-500 hover:bg-emerald-600", card: "bg-emerald-50/40" },
     sky: { chip: "bg-sky-50 text-sky-700 border-sky-200", dot: "text-sky-500", btn: "bg-sky-500 hover:bg-sky-600", card: "bg-sky-50/40" },
     red: { chip: "bg-red-50 text-red-700 border-red-200", dot: "text-red-500", btn: "bg-red-500 hover:bg-red-600", card: "bg-red-50/40" },
+    slate: { chip: "bg-slate-100 text-slate-600 border-slate-200", dot: "text-slate-500", btn: "bg-slate-500 hover:bg-slate-600", card: "bg-slate-50/60" },
   }[tone];
 
   const filtered = q.trim()
@@ -50,7 +52,7 @@ function Section({
 
   const submit = async () => {
     const v = val.trim();
-    if (!v || adding) return;
+    if (!v || adding || !onAdd) return;
     setAdding(true);
     try { await onAdd(v); setVal(""); } finally { setAdding(false); }
   };
@@ -71,6 +73,7 @@ function Section({
       </div>
 
       {/* 추가 입력 */}
+      {!readOnly && (
       <div className="px-5 py-3 border-b border-slate-100 flex items-start gap-2">
         {multiline ? (
           <textarea value={val} onChange={e => setVal(e.target.value)} rows={2} placeholder={addPlaceholder}
@@ -85,6 +88,7 @@ function Section({
           {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}추가
         </button>
       </div>
+      )}
 
       {/* 목록 */}
       <div className="divide-y divide-slate-50 max-h-[46vh] overflow-y-auto">
@@ -126,18 +130,20 @@ export default function LearningPage() {
   const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
   const [examples, setExamples] = useState<ExampleRow[]>([]);
   const [bad, setBad] = useState<BadRow[]>([]);
+  const [research, setResearch] = useState<ResearchRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async (ch: ChannelKey) => {
     setLoading(true); setErr(null);
     try {
-      const [f, e, b] = await Promise.all([
+      const [f, e, b, rs] = await Promise.all([
         fetch(`/api/feedback?channel=${ch}`).then(r => r.json()),
         fetch(`/api/examples?channel=${ch}`).then(r => r.json()),
         fetch(`/api/bad-examples?channel=${ch}`).then(r => r.json()),
+        fetch(`/api/research?channel=${ch}`).then(r => r.json()),
       ]);
-      setFeedback(f.feedback ?? []); setExamples(e.examples ?? []); setBad(b.badExamples ?? []);
+      setFeedback(f.feedback ?? []); setExamples(e.examples ?? []); setBad(b.badExamples ?? []); setResearch(rs.research ?? []);
     } catch { setErr("학습 데이터를 불러오지 못했습니다."); }
     finally { setLoading(false); }
   }, []);
@@ -149,6 +155,7 @@ export default function LearningPage() {
   const refs: Row[] = examples.filter(e => e.note === REF_NOTE).map(e => ({ id: e.id, created_at: e.created_at, main: e.content, meta: null }));
   const fbRows: Row[] = feedback.map(f => ({ id: f.id, created_at: f.created_at, main: f.text, meta: null }));
   const badRows: Row[] = bad.map(b => ({ id: b.id, created_at: b.created_at, main: b.content, meta: b.reason }));
+  const researchRows: Row[] = research.map(r => ({ id: r.id, created_at: r.created_at, main: r.content, meta: `${r.stage}${r.topic ? " · " + r.topic : ""}` }));
 
   // ── add/delete 핸들러 (POST/DELETE 후 재로딩) ──
   const post = async (url: string, body: object) => {
@@ -213,6 +220,11 @@ export default function LearningPage() {
                 items={badRows} multiline addPlaceholder="기각시킬 나쁜 예시 (사유는 자동)"
                 onAdd={v => post("/api/bad-examples", { channel, content: v, reason: "수동 추가" })}
                 onDelete={id => del("/api/bad-examples", id, () => setBad(l => l.filter(x => x.id !== id)))} />
+              <div className="md:col-span-2">
+                <Section title="웹서치 결과 (자동 아카이브)" tone="slate" icon={<Globe className="w-4 h-4" />}
+                  items={researchRows} readOnly
+                  onDelete={id => del("/api/research", id, () => setResearch(l => l.filter(x => x.id !== id)))} />
+              </div>
             </div>
           )}
         </div>

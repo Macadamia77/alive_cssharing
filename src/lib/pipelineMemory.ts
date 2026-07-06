@@ -8,6 +8,7 @@ import type { ChannelKey } from "./channels";
 export interface FeedbackRow { id: string; channel: string; text: string; active: boolean; created_at: string; }
 export interface ExampleRow { id: string; channel: string; content: string; note: string | null; created_at: string; }
 export interface BadExampleRow { id: string; channel: string; content: string; reason: string | null; created_at: string; }
+export interface ResearchRow { id: string; channel: string; stage: string; topic: string | null; content: string; created_at: string; }
 
 /** 생성 시 주입할: 활성 피드백 최근 N개 (텍스트만) */
 export async function getRecentFeedback(channel: ChannelKey, limit = 10): Promise<string[]> {
@@ -64,6 +65,23 @@ export async function listBadExamples(channel: ChannelKey): Promise<BadExampleRo
 }
 export async function deleteBadExample(id: string): Promise<void> {
   const { error } = await supabase.from("pipeline_bad_examples").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** 웹서치(리서치) 단계 산출물 저장 (엔진에서 fire-and-forget) */
+export async function addResearch(channel: ChannelKey, stage: string, topic: string, content: string): Promise<void> {
+  try {
+    await supabase.from("pipeline_research").insert({ channel, stage, topic: topic || null, content });
+  } catch { /* 저장 실패 무시 */ }
+}
+export async function listResearch(channel: ChannelKey): Promise<ResearchRow[]> {
+  const { data, error } = await supabase.from("pipeline_research")
+    .select("*").eq("channel", channel).order("created_at", { ascending: false }).limit(50);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ResearchRow[];
+}
+export async function deleteResearch(id: string): Promise<void> {
+  const { error } = await supabase.from("pipeline_research").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
 

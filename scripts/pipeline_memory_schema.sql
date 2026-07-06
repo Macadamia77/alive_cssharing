@@ -35,12 +35,25 @@ create table if not exists pipeline_bad_examples (
 create index if not exists idx_pipeline_bad_examples_channel
   on pipeline_bad_examples (channel, created_at desc);
 
+-- pipeline_research : 웹서치(리서치) 단계 산출물 아카이브. 생성 시 자동 저장, 자료실에서 열람.
+create table if not exists pipeline_research (
+  id         uuid primary key default gen_random_uuid(),
+  channel    text not null,
+  stage      text not null,   -- research | research-voice
+  topic      text,
+  content    text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_pipeline_research_channel
+  on pipeline_research (channel, created_at desc);
+
 -- 보안: channel_files와 동일하게 service_role만 접근(RLS on + 공개 정책 없음).
 -- ⚠️ Vercel에 SUPABASE_SERVICE_ROLE_KEY가 있어야 웹에서 피드백 저장이 됩니다.
 --    (없으면 channel_files처럼 웹 쓰기가 막힘 → 그 경우 아래 alter를 disable로)
 alter table pipeline_feedback enable row level security;
 alter table pipeline_examples enable row level security;
 alter table pipeline_bad_examples enable row level security;
+alter table pipeline_research enable row level security;
 
 -- (임시로 익명 접근을 허용해야 한다면 위 두 줄 대신 아래를 사용 — 보안↓)
 -- alter table pipeline_feedback disable row level security;

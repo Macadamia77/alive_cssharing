@@ -23,7 +23,7 @@ import {
 } from "../apiClients";
 import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
-import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample } from "../pipelineMemory";
+import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample, addResearch } from "../pipelineMemory";
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -251,7 +251,11 @@ export async function runPipeline(
         `위 정보를 바탕으로 이 단계의 역할을 수행해 결과를 직접 출력하세요.`;
       const out = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, stage.useSearch, stage.disableThinking,
         (n) => { if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`); }));
-      if (out.trim()) contextParts.push(`[${stage.id} 산출물]\n${out}`);
+      if (out.trim()) {
+        contextParts.push(`[${stage.id} 산출물]\n${out}`);
+        // 웹서치 단계 산출물은 자료실용으로 아카이브(자동 저장) — fire-and-forget
+        if (stage.useSearch) void addResearch(channel, stage.id, topic, out);
+      }
       console.log(`[engine] ${channel} · ${stage.id} 완료 (${out.length}자)`);
 
     } else if (kind === "writer") {

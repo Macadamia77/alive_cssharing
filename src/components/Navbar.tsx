@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Menu, X, BookOpen, Settings, LayoutList } from "lucide-react";
+import { Sparkles, Menu, X, BookOpen, Settings, LayoutList, Library } from "lucide-react";
 import Link from "next/link";
 
 export default function Navbar() {
@@ -49,6 +49,13 @@ export default function Navbar() {
               가이드 관리
             </Link>
             <Link
+              href="/learning"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer"
+            >
+              <Library className="w-3.5 h-3.5" aria-hidden="true" />
+              자료실
+            </Link>
+            <Link
               href="/settings"
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer"
             >
@@ -94,6 +101,14 @@ export default function Navbar() {
               >
                 <BookOpen className="w-4 h-4" aria-hidden="true" />
                 가이드 관리
+              </Link>
+              <Link
+                href="/learning"
+                className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-200 cursor-pointer"
+                onClick={() => setMobileOpen(false)}
+              >
+                <Library className="w-4 h-4" aria-hidden="true" />
+                자료실
               </Link>
               <Link
                 href="/settings"

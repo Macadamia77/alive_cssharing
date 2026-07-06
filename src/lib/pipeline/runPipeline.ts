@@ -171,12 +171,18 @@ export async function runPipeline(
     throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
   }
 
-  // 단계의 provider/model 해석 (오버라이드 provider 키가 없으면 기본으로 폴백)
+  // 단계의 provider/model 해석. 명시 지정한 provider 키가 워커에 없으면 명확한 에러(조용한 폴백 금지).
   const resolveStageModel = async (s: ResolvedStage): Promise<{ p: Provider; apiKey: string; model: string }> => {
-    let p = (s.model as Provider) || provider;
-    let a = await resolveAuth(p);
-    if (!a) { p = provider; a = baseAuth; }
-    return { p, apiKey: a.apiKey, model: s.modelId || a.model };
+    const requested = (s.model as Provider) || provider;
+    const a = await resolveAuth(requested);
+    if (a) return { p: requested, apiKey: a.apiKey, model: s.modelId || a.model };
+    // requested는 base가 아닌 오버라이드 provider(base는 위에서 이미 보장됨)인데 키가 없음.
+    // 예전엔 base로 폴백하며 modelId(예: claude-opus-4-8)를 유지 → Gemini에 claude 모델 요청 크래시.
+    throw new Error(
+      `이 단계는 '${requested}' 모델로 설정됐지만 워커에 ${requested.toUpperCase()}_API_KEY가 없습니다. ` +
+      `Railway(및 Vercel) 환경변수에 ${requested.toUpperCase()}_API_KEY를 추가하거나, ` +
+      `파이프라인 카드에서 이 단계/채널 모델을 '기본'으로 되돌리세요.`
+    );
   };
 
   // ── LLM 호출 헬퍼 (provider·model을 인자로 받음) ──

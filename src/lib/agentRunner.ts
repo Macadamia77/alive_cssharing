@@ -8,6 +8,7 @@ import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWit
 import { assembleNaverBlogHtml } from "./htmlAssembler";
 import { dataRoot } from "./dataRoot";
 import { spliceImageCards } from "./pipeline/imageCards";
+import { captureCards } from "./pipeline/cardCapture";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -711,6 +712,20 @@ export async function runAgentPipeline(
     finalDraft = spliced.draft;
     replacedCards.push(...spliced.cards);
     saveDebug("step2.5_imagemaker_final_draft", finalDraft);
+
+    // 서버사이드 캡처(품질 확인·높이 게이트) — 저장소 연동 전 단계이므로 결과는 로그만 남기고
+    // 최종 결과물(finalDraft)에는 아직 반영하지 않는다. Chromium 미설치 등으로 실패해도 기존
+    // inline HTML 카드 흐름은 그대로 유지된다(폴백).
+    try {
+      const { warnings } = await captureCards(spliced.cards);
+      if (warnings.length > 0) {
+        console.warn(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
+      } else {
+        console.log(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 통과`);
+      }
+    } catch (e) {
+      console.warn(`[pipeline] ${channel} Step 2.5 서버사이드 캡처 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   // ── Step 3: Assembler (코드 기반 — LLM 호출 없음, 토큰 한도 없음) ──

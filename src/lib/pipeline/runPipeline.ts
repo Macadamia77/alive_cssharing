@@ -26,6 +26,7 @@ import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCards } from "./imageCards";
+import { captureCards } from "./cardCapture";
 import type { ResolvedStage } from "./types";
 
 // ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
@@ -316,6 +317,20 @@ export async function runPipeline(
       draft = spliced.draft;
       replacedCards.push(...spliced.cards);
       console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${spliced.cards.length}/${imageMarkers.length}개 생성`);
+
+      // 서버사이드 캡처(품질 확인·높이 게이트) — 저장소 연동 전 단계이므로 결과는 로그만 남기고
+      // 최종 결과물(draft)에는 아직 반영하지 않는다. Chromium 미설치 등으로 실패해도 기존
+      // inline HTML 카드 흐름은 그대로 유지된다(폴백).
+      try {
+        const { warnings } = await captureCards(spliced.cards);
+        if (warnings.length > 0) {
+          console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
+        } else {
+          console.log(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 통과`);
+        }
+      } catch (e) {
+        console.warn(`[engine] ${channel} · ${stage.id} 서버사이드 캡처 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 

@@ -45,6 +45,10 @@ var BOX_ACCENTS = [
   { bar: "#14B8A6", bg: "#F0FDFA", title: "#0D9488" },
 ];
 
+// keyword_boxes 전용 타일 색상. stacked_boxes(흰 박스+왼쪽 강조선)와 겹치지 않도록
+// 통짜 색 배경 + 흰 글자로 확실히 다른 시각 언어를 준다.
+var KEYWORD_TILE_ACCENTS = ["#00AEEF", "#6366F1", "#14B8A6", "#F59E0B"];
+
 var FIGMA_THEMES = {
   default: { first: "Instagram post - first", cta: "Instagram post - CTA" },
   summer:  { first: "summer_first",  cta: "summer_CTA"  },
@@ -523,7 +527,7 @@ async function renderListCards(container, items, frame, cardAccentIndex) {
 
 // keyword_boxes 전용: 4x1 세로 나열이 아니라 그리드로 배치.
 // 4개면 2열 그리드(2x2), 3개면 2+1 그리드가 아니라 한 줄에 3칸(3x1)으로 배치한다.
-// 박스 자체 스타일(강조선·색상)은 list_cards와 동일하게 재사용한다.
+// stacked_boxes(흰 박스+왼쪽 강조선)와 헷갈리지 않도록 통짜 색 타일("keyword_tile")로 렌더링한다.
 async function renderGridCards(container, items, frame) {
   var maxItems = Math.min(items.length, 4);
   var cols = maxItems === 3 ? 3 : 2;
@@ -541,7 +545,7 @@ async function renderGridCards(container, items, frame) {
       container, items[i],
       col * (boxWidth + gap), row * (boxHeight + gap),
       boxWidth, boxHeight,
-      "list_cards", frame,
+      "keyword_tile", frame,
       i
     );
   }
@@ -661,7 +665,9 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
 
   var isFlow = layoutType === "flow_process";
   var isListCard = layoutType === "list_cards";
+  var isKeywordTile = layoutType === "keyword_tile";
   var accent = isListCard ? BOX_ACCENTS[itemIndex % BOX_ACCENTS.length] : null;
+  var tileColor = isKeywordTile ? KEYWORD_TILE_ACCENTS[itemIndex % KEYWORD_TILE_ACCENTS.length] : null;
 
   var box = figma.createFrame();
 
@@ -669,10 +675,10 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   box.x = x;
   box.y = y;
   box.resize(width, height);
-  box.fills = [{ type: "SOLID", color: hexToRgb(accent ? accent.bg : "#FFFFFF") }];
-  box.strokes = accent ? [] : [{ type: "SOLID", color: hexToRgb("#E5E7EB") }];
+  box.fills = [{ type: "SOLID", color: hexToRgb(tileColor || (accent ? accent.bg : "#FFFFFF")) }];
+  box.strokes = (accent || isKeywordTile) ? [] : [{ type: "SOLID", color: hexToRgb("#E5E7EB") }];
   box.strokeWeight = 1;
-  box.cornerRadius = 18;
+  box.cornerRadius = isKeywordTile ? 20 : 18;
   box.clipsContent = isListCard;
 
   container.appendChild(box);
@@ -695,6 +701,13 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   var textLeft = 24 + barOffset;
   var topPadding = isFlow ? 20 : 22;
   var bodyTop = isFlow ? 86 : 84;
+
+  if (isKeywordTile) {
+    // 통짜 색 타일: 왼쪽 정렬 대신 가운데 정렬, 위아래 여백을 넉넉히 줘서
+    // stacked_boxes의 "왼쪽 강조선 + 왼쪽 정렬" 언어와 확실히 구분한다.
+    topPadding = 28;
+    bodyTop = 76;
+  }
 
   if (showTone) {
     var toneBadgeSize = 58;
@@ -775,7 +788,7 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   titleText.name = "generated_block_title";
   titleText.x = textLeft;
   titleText.y = topPadding;
-  titleText.fills = [{ type: "SOLID", color: hexToRgb("#333333") }];
+  titleText.fills = [{ type: "SOLID", color: hexToRgb(isKeywordTile ? "#FFFFFF" : "#333333") }];
 
   box.appendChild(titleText);
 
@@ -796,13 +809,15 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   titleText.textAutoResize = "HEIGHT";
   titleText.lineHeight = { unit: "PIXELS", value: titleText.fontSize * 1.16 };
   titleText.resize(width - textLeft - 24, 10);
+  if (isKeywordTile) titleText.textAlignHorizontal = "CENTER";
 
   var bodyText = figma.createText();
 
   bodyText.name = "generated_block_body";
   bodyText.x = textLeft;
   bodyText.y = bodyTop;
-  bodyText.fills = [{ type: "SOLID", color: hexToRgb("#666666") }];
+  bodyText.fills = [{ type: "SOLID", color: hexToRgb(isKeywordTile ? "#FFFFFF" : "#666666") }];
+  if (isKeywordTile) bodyText.opacity = 0.85;
 
   box.appendChild(bodyText);
 
@@ -822,6 +837,7 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
 
   bodyText.textAutoResize = "HEIGHT";
   bodyText.lineHeight = { unit: "PIXELS", value: bodyText.fontSize * 1.2 };
+  if (isKeywordTile) bodyText.textAlignHorizontal = "CENTER";
   var bottomPad = isFlow ? 28 : 14;
   bodyText.resize(width - textLeft - 24, height - bodyTop - bottomPad);
 

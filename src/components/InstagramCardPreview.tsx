@@ -150,6 +150,10 @@ function StackedBoxes({ items }: { items: CardItem[] }) {
  * keyword_boxes: 파란 배경 타일 그리드.
  * 번호·선 없음. 키워드 중심의 밀집 배치.
  */
+// stacked_boxes(흰 박스+왼쪽 강조선)와 헷갈리지 않도록 통짜 색 타일로 렌더링한다.
+// Figma 플러그인의 KEYWORD_TILE_ACCENTS와 동일한 색을 순환시켜 미리보기·실제 카드가 같아 보이게 한다.
+const KEYWORD_TILE_COLORS = ["bg-[#00AEEF]", "bg-[#6366F1]", "bg-[#14B8A6]", "bg-[#F59E0B]"];
+
 function KeywordBoxes({ items }: { items: CardItem[] }) {
   // 4개는 2열 그리드(2x2), 3개는 2+1로 어중간하게 쪼개지 않고 한 줄에 3칸(3x1)으로 배치한다.
   const minWidthClass = items.length === 3 ? "min-w-[30%]" : "min-w-[42%]";
@@ -160,10 +164,10 @@ function KeywordBoxes({ items }: { items: CardItem[] }) {
         return (
           <div
             key={i}
-            className={`flex-1 ${minWidthClass} bg-blue-600 rounded-xl px-3 py-3 text-center`}
+            className={`flex-1 ${minWidthClass} ${KEYWORD_TILE_COLORS[i % KEYWORD_TILE_COLORS.length]} rounded-xl px-3 py-3 text-center`}
           >
             <p className="text-xs font-bold text-white leading-tight">{title || `키워드 ${i + 1}`}</p>
-            {body && <p className="text-[10px] text-blue-100 mt-1 leading-snug">{body}</p>}
+            {body && <p className="text-[10px] text-white/85 mt-1 leading-snug">{body}</p>}
           </div>
         );
       })}

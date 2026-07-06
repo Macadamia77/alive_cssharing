@@ -416,6 +416,43 @@ ${finalReport.feedback || "검수 기준 미달"}
   return "```json\n" + JSON.stringify(finalParsed, null, 2) + "\n```";
 }
 
+// ─── 통합 파이프라인 엔진(runPipeline) 결과물에 인스타그램 전용 구조 검수를 덧씌운다 ───
+// runPipeline.ts(공용 엔진)는 건드리지 않고, 그 결과를 넘겨받아 여기서만 기계적 검증
+// (카드 수·items 개수·숫자 문구 일치·해시태그 자동 보정·JSON 파싱 재시도)을 적용한다.
+// 다른 채널은 이 함수를 호출하지 않으므로 영향이 없다.
+export async function runInstagramStructuralQc(
+  channel: ChannelKey,
+  content: string,
+  topic: string,
+  draft: string,
+  provider: Provider,
+  token?: string,
+  apiKeyOverride?: string
+): Promise<string> {
+  if (provider === "mock") return content;
+
+  const systemPrompt = await buildSystemPrompt(channel, token).catch(() => "");
+  if (!systemPrompt) return content;
+
+  const meta = await getChannelMeta(channel, token).catch(() => null);
+
+  const envKey = process.env[`${provider.toUpperCase()}_API_KEY`]?.trim();
+  const envModel = process.env[`${provider.toUpperCase()}_MODEL`]?.trim();
+  let pc = envKey ? { apiKey: envKey, model: envModel || DEFAULT_MODELS[provider] } : null;
+  if (!pc) pc = await loadAIConfig(token).then(c => c.providers[provider as ProviderKey]).catch(() => null);
+  if (apiKeyOverride) pc = { apiKey: apiKeyOverride, model: pc?.model || envModel || DEFAULT_MODELS[provider] };
+  if (!pc?.apiKey) return content; // 키 없으면 검수 없이 파이프라인 결과 그대로 사용
+
+  const userMessage = draft
+    ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요.\n\n[주제]\n${topic}\n\n[작성자 초안]\n${draft}`
+    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요.\n\n[주제]\n${topic}`;
+
+  return runQcAndRegenerate(
+    channel, content, systemPrompt, userMessage, provider, pc,
+    meta?.maxTokens ?? 4096, meta?.disableThinking ?? false, token
+  );
+}
+
 // ─── 단순 채널 콘텐츠 생성 (guide 파일만 있는 채널) ───────────
 export async function generateContent(
   channel: ChannelKey,

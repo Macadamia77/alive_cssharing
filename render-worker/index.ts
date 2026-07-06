@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createClient } from "@supabase/supabase-js";
-import { runAgentPipeline, generateContent } from "../src/lib/agentRunner";
+import { runAgentPipeline, generateContent, runInstagramStructuralQc } from "../src/lib/agentRunner";
 import { hasAgentPipeline, buildSystemPrompt, getChannelMeta } from "../src/lib/channelFiles";
 import { runPipeline } from "../src/lib/pipeline/runPipeline";
 
@@ -51,6 +51,21 @@ async function processTask(task: any) {
         statusCallback,
         task.api_key || undefined
       );
+      // runPipeline.ts(공용 엔진)은 건드리지 않고, 인스타그램일 때만 결과물에
+      // 기존 JSON 구조 자동검수(카드 수·items 개수·해시태그 보정 등)를 덧씌운다.
+      // 다른 채널은 이 분기를 안 타므로 영향 없다.
+      if (task.channel === "instagram") {
+        await statusCallback("content-review");
+        content = await runInstagramStructuralQc(
+          task.channel,
+          content,
+          task.topic,
+          task.draft || "",
+          task.provider || "mock",
+          token,
+          task.api_key || undefined
+        );
+      }
     } else if (isPipeline) {
       content = await runAgentPipeline(
         task.channel,

@@ -229,7 +229,7 @@ export async function GET(req: NextRequest) {
     // ── Supabase 큐 조회 ─────────────────────────────────────
     const { data: task, error } = await supabase
       .from("tasks")
-      .select("status, result, error")
+      .select("status, result, error, card_assets")
       .eq("id", taskId)
       .single();
 
@@ -240,7 +240,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       status: task.status,
       result: task.result,
-      error: task.error
+      error: task.error,
+      cardAssets: task.card_assets ?? undefined,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

@@ -83,3 +83,26 @@ export async function downloadCardsZip(cards: string[], baseName: string): Promi
   const out = await zip.generateAsync({ type: "blob" });
   saveAs(out, `${baseName}_images.zip`);
 }
+
+// ── 서버에서 이미 캡처된 PNG(Supabase Storage) 다운로드 ──────────
+// image-gen 스테이지가 실제 Chromium으로 캡처해 올린 PNG가 있으면 이쪽을 쓴다 —
+// html2canvas 재렌더링(근사치)보다 품질이 높고, 매번 다시 그릴 필요도 없다.
+export async function downloadPngFromUrl(url: string, filename: string): Promise<void> {
+  const { saveAs } = await import("file-saver");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`이미지 다운로드 실패: HTTP ${res.status}`);
+  saveAs(await res.blob(), filename);
+}
+
+export async function downloadPngUrlsZip(urls: string[], baseName: string): Promise<void> {
+  const { saveAs } = await import("file-saver");
+  const zip = new JSZip();
+  for (let i = 0; i < urls.length; i++) {
+    const res = await fetch(urls[i]);
+    if (!res.ok) throw new Error(`이미지 다운로드 실패: HTTP ${res.status}`);
+    const num = String(i + 1).padStart(2, "0");
+    zip.file(`${baseName}_${num}.png`, await res.blob());
+  }
+  const out = await zip.generateAsync({ type: "blob" });
+  saveAs(out, `${baseName}_images.zip`);
+}

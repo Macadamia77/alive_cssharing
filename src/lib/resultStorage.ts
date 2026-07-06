@@ -3,6 +3,7 @@ import { resolveGithubToken } from "./resolveToken";
 import { type NextRequest } from "next/server";
 import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { join } from "path";
+import type { CardAsset } from "./pipeline/cardStorage";
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -58,6 +59,9 @@ export interface ResultEntry {
   topic: string;
   createdAt: string;
   channels: Partial<Record<string, string>>;
+  // image-gen 스테이지를 거친 채널만 채워진다(예: naver-blog). 없으면 프론트엔드가
+  // 기존 html2canvas 클라이언트 렌더링으로 폴백한다.
+  cardAssets?: Partial<Record<string, CardAsset[]>>;
 }
 
 export function newResultId(): string {
@@ -78,6 +82,7 @@ type ResultRow = {
   topic: string;
   channels: Partial<Record<string, string>>;
   created_at: string;
+  card_assets?: Partial<Record<string, CardAsset[]>> | null;
 };
 
 function rowToEntry(row: ResultRow): ResultEntry {
@@ -86,6 +91,7 @@ function rowToEntry(row: ResultRow): ResultEntry {
     topic: row.topic,
     createdAt: row.created_at,
     channels: row.channels ?? {},
+    cardAssets: row.card_assets ?? undefined,
   };
 }
 
@@ -96,6 +102,7 @@ export async function saveResult(result: ResultEntry, _token?: string): Promise<
     topic: result.topic,
     channels: result.channels,
     created_at: result.createdAt,
+    card_assets: result.cardAssets ?? null,
   });
   if (error) throw new Error(`결과 저장 실패: ${error.message}`);
 }
@@ -104,7 +111,7 @@ export async function listResults(_token?: string): Promise<ResultEntry[]> {
   if (!isSupabaseConfigured()) return localListResults();
   const { data, error } = await supabase
     .from("results")
-    .select("id, topic, channels, created_at")
+    .select("id, topic, channels, created_at, card_assets")
     .order("created_at", { ascending: false });
   if (error) throw new Error(`결과 조회 실패: ${error.message}`);
   return ((data as ResultRow[]) ?? []).map(rowToEntry);
@@ -114,7 +121,7 @@ export async function getResult(id: string, _token?: string): Promise<ResultEntr
   if (!isSupabaseConfigured()) return localGetResult(id);
   const { data, error } = await supabase
     .from("results")
-    .select("id, topic, channels, created_at")
+    .select("id, topic, channels, created_at, card_assets")
     .eq("id", id)
     .single();
   if (error || !data) return null;

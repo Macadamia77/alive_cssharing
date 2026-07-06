@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import ChannelResultCard, { type ChannelKey } from "@/components/ChannelResultCard";
 import { CHANNELS, CHANNEL_LABELS, CHANNEL_COLORS } from "@/lib/channels";
+import type { CardAsset } from "@/lib/pipeline/cardStorage";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 
@@ -326,6 +327,9 @@ export default function HomePage() {
     setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
 
     const channelsMap: Record<string, string> = {};
+    // image-gen 스테이지를 거친 채널만 채워진다(예: naver-blog) — 결과 페이지에서 실제 PNG
+    // 다운로드에 쓰인다. 없는 채널은 기존 html2canvas 클라이언트 렌더링으로 자동 폴백.
+    const cardAssetsMap: Record<string, CardAsset[]> = {};
 
     try {
       const allTasks: Array<{ channel: ChannelKey; taskId: string }> = [];
@@ -353,10 +357,13 @@ export default function HomePage() {
                 const data = await res.json();
                 throw new Error(data.error || "상태 조회 실패");
               }
-              const data = await res.json() as { status: string; result?: string; error?: string };
+              const data = await res.json() as { status: string; result?: string; error?: string; cardAssets?: CardAsset[] };
 
               if (data.status === "completed") {
                 clearInterval(interval);
+                if (data.cardAssets && data.cardAssets.length > 0) {
+                  cardAssetsMap[channel] = data.cardAssets;
+                }
                 setResults(prev => ({ ...prev, [channel]: { status: "done", content: data.result } }));
                 resolve(data.result || "");
               } else if (data.status === "failed") {
@@ -386,7 +393,11 @@ export default function HomePage() {
         void fetch("/api/results", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic: topic.trim(), channels: channelsMap }),
+          body: JSON.stringify({
+            topic: topic.trim(),
+            channels: channelsMap,
+            ...(Object.keys(cardAssetsMap).length > 0 ? { cardAssets: cardAssetsMap } : {}),
+          }),
         });
       }
     } catch (e) {

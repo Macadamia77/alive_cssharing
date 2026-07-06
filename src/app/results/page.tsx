@@ -11,7 +11,9 @@ import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib
 import InstagramCardPreview, { tryParseInstagramJson } from "@/components/InstagramCardPreview";
 import {
   copyToClipboard, htmlToText, splitHashtags, extractCards, downloadCardPng, downloadCardsZip,
+  downloadPngFromUrl, downloadPngUrlsZip,
 } from "@/lib/resultDownload";
+import type { CardAsset } from "@/lib/pipeline/cardStorage";
 
 // ── 채널 아이콘 ──────────────────────────────────────────────
 const CHANNEL_ICONS: Record<ChannelKey, React.ReactNode> = {
@@ -27,6 +29,7 @@ interface ResultEntry {
   topic: string;
   createdAt: string;
   channels: Partial<Record<string, string>>;
+  cardAssets?: Partial<Record<string, CardAsset[]>>;
 }
 interface DateGroup { label: string; results: ResultEntry[] }
 
@@ -77,9 +80,14 @@ function CopyBtn({ active, onClick, icon, label }: { active: boolean; onClick():
 }
 
 // ── 채널 콘텐츠 편집기 + 게시 보조 ─────────────────────────
-function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }: {
-  resultId: string; channel: string; initialContent: string; allCards: string[]; onSaved(content: string): void;
+function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets, onSaved }: {
+  resultId: string; channel: string; initialContent: string; allCards: string[];
+  cardAssets?: CardAsset[]; onSaved(content: string): void;
 }) {
+  // 서버가 실제 Chromium으로 캡처해 Storage에 올린 PNG가 있으면 그걸 그대로 쓴다
+  // (html2canvas 재렌더링보다 품질이 높고 매번 다시 그릴 필요도 없음). 개수가 안 맞으면
+  // (예: 오래된 결과물) 기존 html2canvas 방식으로 안전하게 폴백.
+  const hasCapturedPng = !!cardAssets && cardAssets.length === allCards.length;
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(initialContent);
   const [saved, setSaved] = useState(initialContent);
@@ -273,7 +281,9 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
               <Images className="w-3.5 h-3.5" />이미지 카드 {allCards.length}장
             </div>
             <button
-              onClick={() => runBusy("zip", () => downloadCardsZip(allCards, channel))}
+              onClick={() => runBusy("zip", () => hasCapturedPng
+                ? downloadPngUrlsZip(cardAssets!.map(c => c.pngUrl), channel)
+                : downloadCardsZip(allCards, channel))}
               disabled={busy !== null}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
               {busy === "zip" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
@@ -284,10 +294,17 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, onSaved }:
             {allCards.map((card, i) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                 <div className="h-[110px] overflow-hidden bg-white border-b border-slate-100">
-                  <div style={{ width: 640, transform: "scale(0.28)", transformOrigin: "top left", pointerEvents: "none" }} dangerouslySetInnerHTML={{ __html: card }} />
+                  {hasCapturedPng ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={cardAssets![i].pngUrl} alt="" className="w-full h-full object-cover object-top" />
+                  ) : (
+                    <div style={{ width: 640, transform: "scale(0.28)", transformOrigin: "top left", pointerEvents: "none" }} dangerouslySetInnerHTML={{ __html: card }} />
+                  )}
                 </div>
                 <button
-                  onClick={() => runBusy(`img${i}`, () => downloadCardPng(card, `${channel}_${String(i + 1).padStart(2, "0")}.png`))}
+                  onClick={() => runBusy(`img${i}`, () => hasCapturedPng
+                    ? downloadPngFromUrl(cardAssets![i].pngUrl, `${channel}_${String(i + 1).padStart(2, "0")}.png`)
+                    : downloadCardPng(card, `${channel}_${String(i + 1).padStart(2, "0")}.png`))}
                   disabled={busy !== null}
                   className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
                   {busy === `img${i}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
@@ -347,6 +364,15 @@ function ResultCard({ result, onDelete }: {
     for (const v of Object.values(channels)) { const c = extractCards(v || ""); if (c.length) return c; }
     return [];
   }, [channels]);
+
+  // 서버 캡처 PNG(있으면) — sharedCards와 같은 채널 우선순위로 매칭
+  const sharedCardAssets = useMemo(() => {
+    const assets = result.cardAssets;
+    if (!assets) return undefined;
+    if (assets["naver-blog"]?.length) return assets["naver-blog"];
+    for (const v of Object.values(assets)) { if (v && v.length) return v; }
+    return undefined;
+  }, [result.cardAssets]);
 
   const handleDelete = async () => {
     if (!confirm("이 결과물을 삭제하시겠습니까?")) return;
@@ -435,6 +461,7 @@ function ResultCard({ result, onDelete }: {
                 channel={activeChannel}
                 initialContent={channels[activeChannel]!}
                 allCards={sharedCards}
+                cardAssets={sharedCardAssets}
                 onSaved={newContent => setChannels(prev => ({ ...prev, [activeChannel]: newContent }))}
               />
             </div>

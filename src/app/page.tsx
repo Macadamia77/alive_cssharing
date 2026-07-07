@@ -353,10 +353,22 @@ export default function HomePage() {
         }
       }
 
+      // 워커가 죽거나 응답을 잃어버리면(크레딧 소진 등) 백엔드가 이 작업을 "failed"로 바꿔줄
+      // 때까지 최대 15분이 걸릴 수 있다(render-worker의 stale 작업 워치독 주기). 프론트는 그보다
+      // 넉넉하게 잡아 백엔드가 처리할 시간을 준 뒤, 그래도 안 끝나면 무한 로딩 대신 에러로 끝낸다.
+      const POLL_TIMEOUT_MS = 18 * 60 * 1000; // 18분
+
       const pollTask = (channel: ChannelKey, taskId: string): Promise<string> => {
         return new Promise((resolve, reject) => {
+          const startedAt = Date.now();
           const interval = setInterval(async () => {
             try {
+              if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+                clearInterval(interval);
+                setResults(prev => ({ ...prev, [channel]: { status: "error" } }));
+                reject(new Error(`[${CHANNEL_LABELS[channel]}] 응답이 너무 오래 걸려 중단했습니다(18분 초과). 잠시 후 다시 시도해주세요.`));
+                return;
+              }
               const res = await fetch(`/api/generate?taskId=${taskId}`);
               if (!res.ok) {
                 const data = await res.json();

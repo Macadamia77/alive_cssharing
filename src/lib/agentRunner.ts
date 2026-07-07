@@ -197,7 +197,7 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
   checks["중간카드_title_줄바꿈"] = middles.length > 0 && middles.every((c) => {
     const title: string = c.title || "";
     const lineBreaks = (title.match(/\n/g) || []).length;
-    return lineBreaks === 1 && title.split("\n").every((l) => l.length <= 12);
+    return lineBreaks === 1 && title.split("\n").every((l) => l.length <= 15);
   }) ? "PASS" : "FAIL";
 
   checks["중간카드_subtitle"] = middles.every((c) => {
@@ -228,6 +228,17 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     const claimed = parseInt(match[1], 10);
     const n = c.items?.length ?? 0;
     return claimed === n;
+  }) ? "PASS" : "FAIL";
+
+  // 카드에 "N%"/"N배" 같은 구체적 성과 수치를 인용했으면, 그 카드의 cta 필드에 출처를 남겨야 한다(00-brand-scope.md 출처 표기 규칙).
+  // cta는 중간 카드에서는 출처 문구, 마지막 카드에서는 실제 CTA 문구로 쓰인다.
+  checks["수치_출처_표기"] = middles.every((c) => {
+    const itemsText = Array.isArray(c.items)
+      ? c.items.map((it: any) => `${it?.title || ""} ${it?.body || ""}`).join(" ")
+      : "";
+    const text = `${c.title || ""} ${c.subtitle || ""} ${c.highlight_text || ""} ${itemsText}`;
+    const hasStat = /\d+\s*%|\d+\s*배/.test(text);
+    return !hasStat || !!(c.cta && String(c.cta).trim());
   }) ? "PASS" : "FAIL";
 
   const hashtags: any[] = Array.isArray(parsed?.hashtags) ? parsed.hashtags : [];

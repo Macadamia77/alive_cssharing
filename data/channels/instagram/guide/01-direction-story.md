@@ -1,7 +1,7 @@
 ---
 type: guide
 role: direction-story
-stages: [writer]
+stages: [brainstorm, writer]
 ---
 
 # 기획 방향 선택 규칙

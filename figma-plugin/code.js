@@ -27,7 +27,7 @@ var STYLE = {
 
 var TEXT_LIMITS = {
   coverTitleLine: 10,
-  middleTitleLine: 12,
+  middleTitleLine: 15,
   middleSubtitle: 26,
   listTitle: 12,
   listBody: 28,
@@ -110,7 +110,16 @@ figma.ui.onmessage = async function (msg) {
         if (startPos !== -1) rawText = rawText.slice(startPos);
       }
 
-      parsed = JSON.parse(rawText);
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (e) {
+        // hashtags는 카드 생성에 쓰이지 않으므로, 해당 필드가 깨져 있으면
+        // 통째로 제거하고 한 번 더 파싱을 시도한다.
+        var repaired = rawText
+          .replace(/,\s*"hashtags"\s*:\s*\[[\s\S]*?\]/, "")
+          .replace(/"hashtags"\s*:\s*\[[\s\S]*?\]\s*,/, "");
+        parsed = JSON.parse(repaired);
+      }
     } catch (e) {
       throw new Error("JSON 형식이 올바르지 않습니다. 앱에서 생성된 JSON을 그대로 붙여넣어 주세요.");
     }
@@ -222,12 +231,12 @@ async function createCards(cards) {
 
     if (card.template_name === "Instagram post - middle") {
       var rawTitle = String(card.title || "").replace(/\r/g, "");
-      // AI가 생성한 줄을 하나로 합친 뒤 12자 단위로 재분할 → 최대 2줄 강제
+      // AI가 생성한 줄을 하나로 합친 뒤 15자 단위로 재분할 → 최대 2줄 강제
       var titleOneLine = rawTitle.split("\n")
         .map(function(p) { return p.trim(); })
         .filter(Boolean)
         .join(" ");
-      var wrappedLines = wrapTitleByMaxChars(titleOneLine, 12).split("\n");
+      var wrappedLines = wrapTitleByMaxChars(titleOneLine, TEXT_LIMITS.middleTitleLine).split("\n");
       var middleTitle = wrappedLines.slice(0, 2).join("\n");
 
       var middleSubtitle = forceSingleLineText(card.subtitle || "");
@@ -259,6 +268,14 @@ async function createCards(cards) {
     }
 
     await renderDynamicBlocks(clone, card);
+
+    // 중간 카드의 cta 필드(예: 근거 수치·사례 한 줄)를 실제 레이어에 반영한다.
+    // 템플릿에 "cta"라는 이름의 레이어가 이미 있으면 그걸 쓰고, 없으면
+    // block_container 바로 아래에 새로 만든다 — 템플릿마다 레이어를 직접
+    // 추가해두지 않아도 항상 보이게 하기 위함.
+    if (card.template_name === "Instagram post - middle" && card.cta) {
+      await ensureMiddleCtaLine(clone, card.cta);
+    }
 
     // 완성된 클론을 결과물 페이지로 이동 후 위치 지정
     outputPage.appendChild(clone);
@@ -491,21 +508,105 @@ async function renderDynamicBlocks(frame, card) {
   await renderListCards(container, items, frame, card.card_no || 0);
 }
 
+// 중간 카드의 cta 한 줄(예: 근거 수치·사례)을 실제로 보이게 한다.
+// 템플릿에 "cta"라는 이름의 텍스트 레이어가 이미 있으면 그걸 쓰고,
+// 없으면 block_container 바로 아래에 새로 만든다 — 템플릿마다 레이어를
+// 미리 추가해두지 않아도 항상 반영되도록 하기 위함.
+async function ensureMiddleCtaLine(cardFrame, ctaValue) {
+  var existing = cardFrame.findOne(function (node) {
+    return node.type === "TEXT" && node.name === "cta";
+  });
+
+  if (existing) {
+    var fontName = existing.fontName === figma.mixed
+      ? { family: "Inter", style: "Regular" }
+      : existing.fontName;
+    await figma.loadFontAsync(fontName);
+    existing.characters = ctaValue;
+    return;
+  }
+
+  var container = cardFrame.findOne(function (node) {
+    return node.name === "block_container";
+  });
+
+  var text = figma.createText();
+  text.name = "generated_cta_line";
+
+  await applyFont(text, getFontFromLayer(cardFrame, "subtitle"));
+
+  var left = container ? container.x : 24;
+  var top = container ? container.y + container.height + 20 : 24;
+  var availableWidth = container ? container.width : (cardFrame.width - left * 2);
+
+  text.characters = ctaValue;
+  text.fontSize = STYLE.boxBodyFontSize;
+  text.fills = [{ type: "SOLID", color: hexToRgb("#00AEEF") }];
+  text.textAutoResize = "HEIGHT";
+  text.resize(availableWidth, 10);
+  text.x = left;
+  text.y = top;
+
+  cardFrame.appendChild(text);
+}
+
 // 좌우 2열(1x2)로 나누면 폭이 좁아져 텍스트가 어색하게 줄바꿈된다.
 // 위아래로 쌓는 2x1로 배치해 각 박스가 카드 전체 폭을 쓰게 한다(웹 미리보기와 동일 방식).
+// tone(bad/good)이 있든 없든 항상 전체 폭 헤더 바를 붙인다 — 없으면 A/B로 대체.
+// 웹 미리보기(Compare2Col)와 동일한 시각 언어로 맞춘다.
+var COMPARE_FALLBACK_LABEL = ["A", "B"];
+var COMPARE_FALLBACK_COLOR = ["#00AEEF", "#94A3B8"];
+
 async function renderCompareBlocks(container, items, frame) {
   var gap = STYLE.compareGap;
   var maxItems = Math.min(items.length, 2);
   var boxWidth = container.width;
-  var boxHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
+  var slotHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
+  var headerHeight = 46;
+  var headerGap = 10;
+  // 콘텐츠가 짧아도 박스가 슬롯 전체를 억지로 채우지 않도록, slotHeight는
+  // "최대 높이"로만 쓰고 실제 박스 높이는 createTextBlock이 콘텐츠에 맞게 줄인다.
+  var maxBoxHeight = slotHeight - headerHeight - headerGap;
+  var cursorY = 0;
 
   for (var i = 0; i < maxItems; i++) {
-    await createTextBlock(
-      container, items[i],
-      0, i * (boxHeight + gap),
-      boxWidth, boxHeight,
+    var item = items[i] || {};
+    var isBad = item.tone === "bad";
+    var isGood = item.tone === "good";
+    var headerColor = isBad ? "#F04452" : isGood ? "#00AEEF" : COMPARE_FALLBACK_COLOR[i % 2];
+    var headerLabel = isBad ? "✕" : isGood ? "○" : COMPARE_FALLBACK_LABEL[i % 2];
+
+    var header = figma.createFrame();
+    header.name = "generated_compare_header";
+    header.x = 0;
+    header.y = cursorY;
+    header.resize(boxWidth, headerHeight);
+    header.fills = [{ type: "SOLID", color: hexToRgb(headerColor) }];
+    header.cornerRadius = 12;
+    container.appendChild(header);
+
+    var headerText = figma.createText();
+    headerText.name = "generated_compare_header_label";
+    await applyFont(headerText, getFontFromLayer(frame, "title"));
+    headerText.characters = headerLabel;
+    headerText.fontSize = STYLE.numberFontSize;
+    headerText.fills = [{ type: "SOLID", color: hexToRgb("#FFFFFF") }];
+    headerText.textAlignHorizontal = "CENTER";
+    headerText.textAlignVertical = "CENTER";
+    headerText.resize(boxWidth, headerHeight);
+    headerText.x = 0;
+    headerText.y = 0;
+    header.appendChild(headerText);
+
+    var boxY = cursorY + headerHeight + headerGap;
+    var boxHeight = await createTextBlock(
+      container, item,
+      0, boxY,
+      boxWidth, maxBoxHeight,
       "compare_2col", frame
     );
+
+    cursorY = boxY + boxHeight + gap;
   }
 }
 
@@ -525,12 +626,11 @@ async function renderListCards(container, items, frame, cardAccentIndex) {
   }
 }
 
-// keyword_boxes 전용: 4x1 세로 나열이 아니라 그리드로 배치.
-// 4개면 2열 그리드(2x2), 3개면 2+1 그리드가 아니라 한 줄에 3칸(3x1)으로 배치한다.
+// keyword_boxes 전용 그리드 배치. 4개면 2열 그리드(2x2), 3개면 세로로 1열 3행(3x1).
 // stacked_boxes(흰 박스+왼쪽 강조선)와 헷갈리지 않도록 통짜 색 타일("keyword_tile")로 렌더링한다.
 async function renderGridCards(container, items, frame) {
   var maxItems = Math.min(items.length, 4);
-  var cols = maxItems === 3 ? 3 : 2;
+  var cols = maxItems === 3 ? 1 : 2;
   var rows = Math.ceil(maxItems / cols);
   var gap = STYLE.boxGap;
 
@@ -675,11 +775,11 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   box.x = x;
   box.y = y;
   box.resize(width, height);
-  box.fills = [{ type: "SOLID", color: hexToRgb(tileColor || (accent ? accent.bg : "#FFFFFF")) }];
+  box.fills = [{ type: "SOLID", color: hexToRgb(isKeywordTile ? "#FFFFFF" : (accent ? accent.bg : "#FFFFFF")) }];
   box.strokes = (accent || isKeywordTile) ? [] : [{ type: "SOLID", color: hexToRgb("#E5E7EB") }];
   box.strokeWeight = 1;
   box.cornerRadius = isKeywordTile ? 20 : 18;
-  box.clipsContent = isListCard;
+  box.clipsContent = isListCard || isKeywordTile;
 
   container.appendChild(box);
 
@@ -694,8 +794,35 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
     box.appendChild(bar);
   }
 
+  // keyword_boxes 전용: 상단은 색 배경 밴드(제목), 하단은 흰 배경(설명)인
+  // "태그 카드" 구성. flat 단색 타일보다 입체감·구성감을 준다.
+  var bandHeight = 0;
+  if (isKeywordTile) {
+    bandHeight = Math.max(64, Math.floor(height * 0.42));
+
+    var band = figma.createFrame();
+    band.name = "generated_tile_band";
+    band.x = 0;
+    band.y = 0;
+    band.resize(width, bandHeight);
+    band.fills = [{ type: "SOLID", color: hexToRgb(tileColor) }];
+    band.cornerRadius = 0;
+    band.clipsContent = true;
+    box.appendChild(band);
+
+    // 밴드 우상단에 살짝 삐져나온 반투명 원 — 단색 배경에 입체감을 주는 장식.
+    var orb = figma.createEllipse();
+    orb.name = "generated_tile_orb";
+    var orbSize = bandHeight * 1.3;
+    orb.resize(orbSize, orbSize);
+    orb.x = width - orbSize * 0.55;
+    orb.y = -orbSize * 0.45;
+    orb.fills = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+    orb.opacity = 0.14;
+    band.appendChild(orb);
+  }
+
   var showNumber = !!item.number;
-  var showTone = layoutType === "compare_2col" && (item.tone === "bad" || item.tone === "good");
 
   var barOffset = isListCard ? 10 : 0;
   var textLeft = 24 + barOffset;
@@ -703,49 +830,12 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   var bodyTop = isFlow ? 86 : 84;
 
   if (isKeywordTile) {
-    // 통짜 색 타일: 왼쪽 정렬 대신 가운데 정렬, 위아래 여백을 넉넉히 줘서
-    // stacked_boxes의 "왼쪽 강조선 + 왼쪽 정렬" 언어와 확실히 구분한다.
-    topPadding = 28;
-    bodyTop = 76;
+    // 제목은 색 밴드 위(세로 가운데 근처), 설명은 밴드 아래 흰 영역에 배치한다.
+    topPadding = Math.max(18, Math.floor(bandHeight * 0.32));
+    bodyTop = bandHeight + 16;
   }
 
-  if (showTone) {
-    var toneBadgeSize = 58;
-    var isBad = item.tone === "bad";
-
-    var toneBadge = figma.createFrame();
-
-    toneBadge.name = "generated_tone_badge";
-    toneBadge.x = 22;
-    toneBadge.y = 22;
-    toneBadge.resize(toneBadgeSize, toneBadgeSize);
-    toneBadge.fills = [{ type: "SOLID", color: hexToRgb(isBad ? "#F04452" : "#00AEEF") }];
-    toneBadge.cornerRadius = 14;
-    toneBadge.clipsContent = false;
-
-    box.appendChild(toneBadge);
-
-    var toneText = figma.createText();
-
-    toneText.name = "generated_tone_symbol";
-
-    await applyFont(toneText, getFontFromLayer(frame, "title"));
-
-    toneText.characters = isBad ? "X" : "O";
-    toneText.fontSize = STYLE.numberFontSize;
-    toneText.fills = [{ type: "SOLID", color: hexToRgb("#FFFFFF") }];
-    toneText.textAlignHorizontal = "CENTER";
-    toneText.textAlignVertical = "CENTER";
-    toneText.resize(toneBadgeSize, toneBadgeSize);
-    toneText.x = 0;
-    toneText.y = 0;
-
-    toneBadge.appendChild(toneText);
-
-    textLeft = 98;
-    topPadding = 24;
-    bodyTop = 92;
-  } else if (showNumber) {
+  if (showNumber) {
     var badgeSize = isFlow ? 40 : 58;
     var badgeRadius = isFlow ? 10 : 14;
 
@@ -809,15 +899,14 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   titleText.textAutoResize = "HEIGHT";
   titleText.lineHeight = { unit: "PIXELS", value: titleText.fontSize * 1.16 };
   titleText.resize(width - textLeft - 24, 10);
-  if (isKeywordTile) titleText.textAlignHorizontal = "CENTER";
 
   var bodyText = figma.createText();
 
   bodyText.name = "generated_block_body";
   bodyText.x = textLeft;
   bodyText.y = bodyTop;
-  bodyText.fills = [{ type: "SOLID", color: hexToRgb(isKeywordTile ? "#FFFFFF" : "#666666") }];
-  if (isKeywordTile) bodyText.opacity = 0.85;
+  // keyword_tile은 제목만 색 밴드 위(흰 글자)에 있고, 설명은 밴드 아래 흰 영역이라 어두운 글자.
+  bodyText.fills = [{ type: "SOLID", color: hexToRgb(isKeywordTile ? "#555555" : "#666666") }];
 
   box.appendChild(bodyText);
 
@@ -837,11 +926,20 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
 
   bodyText.textAutoResize = "HEIGHT";
   bodyText.lineHeight = { unit: "PIXELS", value: bodyText.fontSize * 1.2 };
-  if (isKeywordTile) bodyText.textAlignHorizontal = "CENTER";
   var bottomPad = isFlow ? 28 : 14;
   bodyText.resize(width - textLeft - 24, height - bodyTop - bottomPad);
 
   fitTextsInsideBlock(titleText, bodyText, width, height, textLeft, topPadding, bodyTop, layoutType);
+
+  // compare_2col은 A/B 박스가 슬롯 전체를 채우면 콘텐츠가 짧을 때 불필요하게
+  // 커 보이므로, 실제 텍스트 높이만큼만 박스를 줄인다(더 늘리지는 않는다).
+  if (layoutType === "compare_2col") {
+    var fittedHeight = Math.min(height, bodyTop + bodyText.height + bottomPad);
+    box.resize(width, fittedHeight);
+    return fittedHeight;
+  }
+
+  return height;
 }
 
 function fitTextsInsideBlock(titleText, bodyText, boxWidth, boxHeight, textLeft, topPadding, bodyTop, layoutType) {

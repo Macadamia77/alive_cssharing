@@ -147,10 +147,9 @@ function StackedBoxes({ items }: { items: CardItem[] }) {
 }
 
 /**
- * keyword_boxes: 파란 배경 타일 그리드.
- * 번호·선 없음. 키워드 중심의 밀집 배치.
+ * keyword_boxes: 색 밴드(제목) + 흰 영역(설명)으로 나뉜 "태그 카드".
+ * stacked_boxes(흰 박스+왼쪽 강조선)와 겹치지 않는 구성감을 준다.
  */
-// stacked_boxes(흰 박스+왼쪽 강조선)와 헷갈리지 않도록 통짜 색 타일로 렌더링한다.
 // Figma 플러그인의 KEYWORD_TILE_ACCENTS와 동일한 색을 순환시켜 미리보기·실제 카드가 같아 보이게 한다.
 const KEYWORD_TILE_COLORS = ["bg-[#00AEEF]", "bg-[#6366F1]", "bg-[#14B8A6]", "bg-[#F59E0B]"];
 
@@ -161,13 +160,14 @@ function KeywordBoxes({ items }: { items: CardItem[] }) {
     <div className="mt-2 flex flex-wrap gap-2">
       {items.map((raw, i) => {
         const { title, body } = getItemFields(raw);
+        const color = KEYWORD_TILE_COLORS[i % KEYWORD_TILE_COLORS.length];
         return (
-          <div
-            key={i}
-            className={`flex-1 ${minWidthClass} ${KEYWORD_TILE_COLORS[i % KEYWORD_TILE_COLORS.length]} rounded-xl px-3 py-3 text-center`}
-          >
-            <p className="text-xs font-bold text-white leading-tight">{title || `키워드 ${i + 1}`}</p>
-            {body && <p className="text-[10px] text-white/85 mt-1 leading-snug">{body}</p>}
+          <div key={i} className={`flex-1 ${minWidthClass} bg-white rounded-xl overflow-hidden border border-slate-100`}>
+            <div className={`relative ${color} px-2.5 py-2 overflow-hidden`}>
+              <div className="absolute -top-4 -right-4 w-10 h-10 rounded-full bg-white/15" aria-hidden="true" />
+              <p className="relative text-xs font-bold text-white leading-tight">{title || `키워드 ${i + 1}`}</p>
+            </div>
+            {body && <p className="text-[10px] text-slate-500 px-2.5 py-2 leading-snug">{body}</p>}
           </div>
         );
       })}

@@ -11,14 +11,10 @@
     "guide/05-hook-patterns.md",
     "guide/06-content-rules.md",
     "guide/07-figma-contract.md",
-    "guide/08-qc-checklist.md"
+    "guide/08-qc-checklist.md",
+    "guide/09-ai-tone-guide.md"
   ],
   "maxTokens": 16000,
   "disableThinking": true,
-  "imageCards": false,
-  "pipeline": {
-    "research-voice": {
-      "enabled": true
-    }
-  }
+  "imageCards": false
 }

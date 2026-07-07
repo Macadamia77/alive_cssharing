@@ -1,7 +1,7 @@
 ---
 type: guide
 role: reference-examples
-stages: [writer]
+stages: [brainstorm, writer]
 ---
 
 # CS쉐어링 실제 카드뉴스 참고 예시

@@ -1,7 +1,7 @@
 ---
 type: guide
 role: hook-patterns
-stages: [writer]
+stages: [brainstorm, writer]
 ---
 
 # 후킹(1장) 유형 참고 라이브러리

@@ -664,7 +664,7 @@ export default function HomePage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {resultChannels.map(channel => (
-                  <div key={channel} className={channel === "magazine" || resultChannels.length === 1 ? "lg:col-span-2" : ""}>
+                  <div key={channel} className={resultChannels.length === 1 ? "lg:col-span-2" : ""}>
                     <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} stage={results[channel].stage} />
                   </div>
                 ))}

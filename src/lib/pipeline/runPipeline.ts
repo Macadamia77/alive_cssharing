@@ -99,6 +99,14 @@ async function loadAllGuides(channel: ChannelKey, token?: string): Promise<Guide
       });
     } catch { /* skip */ }
   }
+  // 회사 서비스 관련 검증된 사실 정보(지어낸 서비스·수치 방지)는 인스타그램/페이스북 채널에만 포함한다.
+  // legacy 엔진(channelFiles.ts::buildSystemPrompt)과 동일한 특례 — 파일 위치가 채널 폴더 밖(data/company-facts.md)이라 collectGuideFiles로는 못 잡는다.
+  if (channel === "instagram") {
+    try {
+      const facts = await fs.readFile(join(dataRoot(), "data", "company-facts.md"), "utf-8");
+      if (facts.trim()) out.push({ path: "company-facts.md", body: facts.trim(), stages: ["writer", "content-review"] });
+    } catch { /* 없으면 스킵 */ }
+  }
   return out;
 }
 

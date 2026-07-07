@@ -219,7 +219,21 @@ export default function ChannelResultCard({ channel, status, content, stage }: P
           <div className="fade-in">
             {channel === "instagram" && tryParseInstagramJson(content) ? (
               /* 인스타그램/페이스북: 카드뉴스 미리보기 */
-              <InstagramCardPreview content={content} />
+              <div>
+                <div
+                  className="overflow-y-auto rounded-lg"
+                  style={{ maxHeight: expanded ? "none" : "420px" }}
+                >
+                  <InstagramCardPreview content={content} />
+                </div>
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800 cursor-pointer transition-colors duration-200"
+                  aria-expanded={expanded}
+                >
+                  {expanded ? "미리보기 줄이기 ▲" : "미리보기 크게 보기 ▼"}
+                </button>
+              </div>
             ) : content.trimStart().startsWith("<!DOCTYPE") || content.trimStart().startsWith("<html") ? (
               /* HTML 콘텐츠: iframe으로 렌더링 */
               <div>

@@ -33,7 +33,7 @@ stages: [image-gen]
 ## 2. 본문 카드 — 브랜드 카드 템플릿 (필수 적용)
 
 **본문에 들어가는 카드는 아래 브랜드 카드 템플릿을 기본 프레임으로 사용한다.**
-배경은 항상 옅은 회색(`#F3F3F3`), 강조색은 파란색(`#1e90d6`). 카드마다 배경·색조를 바꾸지 않는다.
+배경은 항상 옅은 회색 계열 그라디언트(2-1절 템플릿 고정값), 강조색은 파란색(`#1e90d6`). 카드마다 배경·색조를 바꾸지 않는다.
 (순백 `#ffffff`은 쓰지 않는다 — 네이버 블로그 본문 배경·컨테이너도 흰색이라 카드 경계가 안 보이게 된다.)
 
 **모든 소제목마다 카드를 만드는 것이 목적이 아니다.** 카드는 시각적 요약·강조가 실제로 도움이 되는
@@ -61,41 +61,48 @@ stages: [image-gen]
 
 ### 2-1. 브랜드 카드 HTML 템플릿
 
+> 2026-07-07 업데이트: PM 피드백(디자인이 급조된 느낌·가독성) 반영 — 플랫 배경을 미세한
+> 그라디언트로, 딱딱한 테두리를 부드러운 그림자로 바꾸고, 보조 텍스트 색을 진하게 조정해
+> 가독성을 확보했다. 강조색(#1e90d6)·800px 고정폭 등 브랜드 규칙은 그대로다.
+
 ```html
 <div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;
-            background:#F3F3F3; width:800px; padding:32px 36px 28px;
-            box-sizing:border-box; border:1px solid #e0e0e0;">
+            background:linear-gradient(175deg, #f8f9fb 0%, #eef1f5 100%);
+            width:800px; padding:44px 44px 36px; box-sizing:border-box;
+            border-radius:18px;
+            box-shadow:0 1px 2px rgba(20,32,46,.05), 0 20px 48px rgba(20,32,46,.10);">
 
   <!-- 상단 컨텍스트 바 -->
-  <div style="display:flex; align-items:center; gap:8px; margin-bottom:20px;">
-    <div style="width:3px; height:14px; background:#1e90d6; flex-shrink:0;"></div>
-    <span style="font-size:12px; color:#aaa; letter-spacing:0.3px;">
+  <div style="display:flex; align-items:center; gap:9px; margin-bottom:24px;">
+    <div style="width:3px; height:13px; background:#1e90d6; flex-shrink:0;"></div>
+    <span style="font-size:12px; color:#7d8792; letter-spacing:0.4px;">
       [글 제목 축약 — 10~20자]
     </span>
   </div>
 
   <!-- 메인 헤드라인 (검정 + 파랑 2단) -->
-  <div style="margin-bottom:8px; line-height:1.3;">
-    <div style="font-size:26px; font-weight:700; color:#1a1a1a;">[1행 — 맥락 설명, 검정]</div>
-    <div style="font-size:26px; font-weight:700; color:#1e90d6;">[2행 — 핵심 메시지, 파랑]</div>
+  <div style="margin-bottom:10px; line-height:1.32;">
+    <div style="font-size:29px; font-weight:700; color:#141d29;">[1행 — 맥락 설명, 검정]</div>
+    <div style="font-size:29px; font-weight:700; color:#1e90d6;">[2행 — 핵심 메시지, 파랑]</div>
   </div>
 
   <!-- 보조 설명 (선택) -->
-  <div style="font-size:14px; color:#777; margin-bottom:24px;">[한 줄 서브텍스트]</div>
+  <div style="font-size:14.5px; color:#626d78; line-height:1.6; margin-bottom:34px;">[한 줄 서브텍스트]</div>
 
   <!-- ===== 콘텐츠 영역 — 아래 타입 중 택일 ===== -->
   [콘텐츠 영역]
 
-  <!-- 파란 CTA 버튼 (모든 카드 필수) -->
+  <!-- 파란 CTA 버튼 (모든 카드 필수, 2줄 중 2행에만 강조 + 화살표) -->
   <div style="background:#1e90d6; color:#fff; text-align:center;
-              padding:14px 20px; border-radius:8px; font-size:15px;
-              font-weight:700; margin-top:24px; line-height:1.4;">
-    [행동 유도 문장 — 1~2줄]
+              padding:17px 20px; border-radius:11px; font-size:15px;
+              margin-top:30px; line-height:1.5;">
+    <span style="font-weight:600;">[행동 유도 문장 1행]</span><br>
+    <span style="font-weight:700;">[행동 유도 문장 2행]<span style="margin-left:2px;">→</span></span>
   </div>
 
   <!-- CS쉐어링 워터마크 -->
-  <div style="text-align:right; margin-top:12px;
-              font-size:12px; color:#ccc; font-weight:600; letter-spacing:0.5px;">
+  <div style="text-align:right; margin-top:16px;
+              font-size:11.5px; color:#9aa2ad; font-weight:600; letter-spacing:0.6px;">
     CS쉐어링
   </div>
 
@@ -135,19 +142,30 @@ stages: [image-gen]
 ```
 
 **② 번호 카드 타입**
+
+> 회색 박스 + 원형 숫자 배지 대신, 연한 대형 숫자("고스트 넘버")를 여백 장치로 쓰는 방식으로
+> 바꿨다 — 박스 나열형은 흔한 AI 인포그래픽 패턴처럼 보이기 쉽고, 이 방식이 더 에디토리얼하게
+> 읽힌다. 항목 사이는 박스 대신 얇은 구분선(첫 항목 제외)으로 나눈다.
+
 ```html
-<div style="display:flex; flex-direction:column; gap:8px;">
-  <div style="display:flex; align-items:flex-start; gap:12px;
-              background:#f7f9fc; border-radius:8px; padding:12px 16px;">
-    <div style="width:24px; height:24px; background:#1e90d6; border-radius:50%;
-                display:flex; align-items:center; justify-content:center;
-                color:#fff; font-size:12px; font-weight:700; flex-shrink:0;">1</div>
+<div style="display:flex; flex-direction:column;">
+  <div style="display:flex; align-items:flex-start; gap:18px; padding:18px 0;">
+    <div style="font-size:40px; font-weight:700; color:#0f6fae; opacity:.18;
+                line-height:1; flex-shrink:0; width:46px;">01</div>
     <div>
-      <div style="font-size:12px; color:#1e90d6; font-weight:600; margin-bottom:2px;">Why?</div>
-      <div style="font-size:14px; color:#333;">[이유 설명 1줄]</div>
+      <div style="font-size:14.5px; color:#0f6fae; font-weight:700; margin-bottom:4px;">[항목 제목]</div>
+      <div style="font-size:14px; color:#414b56; line-height:1.55;">[이유 설명 1줄 — 강조할 부분은 <b style="color:#2f3942;">굵게</b>]</div>
     </div>
   </div>
-  <!-- 2번, 3번도 동일 구조 -->
+  <div style="display:flex; align-items:flex-start; gap:18px; padding:18px 0; border-top:1px solid #e3e7ec;">
+    <div style="font-size:40px; font-weight:700; color:#0f6fae; opacity:.18;
+                line-height:1; flex-shrink:0; width:46px;">02</div>
+    <div>
+      <div style="font-size:14.5px; color:#0f6fae; font-weight:700; margin-bottom:4px;">[항목 제목]</div>
+      <div style="font-size:14px; color:#414b56; line-height:1.55;">[이유 설명 1줄]</div>
+    </div>
+  </div>
+  <!-- 3~5번도 동일 구조로 반복 (border-top 유지, 숫자만 03/04/05로) -->
 </div>
 ```
 
@@ -204,7 +222,7 @@ stages: [image-gen]
 |---|---|
 | 제작 방식 | 인라인 HTML + CSS (외부 리소스 로드 없음) |
 | 폰트 | 시스템 기본 한글 폰트 |
-| 배경 | 항상 옅은 회색(`#F3F3F3`). 순백(`#ffffff`)·어두운 배경 모두 금지 |
+| 배경 | 항상 옅은 회색 계열 미세 그라디언트(`linear-gradient(175deg, #f8f9fb, #eef1f5)`, 2-1절 템플릿 고정값). 순백(`#ffffff`)·어두운 배경 모두 금지 |
 | 강조색 | `#1e90d6` (파란색) 단일 사용. 임의로 색상 추가 금지 |
 | 카드 크기 | 폭 800px 고정 + 카드 타입별 목표 높이(1절 표) 준수 |
 | 썸네일 크기 | 720 × 720px |

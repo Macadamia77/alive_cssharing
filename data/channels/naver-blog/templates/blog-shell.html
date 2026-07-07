@@ -15,7 +15,7 @@
   h2 { font-size: 20px; font-weight: 700; color: #111;
        border-left: 5px solid #2c4a7c; padding-left: 14px; margin: 32px 0 12px; }
   h3.toc-label { font-size: 16px; font-weight: 700; color: #555; margin-bottom: 8px; }
-  p { font-size: 16px; line-height: 1.8; color: #333; }
+  p { font-size: 16px; line-height: 1.8; color: #333; text-align: center; }
   p.center-text { text-align: center; }
   ul, ol { padding-left: 24px; line-height: 1.8; }
   li { font-size: 16px; color: #333; margin-bottom: 4px; }
@@ -29,9 +29,16 @@
   th { background: #2c4a7c; color: #fff; padding: 10px 14px; border: 1px solid #1a3a6c; }
   td { padding: 10px 14px; border: 1px solid #e0e0e0; }
   tr:nth-child(even) td { background: #f5f7fa; }
-  h3.toc-label + ol { list-style: none; padding: 0; text-align: center; }
-  h3.toc-label + ol li { display: inline-flex; align-items: center;
+  h3.toc-label + ol { list-style: none; padding: 0; text-align: center;
+                      counter-reset: toc-counter; }
+  h3.toc-label + ol li { counter-increment: toc-counter;
+                          display: inline-flex; align-items: center;
                           justify-content: center; gap: 8px; margin: 4px 0; }
+  h3.toc-label + ol li::before { content: counter(toc-counter);
+                          display: inline-flex; align-items: center; justify-content: center;
+                          width: 22px; height: 22px; flex-shrink: 0;
+                          background: #2c4a7c; color: #fff; border-radius: 3px;
+                          font-size: 12px; font-weight: 700; }
   .tag { display: inline-block; background: #e8f4fd; color: #1e90d6;
          padding: 3px 10px; border-radius: 20px; font-size: 13px;
          font-weight: 600; margin: 2px; }

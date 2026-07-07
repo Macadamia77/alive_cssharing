@@ -50,6 +50,7 @@ export function resolveStages(
       disableThinking: s.disableThinking ?? false,
       skipIf: s.skipIf,
       guides: ov?.guides,
+      maxRetries: ov?.maxRetries ?? s.maxRetries,
     });
   }
   return resolved;

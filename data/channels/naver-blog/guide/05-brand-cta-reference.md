@@ -1,7 +1,7 @@
 ---
 type: guide
 role: brand-cta
-stages: [research, writer, image-gen]
+stages: [research, writer, content-review, image-gen]
 ---
 
 # 05. 브랜드 · CTA 레퍼런스

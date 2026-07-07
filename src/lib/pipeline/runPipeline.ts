@@ -25,7 +25,7 @@ import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample, addResearch } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
-import { spliceImageCards } from "./imageCards";
+import { spliceImageCards, extractCards } from "./imageCards";
 import type { CardAsset } from "./cardStorage";
 // captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
 // import하면, 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에
@@ -299,11 +299,20 @@ export async function runPipeline(
 
     } else if (kind === "reviewer") {
       if (!draft.trim()) { console.warn(`[engine] ${channel}/${stage.id}: 검수할 초안 없음 → 건너뜀`); continue; }
-      // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
-      const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
-      if (isRejected(review)) {
+      // maxRetries 미지정(기본 1)이면 기존과 완전히 동일한 동작: 반려 시 재작성 1회 후 재검수 없이 진행.
+      // maxRetries > 1인 채널(예: naver-blog)만 "재작성 → 같은 검수기로 재검수"를 반복한다.
+      const maxRewrites = Math.max(1, stage.maxRetries ?? 1);
+      for (let rewriteCount = 0; ; rewriteCount++) {
+        // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
+        const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
+        if (!isRejected(review)) {
+          console.log(rewriteCount > 0
+            ? `[engine] ${channel} · ${stage.id} 재작성 ${rewriteCount}회 후 통과`
+            : `[engine] ${channel} · ${stage.id} 통과`);
+          break;
+        }
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
-        console.log(`[engine] ${channel} · ${stage.id} 반려 → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
+        console.log(`[engine] ${channel} · ${stage.id} 반려(${rewriteCount + 1}/${maxRewrites}차) → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
         // 기각 사례 자동 저장(회피 학습용) — 초안 통째가 아니라 "검수 피드백(사유+문제 문장)"만 저장. fire-and-forget
         void addBadExample(channel, review.replace(/\s+/g, " ").slice(0, 700), stage.id);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
@@ -315,8 +324,10 @@ export async function runPipeline(
         // 재작성은 writer 모델로 (검수기 모델이 아니라)
         const revised = stripCodeFence(await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, rewriteUser, meta.maxTokens ?? 24000, false, meta.disableThinking ?? false));
         if (revised.trim()) draft = revised;
-      } else {
-        console.log(`[engine] ${channel} · ${stage.id} 통과`);
+        if (rewriteCount + 1 >= maxRewrites) {
+          if (maxRewrites > 1) console.warn(`[engine] ${channel} · ${stage.id} 최대 재작성(${maxRewrites}회) 소진 — 마지막 원고로 진행`);
+          break;
+        }
       }
 
     } else if (kind === "image") {
@@ -340,20 +351,52 @@ export async function runPipeline(
 
       const spliced = spliceImageCards(draft, cardsRaw);
       draft = spliced.draft;
-      replacedCards.push(...spliced.cards);
-      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${spliced.cards.length}/${imageMarkers.length}개 생성`);
+      let finalCards = spliced.cards;
+      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}/${imageMarkers.length}개 생성`);
 
       // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). Chromium 미설치나 업로드 실패
       // 등 어떤 이유로든 실패해도 기존 inline HTML 카드 흐름은 그대로 유지된다(폴백) —
       // 이 블록은 draft를 건드리지 않는다.
       try {
         const { captureCards } = await import("./cardCapture");
-        const { cards: captured, warnings } = await captureCards(spliced.cards);
+        let { cards: captured, warnings } = await captureCards(finalCards);
+
+        // 높이 편차 게이트: 예전엔 경고만 남기고 그대로 발행했다 — 실제로 한 번 다시
+        // 만들어보게 해서 편차를 줄인다(최대 1회, 비용 통제 목적). 개선이 없으면 원본 유지.
         if (warnings.length > 0) {
-          console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
+          console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고 → 재조정 1회 시도:\n  ${warnings.join("\n  ")}`);
+          try {
+            const heightReport = captured.slice(1)
+              .map((c, i) => `본문 카드 ${i + 1}: ${c.heightPx}px`).join(", ");
+            const retryUser =
+              `[주제]\n${topic}\n\n` +
+              `방금 만든 본문 카드들을 실제로 캡처한 높이입니다 — ${heightReport}\n` +
+              `이 중 편차(최댓값-최솟값)가 기준(200px)을 넘었습니다. 아래 원본 카드들을 참고해 ` +
+              `콘텐츠 분량(문장 길이·리스트 항목 수)만 조정해서 카드끼리 높이가 비슷해지도록 다시 ` +
+              `작성하세요. 카드 개수(${finalCards.length}개)·순서·CARD_START/END 형식은 그대로 유지하세요.\n\n` +
+              `[원본 카드 전체]\n${finalCards.map(c => `<!-- CARD_START -->\n${c}\n<!-- CARD_END -->`).join("\n\n")}`;
+            const retryRaw = stripCodeFence(await call(sp, sk, sm, system, retryUser, maxTok, false, true));
+            const retryCards = extractCards(retryRaw);
+            if (retryCards.length === finalCards.length) {
+              const { cards: recaptured, warnings: warnings2 } = await captureCards(retryCards);
+              if (warnings2.length < warnings.length) {
+                console.log(`[engine] ${channel} · ${stage.id} 재조정 성공 — 높이 게이트 통과`);
+                finalCards = retryCards;
+                captured = recaptured;
+                warnings = warnings2;
+              } else {
+                console.warn(`[engine] ${channel} · ${stage.id} 재조정해도 개선 없음 — 원본 카드 유지`);
+              }
+            } else {
+              console.warn(`[engine] ${channel} · ${stage.id} 재조정 응답 카드 개수 불일치(${retryCards.length}/${finalCards.length}) — 원본 카드 유지`);
+            }
+          } catch (e) {
+            console.warn(`[engine] ${channel} · ${stage.id} 높이 재조정 시도 실패 — 원본 카드 유지: ${e instanceof Error ? e.message : e}`);
+          }
         } else {
           console.log(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 통과`);
         }
+
         if (onCardAssets) {
           const { uploadCards } = await import("./cardStorage");
           const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -363,6 +406,8 @@ export async function runPipeline(
       } catch (e) {
         console.warn(`[engine] ${channel} · ${stage.id} 서버사이드 캡처/업로드 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
       }
+
+      replacedCards.push(...finalCards);
     }
   }
 

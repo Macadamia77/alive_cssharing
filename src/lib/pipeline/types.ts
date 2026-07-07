@@ -22,6 +22,8 @@ export interface StageDef {
   /** 특정 조건이면 이 단계 건너뜀 (예: "draftProvided") */
   skipIf?: "draftProvided";
   enabled?: boolean;          // 전역 기본 on/off (기본 true)
+  /** reviewer 단계 전용: 반려 시 최대 재작성 횟수 (기본 1 = 재작성 1회 후 재검수 없이 진행) */
+  maxRetries?: number;
 }
 
 /** 전역 파이프라인 정의 파일 구조 */
@@ -37,6 +39,7 @@ export interface StageOverride {
   maxTokens?: number;
   roles?: string[];
   guides?: string[];
+  maxRetries?: number;
 }
 
 /** 채널이 최종 결과물을 내는 형식 */
@@ -57,4 +60,5 @@ export interface ResolvedStage {
   disableThinking: boolean;
   skipIf?: "draftProvided";
   guides?: string[];
+  maxRetries?: number;
 }

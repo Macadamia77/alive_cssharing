@@ -41,6 +41,8 @@ export interface ChannelMeta {
     maxTokens?: number;
     roles?: string[];
     guides?: string[];
+    /** reviewer 단계 전용: 반려 시 최대 재작성 횟수 (기본 1) */
+    maxRetries?: number;
   }>;
 }
 

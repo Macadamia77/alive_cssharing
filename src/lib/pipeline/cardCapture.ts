@@ -45,6 +45,10 @@ async function captureOne(
     viewport: isThumbnail
       ? { width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }
       : { width: BODY_CARD_WIDTH, height: 1200 },
+    // 레티나/고DPI 화면에서 텍스트·그라디언트가 흐려 보이는 문제 방지.
+    // 카드가 단색 배경 + 텍스트 위주라 2배 해상도로도 파일 용량 증가폭이 작다
+    // (실측: 1x 기준 16~29KB → 500KB 제한에 여유가 커서 안전하게 올릴 수 있음).
+    deviceScaleFactor: 2,
   });
   try {
     await page.setContent(wrapHtml(html), { waitUntil: "networkidle" });

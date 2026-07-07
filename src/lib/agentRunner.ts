@@ -202,7 +202,14 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
 
   checks["중간카드_subtitle"] = middles.every((c) => {
     const sub: string = c.subtitle || "";
-    return !sub.includes("\n") && sub.length <= 26;
+    return !sub.includes("\n") && sub.length <= 25;
+  }) ? "PASS" : "FAIL";
+
+  // 첫 장/CTA 카드도 중간 카드와 동일한 title(줄당 15자)·subtitle(줄바꿈 없이 25자) 글자수 제한을 지킨다.
+  checks["첫장_CTA_글자수"] = [first, last].filter(Boolean).every((c) => {
+    const title: string = c.title || "";
+    const sub: string = c.subtitle || "";
+    return title.split("\n").every((l) => l.length <= 15) && !sub.includes("\n") && sub.length <= 25;
   }) ? "PASS" : "FAIL";
 
   const layoutRange: Record<string, [number, number]> = {
@@ -269,16 +276,20 @@ function applyMechanicalFixes(parsed: any): void {
 }
 
 // Figma에서 수동으로 바로 고칠 수 있는 항목은 전체 판정을 막지 않는다 (재생성 낭비 방지).
-const NON_BLOCKING_AUTO_CHECKS = new Set(["highlight_text_일치"]);
+// highlight_text_일치: 강조 위치는 Figma에서 수동 조정 가능. 중간카드_title_줄바꿈: 글자수·줄바꿈도 Figma 텍스트박스에서 손으로 바로 고칠 수 있는 사소한 항목이라 재생성까지 갈 필요 없음.
+const NON_BLOCKING_AUTO_CHECKS = new Set(["highlight_text_일치", "중간카드_title_줄바꿈"]);
 
+// 정성 평가 30점 만점 기준. PASS 26점 이상(평균 4.33/5), 조건부 PASS 22~25점, 그 미만은 FAIL.
+// LLM 채점 특성상 30점 만점(전 항목 5점)을 매번 요구하면 사실상 통과가 불가능해져 기준 자체가 무의미해지므로,
+// "웬만하면 잘 썼다"를 걸러내는 실질적 상한선으로 26점을 쓴다.
 function computeVerdict(autoChecks: Record<string, "PASS" | "FAIL">, scores: Record<string, number>): "PASS" | "조건부 PASS" | "FAIL" {
   const blockingChecks = Object.entries(autoChecks).filter(([key]) => !NON_BLOCKING_AUTO_CHECKS.has(key));
   const autoAllPass = blockingChecks.every(([, v]) => v === "PASS");
   const values = Object.values(scores).filter((v) => typeof v === "number");
   const sum = values.reduce((a, b) => a + b, 0);
   const serviceZero = (scores["서비스_범위_정확성"] ?? 5) === 0;
-  if (!autoAllPass || sum < 20 || serviceZero) return "FAIL";
-  if (sum >= 24) return "PASS";
+  if (!autoAllPass || sum < 22 || serviceZero) return "FAIL";
+  if (sum >= 26) return "PASS";
   return "조건부 PASS";
 }
 
@@ -310,6 +321,19 @@ async function runQcAndRegenerate(
     // 없으면 서비스 실존 여부 대조 없이 진행
   }
 
+  async function callProvider(system: string, user: string, tokens: number): Promise<string | null> {
+    try {
+      if (provider === "claude") return await callClaude(pc.apiKey, pc.model, system, user, tokens);
+      if (provider === "gemini") return await callGemini(pc.apiKey, pc.model, system, user, tokens, disableThinking);
+      if (provider === "openai") return await callOpenAI(pc.apiKey, pc.model, system, user);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  const CRITERIA_NAMES = ["문장_자연스러움", "서비스_범위_정확성", "고객_문제_반영", "채널_적합성", "후킹력", "CTA_연결성"];
+
   async function scoreOnce(text: string): Promise<{ parsed: any; report: any } | null> {
     const parsed = extractJsonObject(text);
     if (!parsed || !Array.isArray(parsed.cards)) return null;
@@ -333,103 +357,94 @@ ${qcChecklist}
 [방금 생성된 콘텐츠]
 ${text}
 
-아래 JSON 형식으로만 답하라. 다른 설명은 출력하지 마라.
+각 항목마다 왜 그 점수를 줬는지 근거(reason)를 반드시 대고, 5점 미만이면 구체적으로 어떻게 고치면 되는지 대안(suggestion)까지 써라 — 채점자 마음대로 점수만 던지지 말 것. 아래 JSON 형식으로만 답하라. 다른 설명은 출력하지 마라.
 {
-  "scores": {
-    "문장_자연스러움": 1~5 정수,
-    "서비스_범위_정확성": 0~5 정수,
-    "고객_문제_반영": 1~5 정수,
-    "채널_적합성": 1~5 정수,
-    "후킹력": 1~5 정수,
-    "CTA_연결성": 1~5 정수
-  },
-  "feedback": "무엇이 문제고 어떻게 고쳐야 하는지 한국어로 2~3문장"
+  "criteria": [
+    { "name": "문장_자연스러움", "score": 1~5 정수, "reason": "이 점수를 준 근거 1문장", "suggestion": "5점 미만이면 구체적 수정 방향, 5점이면 빈 문자열" },
+    { "name": "서비스_범위_정확성", "score": 0~5 정수, "reason": "...", "suggestion": "..." },
+    { "name": "고객_문제_반영", "score": 1~5 정수, "reason": "...", "suggestion": "..." },
+    { "name": "채널_적합성", "score": 1~5 정수, "reason": "...", "suggestion": "..." },
+    { "name": "후킹력", "score": 1~5 정수, "reason": "...", "suggestion": "..." },
+    { "name": "CTA_연결성", "score": 1~5 정수, "reason": "...", "suggestion": "..." }
+  ]
 }`;
 
-    let verdictRaw: string;
-    try {
-      if (provider === "claude") verdictRaw = await callClaude(pc.apiKey, pc.model, "", qcPrompt, 1024);
-      else if (provider === "gemini") verdictRaw = await callGemini(pc.apiKey, pc.model, "", qcPrompt, 1024, disableThinking);
-      else if (provider === "openai") verdictRaw = await callOpenAI(pc.apiKey, pc.model, "", qcPrompt);
-      else return null;
-    } catch {
-      return null;
-    }
+    const verdictRaw = await callProvider("", qcPrompt, 1600);
+    if (!verdictRaw) return null;
 
-    let scoreResult: { scores?: Record<string, number>; feedback?: string };
+    let scoreResult: { criteria?: Array<{ name: string; score: number; reason?: string; suggestion?: string }> };
     try {
       scoreResult = JSON.parse(stripCodeFence(verdictRaw));
     } catch {
       return null;
     }
 
-    const scores = scoreResult.scores ?? {};
-    const values = Object.values(scores).filter((v) => typeof v === "number");
-    const average = values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100 : 0;
+    const criteria = Array.isArray(scoreResult.criteria) ? scoreResult.criteria : [];
+    const scores: Record<string, number> = {};
+    for (const c of criteria) {
+      if (c && CRITERIA_NAMES.includes(c.name) && typeof c.score === "number") scores[c.name] = c.score;
+    }
+    const values = Object.values(scores);
+    const sum = values.reduce((a, b) => a + b, 0);
+    const average = values.length ? Math.round((sum / values.length) * 100) / 100 : 0;
     const verdict = computeVerdict(autoChecks, scores);
 
     return {
       parsed,
-      report: { auto_checks: autoChecks, scores, average, verdict, feedback: scoreResult.feedback ?? "" },
+      report: { auto_checks: autoChecks, criteria, scores, sum, average, verdict },
     };
   }
 
-  let first = await scoreOnce(content);
-  if (!first) {
+  function attemptRank(report: any): number {
+    // 재시도를 다 써도 PASS가 안 나올 때 "그나마 나은" 시도를 고르기 위한 순위 (높을수록 좋음).
+    if (report.verdict === "PASS") return 2_000 + report.sum;
+    if (report.verdict === "조건부 PASS") return 1_000 + report.sum;
+    return report.sum;
+  }
+
+  const MAX_ATTEMPTS = 3;
+  const attempts: Array<{ parsed: any; report: any }> = [];
+
+  // 1차 시도: 이미 생성된 content 그대로 채점.
+  let current: { parsed: any; report: any } | null = await scoreOnce(content);
+  if (!current) {
     // JSON으로 파싱조차 안 되면(잡담·설명 텍스트 섞임, 이스케이프 깨짐 등) 검수를 건너뛰고
     // 깨진 콘텐츠를 그대로 사용자에게 보여주지 않는다 — JSON만 다시 출력하도록 1회 재시도한다.
     const retryMessage = `${userMessage}
 
 [중요] 방금 응답이 유효한 JSON으로 파싱되지 않았습니다. 설명 문구나 코드펜스 밖 텍스트 없이, 순수한 JSON 객체 하나만 다시 출력하세요.`;
-
-    let reformatted: string | null = null;
-    try {
-      if (provider === "claude") reformatted = await callClaude(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok);
-      else if (provider === "gemini") reformatted = await callGemini(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok, disableThinking);
-      else if (provider === "openai") reformatted = await callOpenAI(pc.apiKey, pc.model, systemPrompt, retryMessage);
-    } catch {
-      reformatted = null;
-    }
-
-    if (reformatted) {
-      first = await scoreOnce(reformatted);
-      if (!first) return reformatted; // 재시도도 파싱 실패면 그거라도 최선으로 반환
-    } else {
-      return content;
-    }
+    const reformatted = await callProvider(systemPrompt, retryMessage, maxTok);
+    if (!reformatted) return content;
+    current = await scoreOnce(reformatted);
+    if (!current) return reformatted; // 재시도도 파싱 실패면 그거라도 최선으로 반환
   }
+  attempts.push(current);
 
-  let finalParsed = first.parsed;
-  let finalReport = first.report;
-
-  if (finalReport.verdict === "FAIL") {
+  // FAIL이면 최대 MAX_ATTEMPTS번까지(1차 포함) 반복 재작성. PASS/조건부 PASS가 나오면 바로 멈춘다.
+  while (attempts[attempts.length - 1].report.verdict === "FAIL" && attempts.length < MAX_ATTEMPTS) {
+    const last = attempts[attempts.length - 1];
+    const criteriaFeedback = (last.report.criteria as Array<{ name: string; score: number; reason?: string; suggestion?: string }> ?? [])
+      .filter((c) => typeof c.score === "number" && c.score < 5)
+      .map((c) => `- ${c.name} (${c.score}점): ${c.reason ?? ""} → 개선: ${c.suggestion || "구체적으로 다시 작성"}`)
+      .join("\n");
     const retryMessage = `${userMessage}
 
 [검수 피드백 — 반드시 반영해서 전체를 다시 작성]
-이전 시도가 검수를 통과하지 못했습니다 (평균 ${finalReport.average}/5, 자동검수: ${JSON.stringify(finalReport.auto_checks)}).
-${finalReport.feedback || "검수 기준 미달"}
+이전 시도가 검수를 통과하지 못했습니다 (합계 ${last.report.sum}/30, 자동검수: ${JSON.stringify(last.report.auto_checks)}).
+${criteriaFeedback || "검수 기준 미달"}
 전체 콘텐츠를 처음부터 다시 생성하세요.`;
 
-    let retried: string | null = null;
-    try {
-      if (provider === "claude") retried = await callClaude(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok);
-      else if (provider === "gemini") retried = await callGemini(pc.apiKey, pc.model, systemPrompt, retryMessage, maxTok, disableThinking);
-      else if (provider === "openai") retried = await callOpenAI(pc.apiKey, pc.model, systemPrompt, retryMessage);
-    } catch {
-      retried = null;
-    }
-
-    if (retried) {
-      const second = await scoreOnce(retried);
-      if (second) {
-        finalParsed = second.parsed;
-        finalReport = second.report;
-      }
-    }
+    const retried = await callProvider(systemPrompt, retryMessage, maxTok);
+    if (!retried) break;
+    const next = await scoreOnce(retried);
+    if (!next) break;
+    attempts.push(next);
   }
 
-  finalParsed.qc_report = finalReport;
-  return "```json\n" + JSON.stringify(finalParsed, null, 2) + "\n```";
+  const best = attempts.reduce((a, b) => (attemptRank(b.report) > attemptRank(a.report) ? b : a));
+  best.report.attempts = attempts.length;
+  best.parsed.qc_report = best.report;
+  return "```json\n" + JSON.stringify(best.parsed, null, 2) + "\n```";
 }
 
 // ─── 통합 파이프라인 엔진(runPipeline) 결과물에 인스타그램 전용 구조 검수를 덧씌운다 ───

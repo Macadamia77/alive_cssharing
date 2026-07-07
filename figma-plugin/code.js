@@ -26,9 +26,9 @@ var STYLE = {
 };
 
 var TEXT_LIMITS = {
-  coverTitleLine: 10,
+  coverTitleLine: 15,
   middleTitleLine: 15,
-  middleSubtitle: 26,
+  middleSubtitle: 25,
   listTitle: 12,
   listBody: 28,
   compareTitle: 8,

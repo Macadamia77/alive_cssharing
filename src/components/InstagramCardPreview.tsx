@@ -26,12 +26,21 @@ interface SNSCard {
   design_point: string;
 }
 
+interface QcCriterion {
+  name: string;
+  score: number;
+  reason?: string;
+  suggestion?: string;
+}
+
 interface QcReport {
   auto_checks?: Record<string, "PASS" | "FAIL">;
+  criteria?: QcCriterion[];
   scores?: Record<string, number>;
+  sum?: number;
   average?: number;
   verdict?: "PASS" | "조건부 PASS" | "FAIL";
-  feedback?: string;
+  attempts?: number;
 }
 
 interface SNSJson {
@@ -411,10 +420,9 @@ function verdictStyle(verdict?: string) {
 }
 
 function QcReportView({ report }: { report: QcReport }) {
-  const scores = report.scores ?? {};
+  const criteria = report.criteria ?? [];
   const autoChecks = report.auto_checks ?? {};
-  const scoreEntries = Object.entries(scores);
-  const sum = scoreEntries.reduce((acc, [, v]) => acc + (typeof v === "number" ? v : 0), 0);
+  const sum = report.sum ?? criteria.reduce((acc, c) => acc + (typeof c.score === "number" ? c.score : 0), 0);
 
   return (
     <div className="px-4 py-3 space-y-3">
@@ -423,16 +431,25 @@ function QcReportView({ report }: { report: QcReport }) {
           {report.verdict ?? "미판정"}
         </span>
         <span className="text-sm font-bold text-slate-700">
-          평균 {report.average ?? "-"}/5 <span className="text-slate-400 font-normal">(합계 {sum}/{scoreEntries.length * 5})</span>
+          합계 {sum}/30
+          {report.attempts && report.attempts > 1 && (
+            <span className="text-slate-400 font-normal"> ({report.attempts}번 시도 중 최선)</span>
+          )}
         </span>
       </div>
 
-      {scoreEntries.length > 0 && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-          {scoreEntries.map(([key, val]) => (
-            <div key={key} className="flex items-center justify-between text-xs">
-              <span className="text-slate-500">{key.replace(/_/g, " ")}</span>
-              <span className={`font-bold ${val >= 4 ? "text-emerald-600" : val >= 2 ? "text-amber-600" : "text-red-600"}`}>{val}/5</span>
+      {criteria.length > 0 && (
+        <div className="space-y-1.5">
+          {criteria.map((c) => (
+            <div key={c.name} className="text-xs border border-slate-100 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600 font-medium">{c.name.replace(/_/g, " ")}</span>
+                <span className={`font-bold ${c.score >= 4 ? "text-emerald-600" : c.score >= 2 ? "text-amber-600" : "text-red-600"}`}>{c.score}/5</span>
+              </div>
+              {c.reason && <p className="text-slate-500 mt-0.5">{c.reason}</p>}
+              {c.score < 5 && c.suggestion && (
+                <p className="text-blue-600 mt-0.5">→ {c.suggestion}</p>
+              )}
             </div>
           ))}
         </div>
@@ -454,10 +471,6 @@ function QcReportView({ report }: { report: QcReport }) {
             ))}
           </div>
         </div>
-      )}
-
-      {report.feedback && (
-        <p className="text-xs text-slate-500 pt-2 border-t border-slate-100 leading-relaxed">{report.feedback}</p>
       )}
     </div>
   );

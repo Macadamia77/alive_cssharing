@@ -76,9 +76,19 @@ export async function PUT(
     // 채널 기본 모델(provider) / 모델 ID — 빈 값이면 해제(기본으로)
     if (body.model !== undefined) meta.model = body.model || undefined;
     if (body.modelId !== undefined) meta.modelId = body.modelId || undefined;
-    // 단계별 오버라이드 병합 (예: { "skeleton": { "enabled": true } })
+    // 단계별 오버라이드 병합 — stage-id 단위로 "깊게" 병합(다른 필드 보존).
+    // patch 값이 null이면 해당 필드 삭제(= "기본으로 되돌리기").
     if (body.pipeline && typeof body.pipeline === "object") {
-      meta.pipeline = { ...(meta.pipeline ?? {}), ...body.pipeline };
+      const merged = { ...(meta.pipeline ?? {}) } as Record<string, Record<string, unknown>>;
+      for (const [stageId, patch] of Object.entries(body.pipeline as Record<string, Record<string, unknown>>)) {
+        const next = { ...(merged[stageId] ?? {}) };
+        for (const [k, v] of Object.entries(patch ?? {})) {
+          if (v === null) delete next[k];   // null → 필드 제거(기본으로)
+          else next[k] = v;
+        }
+        merged[stageId] = next;
+      }
+      meta.pipeline = merged as typeof meta.pipeline;
     }
     await updateChannelMeta(channel, meta, token);
     return NextResponse.json({ ok: true, meta });

@@ -63,7 +63,7 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   const [fbList, setFbList] = useState<{ id: string; text: string }[]>([]);
   const [exList, setExList] = useState<{ id: string; note: string | null; content: string }[]>([]);
   const [badList, setBadList] = useState<{ id: string; reason: string | null; content: string }[]>([]);
-  const [modelIds, setModelIds] = useState<string[]>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
   const [newExample, setNewExample] = useState("");
   const [exAdding, setExAdding] = useState(false);
 
@@ -80,12 +80,18 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
 
   useEffect(() => { void reload(); }, [reload]);
 
-  // 모델 ID 자동완성 목록 로드
+  // 모델 목록 로드 (provider별)
   useEffect(() => {
     fetch("/api/models").then(r => r.json())
-      .then(d => setModelIds(Array.from(new Set(Object.values(d.models ?? {}).flat() as string[]))))
+      .then(d => setModelsByProvider(d.models ?? {}))
       .catch(() => {});
   }, []);
+
+  // 선택된 provider의 모델 목록 (provider 미지정이면 전체)
+  const modelsFor = (prov?: string): string[] => {
+    if (prov && modelsByProvider[prov]) return modelsByProvider[prov];
+    return Array.from(new Set(Object.values(modelsByProvider).flat()));
+  };
 
   // 학습 데이터 로드 (섹션 펼칠 때만)
   useEffect(() => {
@@ -175,7 +181,8 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
     void save({ pipeline: { [s.id]: { guides: next } } }, `${s.id}-guides`);
   };
 
-  const saveStageField = (s: StageDef, patch: Partial<StageOverride>) => {
+  // patch 값에 null 허용(= "기본으로 되돌리기" 신호. 서버가 해당 필드 삭제)
+  const saveStageField = (s: StageDef, patch: Record<string, unknown>) => {
     setMeta(m => m ? { ...m, pipeline: { ...(m.pipeline ?? {}), [s.id]: { ...(m.pipeline?.[s.id] ?? {}), ...patch } } } : m);
     void save({ pipeline: { [s.id]: patch } }, `${s.id}-model`);
   };
@@ -192,10 +199,6 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
 
   return (
     <div className="max-w-7xl mx-auto glass-card rounded-2xl mb-4 overflow-hidden">
-      {/* 모델 ID 자동완성 목록 (모든 모델칸 공용) */}
-      <datalist id="csai-model-ids">
-        {modelIds.map(m => <option key={m} value={m} />)}
-      </datalist>
       {/* 헤더 */}
       <button onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50/50 cursor-pointer text-left">
@@ -233,21 +236,21 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                 <span className="text-[10px] text-slate-500 font-medium">채널 기본 모델</span>
                 <select
                   value={meta?.model ?? ""}
-                  onChange={e => save({ model: e.target.value || undefined }, "channel-model")}
+                  onChange={e => save({ model: e.target.value || null }, "channel-model")}
                   className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer">
                   <option value="">기본(생성 시 선택)</option>
                   <option value="claude">claude</option>
                   <option value="openai">openai</option>
                   <option value="gemini">gemini</option>
                 </select>
-                <input
-                  type="text" list="csai-model-ids" placeholder="모델 ID (선택 · 목록에서 고르거나 입력)"
-                  defaultValue={meta?.modelId ?? ""}
-                  onBlur={e => {
-                    const v = e.target.value.trim();
-                    if (v !== (meta?.modelId ?? "")) save({ modelId: v || undefined }, "channel-model");
-                  }}
-                  className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs flex-1 min-w-[160px] focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                <select
+                  value={meta?.modelId ?? ""}
+                  onChange={e => save({ modelId: e.target.value || null }, "channel-model")}
+                  className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer flex-1 min-w-[160px]">
+                  <option value="">모델 ID: 기본</option>
+                  {modelsFor(meta?.model).map(m => <option key={m} value={m}>{m}</option>)}
+                  {meta?.modelId && !modelsFor(meta?.model).includes(meta.modelId) && <option value={meta.modelId}>{meta.modelId} (현재)</option>}
+                </select>
                 {saving === "channel-model" && <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
                 <span className="text-[10px] text-slate-400 w-full">이 채널 전 단계의 기본 모델. 단계별 "조각 N"의 모델이 있으면 그게 우선합니다.</span>
               </div>
@@ -324,23 +327,32 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                           {/* 모델 티어링 오버라이드 */}
                           <div className="mt-2.5 pt-2 border-t border-slate-100/70 flex items-center gap-2 text-xs flex-wrap">
                             <span className="text-[10px] text-slate-400">모델</span>
-                            <select
-                              value={meta?.pipeline?.[s.id]?.model ?? ""}
-                              onChange={e => saveStageField(s, { model: e.target.value || undefined })}
-                              className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer">
-                              <option value="">기본</option>
-                              <option value="claude">claude</option>
-                              <option value="openai">openai</option>
-                              <option value="gemini">gemini</option>
-                            </select>
-                            <input
-                              type="text" list="csai-model-ids" placeholder="모델 ID (선택 · 목록/입력)"
-                              defaultValue={meta?.pipeline?.[s.id]?.modelId ?? ""}
-                              onBlur={e => {
-                                const v = e.target.value.trim();
-                                if (v !== (meta?.pipeline?.[s.id]?.modelId ?? "")) saveStageField(s, { modelId: v || undefined });
-                              }}
-                              className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs flex-1 min-w-[150px] focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                            {(() => {
+                              const sm = meta?.pipeline?.[s.id]?.model;
+                              const smid = meta?.pipeline?.[s.id]?.modelId;
+                              const list = modelsFor(sm);
+                              return (
+                                <>
+                                  <select
+                                    value={sm ?? ""}
+                                    onChange={e => saveStageField(s, { model: e.target.value || null })}
+                                    className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer">
+                                    <option value="">기본</option>
+                                    <option value="claude">claude</option>
+                                    <option value="openai">openai</option>
+                                    <option value="gemini">gemini</option>
+                                  </select>
+                                  <select
+                                    value={smid ?? ""}
+                                    onChange={e => saveStageField(s, { modelId: e.target.value || null })}
+                                    className="border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer flex-1 min-w-[150px]">
+                                    <option value="">모델 ID: 기본</option>
+                                    {list.map(m => <option key={m} value={m}>{m}</option>)}
+                                    {smid && !list.includes(smid) && <option value={smid}>{smid} (현재)</option>}
+                                  </select>
+                                </>
+                              );
+                            })()}
                             {saving === `${s.id}-model` && <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />}
                           </div>
                         </div>

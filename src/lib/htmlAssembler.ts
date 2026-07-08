@@ -43,7 +43,7 @@ const FALLBACK_SHELL =
   '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">' +
   '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
   "<title>{{TITLE}}</title></head><body>" +
-  '<div class="container"><h1>{{TITLE}}</h1>{{BODY}}</div></body></html>';
+  '<div class="container">{{THUMBNAIL}}<h1>{{TITLE}}</h1>{{BODY}}</div></body></html>';
 
 const EMOJI_START = /^\p{Extended_Pictographic}️?/u;
 
@@ -82,6 +82,13 @@ function hashtagHtml(trimmed: string): string {
 
 function isCardPlaceholder(trimmed: string): boolean {
   return /^<!--\s*HTML_CARD_\d+\s*-->$/.test(trimmed);
+}
+
+// 카드 인덱스 0은 항상 글 대표 썸네일이다(writer.md/image-gen 프롬프트 규약). 본문 흐름 어디에
+// [IMAGE:] 마커가 있었든, 조립 단계에서 이 자리는 제목 위(최상단)로 끌어올린다 — 그래야
+// "블로그 대표 이미지"가 실제로 글의 대표 위치(제목보다 위)에 노출된다.
+function isThumbnailPlaceholder(trimmed: string): boolean {
+  return /^<!--\s*HTML_CARD_0\s*-->$/.test(trimmed);
 }
 
 // LLM이 남긴 마크다운 코드펜스 줄(```html, ```, ~~~ 등). 본문에 그대로 노출되면 안 되므로 스킵한다.
@@ -155,6 +162,7 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
     const htmlParts: string[] = [];
     let pendingList: PendingList | null = null;
     let pendingTable: string[][] | null = null; // 누적 행(첫 행 = 헤더)
+    let thumbnailPlaceholder: string | null = null; // HTML_CARD_0 (최초 1개만 채택)
 
     const flushList = () => {
       if (!pendingList) return;
@@ -192,6 +200,12 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
         continue;
       }
       flushTable();
+
+      if (isThumbnailPlaceholder(trimmed) && thumbnailPlaceholder === null) {
+        flushList();
+        thumbnailPlaceholder = trimmed;
+        continue;
+      }
 
       if (isCardPlaceholder(trimmed)) { flushList(); htmlParts.push(trimmed); continue; }
 
@@ -251,17 +265,29 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
     const bodyHtml = htmlParts.join("\n");
     if (!bodyHtml.trim()) return null;
 
-    return renderDocument(title, bodyHtml, shell);
+    const thumbnailHtml = thumbnailPlaceholder
+      ? `<div style="margin:0 0 32px 0;text-align:center;">${thumbnailPlaceholder}</div>`
+      : "";
+    return renderDocument(title, bodyHtml, thumbnailHtml, shell);
   } catch (e) {
     console.warn(`[htmlAssembler] 변환 실패, draft 원문으로 폴백: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }
 
-function renderDocument(title: string, bodyHtml: string, shell?: string): string {
+function renderDocument(title: string, bodyHtml: string, thumbnailHtml: string, shell?: string): string {
   // 셸 템플릿의 플레이스홀더를 치환한다. 치환값에 $ 등이 있어도 안전하도록 replacer 함수를 사용.
   const tpl = shell && shell.trim() ? shell : FALLBACK_SHELL;
-  return tpl
+  let out = tpl
     .replace(/\{\{TITLE\}\}/g, () => title)
     .replace(/\{\{BODY\}\}/g, () => bodyHtml);
+
+  if (out.includes("{{THUMBNAIL}}")) {
+    out = out.replace(/\{\{THUMBNAIL\}\}/g, () => thumbnailHtml);
+  } else if (thumbnailHtml) {
+    // 구버전 셸(Supabase/GitHub에 캐시된, {{THUMBNAIL}} 플레이스홀더가 없는 버전) 호환:
+    // <h1> 태그 바로 앞에 직접 삽입해 최상단 노출을 보장한다.
+    out = out.replace(/<h1[^>]*>/, (m) => `${thumbnailHtml}\n${m}`);
+  }
+  return out;
 }

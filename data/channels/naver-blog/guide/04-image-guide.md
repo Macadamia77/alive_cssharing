@@ -103,12 +103,12 @@ stages: [image-gen]
   <!-- ===== 콘텐츠 영역 — 아래 타입 중 택일 ===== -->
   [콘텐츠 영역]
 
-  <!-- 파란 CTA 버튼 (모든 카드 필수, 2줄 중 2행에만 강조 + 화살표) -->
+  <!-- 파란 CTA 버튼 (모든 카드 필수, 2줄 중 2행에만 강조 — 화살표 등 장식 기호 없이 텍스트만) -->
   <div style="background:#1e90d6; color:#fff; text-align:center;
               padding:17px 20px; border-radius:11px; font-size:15px;
               margin-top:30px; line-height:1.5;">
     <span style="font-weight:600;">[행동 유도 문장 1행]</span><br>
-    <span style="font-weight:700;">[행동 유도 문장 2행]<span style="margin-left:2px;">→</span></span>
+    <span style="font-weight:700;">[행동 유도 문장 2행]</span>
   </div>
 
   <!-- CS쉐어링 워터마크 -->

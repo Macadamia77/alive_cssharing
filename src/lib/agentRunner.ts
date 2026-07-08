@@ -666,7 +666,7 @@ export async function runAgentPipeline(
 
   // 리서치 단계에 넣을 가이드 — _meta.json의 researchGuides (없으면 코드 기본값)
   const RESEARCH_GUIDE_KEYS = new Set(
-    meta?.researchGuides ?? ["guide/06-brand-cta-reference.md", "guide/08-naver-seo.md"]
+    meta?.researchGuides ?? ["guide/05-brand-cta-reference.md", "guide/06-naver-seo.md"]
   );
   const researchGuideKeys = guideKeys.filter(k => RESEARCH_GUIDE_KEYS.has(k));
 
@@ -705,9 +705,8 @@ export async function runAgentPipeline(
     "guide/04-image-guide.md",
     "guide/02-examples.md",
     "guide/03-quality-check.md",
-    "guide/08-naver-seo.md",
-    "guide/06-brand-cta-reference.md",
-    "guide/07-recatch-style.md",
+    "guide/06-naver-seo.md",
+    "guide/05-brand-cta-reference.md",
     "guide/01-writing-guide.md", // 핵심 규칙 — 가장 마지막에 배치
   ];
   const writeGuideKeys = [

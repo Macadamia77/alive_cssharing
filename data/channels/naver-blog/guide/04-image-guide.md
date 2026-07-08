@@ -44,7 +44,7 @@ stages: [image-gen]
 ## 2. 본문 카드 — 브랜드 카드 템플릿 (필수 적용)
 
 **본문에 들어가는 카드는 아래 브랜드 카드 템플릿을 기본 프레임으로 사용한다.**
-배경은 항상 옅은 회색 계열 그라디언트(2-1절 템플릿 고정값), 강조색은 파란색(`#1e90d6`). 카드마다 배경·색조를 바꾸지 않는다.
+배경은 항상 옅은 회색 계열 그라디언트(2-1절 템플릿 고정값), 강조색은 딥 네이비블루(`#234b73`). 카드마다 배경·색조를 바꾸지 않는다.
 (순백 `#ffffff`은 쓰지 않는다 — 네이버 블로그 본문 배경·컨테이너도 흰색이라 카드 경계가 안 보이게 된다.)
 
 **모든 소제목마다 카드를 만드는 것이 목적이 아니다.** 카드는 시각적 요약·강조가 실제로 도움이 되는
@@ -88,27 +88,29 @@ stages: [image-gen]
 
 > 2026-07-07 업데이트: PM 피드백(디자인이 급조된 느낌·가독성) 반영 — 플랫 배경을 미세한
 > 그라디언트로, 딱딱한 테두리를 부드러운 그림자로 바꾸고, 보조 텍스트 색을 진하게 조정해
-> 가독성을 확보했다. 강조색(#1e90d6)·800px 고정폭 등 브랜드 규칙은 그대로다.
+> 가독성을 확보했다. 800px 고정폭 등 나머지 브랜드 규칙은 그대로다.
+> 2026-07-08 업데이트: 강조색을 스카이블루(#1e90d6)에서 딥 네이비블루(#234b73)로 교체하고,
+> 배경 그라디언트를 살짝 더 진하게, CTA 버튼을 평면 채우기 대신 그라디언트+그림자로 바꿨다.
 
 ```html
 <div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;
-            background:linear-gradient(175deg, #f8f9fb 0%, #eef1f5 100%);
+            background:linear-gradient(175deg, #f1f3f7 0%, #e3e8ee 100%);
             width:800px; padding:44px 44px 36px; box-sizing:border-box;
             border-radius:18px;
-            box-shadow:0 1px 2px rgba(20,32,46,.05), 0 20px 48px rgba(20,32,46,.10);">
+            box-shadow:0 1px 2px rgba(20,32,46,.06), 0 20px 48px rgba(20,32,46,.11);">
 
   <!-- 상단 컨텍스트 바 -->
   <div style="display:flex; align-items:center; gap:9px; margin-bottom:24px;">
-    <div style="width:3px; height:13px; background:#1e90d6; flex-shrink:0;"></div>
+    <div style="width:3px; height:13px; background:#234b73; flex-shrink:0;"></div>
     <span style="font-size:12px; color:#7d8792; letter-spacing:0.4px;">
       [글 제목 축약 — 10~20자]
     </span>
   </div>
 
-  <!-- 메인 헤드라인 (검정 + 파랑 2단) -->
+  <!-- 메인 헤드라인 (검정 + 네이비블루 2단) -->
   <div style="margin-bottom:10px; line-height:1.32;">
     <div style="font-size:29px; font-weight:700; color:#141d29;">[1행 — 맥락 설명, 검정]</div>
-    <div style="font-size:29px; font-weight:700; color:#1e90d6;">[2행 — 핵심 메시지, 파랑]</div>
+    <div style="font-size:29px; font-weight:700; color:#234b73;">[2행 — 핵심 메시지, 네이비블루]</div>
   </div>
 
   <!-- 보조 설명 (선택) -->
@@ -117,10 +119,13 @@ stages: [image-gen]
   <!-- ===== 콘텐츠 영역 — 아래 타입 중 택일 ===== -->
   [콘텐츠 영역]
 
-  <!-- 파란 CTA 버튼 (모든 카드 필수, 2줄 중 2행에만 강조 — 화살표 등 장식 기호 없이 텍스트만) -->
-  <div style="background:#1e90d6; color:#fff; text-align:center;
+  <!-- CTA 버튼 (모든 카드 필수, 2줄 중 2행에만 강조 — 화살표 등 장식 기호 없이 텍스트만).
+       평면 단색 채우기는 밋밋해 보인다는 피드백으로 같은 색 계열 그라디언트+그림자로 입체감을 준다 -->
+  <div style="background:linear-gradient(160deg, #4a80ab 0%, #16324f 100%);
+              color:#fff; text-align:center;
               padding:17px 20px; border-radius:11px; font-size:15px;
-              margin-top:30px; line-height:1.5;">
+              margin-top:30px; line-height:1.5;
+              box-shadow:0 14px 24px -12px rgba(15,42,66,.55), inset 0 1px 0 rgba(255,255,255,.18);">
     <span style="font-weight:600;">[행동 유도 문장 1행]</span><br>
     <span style="font-weight:700;">[행동 유도 문장 2행]</span>
   </div>
@@ -158,9 +163,9 @@ stages: [image-gen]
     "[고객 발화 2]"
   </div>
 </div>
-<div style="text-align:center; font-size:22px; color:#1e90d6; margin-bottom:12px;">»</div>
-<div style="background:#e8f4fd; border-radius:8px;
-            padding:14px 16px; font-size:14px; color:#1e90d6;
+<div style="text-align:center; font-size:22px; color:#234b73; margin-bottom:12px;">»</div>
+<div style="background:#eef1f5; border-radius:8px;
+            padding:14px 16px; font-size:14px; color:#234b73;
             font-weight:600; text-align:center;">
   [핵심 결론 1~2줄]
 </div>
@@ -170,23 +175,25 @@ stages: [image-gen]
 
 > 회색 박스 + 원형 숫자 배지 대신, 연한 대형 숫자("고스트 넘버")를 여백 장치로 쓰는 방식으로
 > 바꿨다 — 박스 나열형은 흔한 AI 인포그래픽 패턴처럼 보이기 쉽고, 이 방식이 더 에디토리얼하게
-> 읽힌다. 항목 사이는 박스 대신 얇은 구분선(첫 항목 제외)으로 나눈다.
+> 읽힌다. 항목 사이는 박스 대신 얇은 구분선(첫 항목 제외)으로 나눈다. 구분선 색(`#c9d2dc`)은
+> 카드 배경(2-1절)보다 한 단계 더 진하게 잡아야 한다 — 배경과 거의 같은 톤이면 구분선이 묻혀서
+> 안 보이게 된다.
 
 ```html
 <div style="display:flex; flex-direction:column;">
   <div style="display:flex; align-items:flex-start; gap:18px; padding:18px 0;">
-    <div style="font-size:40px; font-weight:700; color:#0f6fae; opacity:.18;
+    <div style="font-size:40px; font-weight:700; color:#234b73; opacity:.18;
                 line-height:1; flex-shrink:0; width:46px;">01</div>
     <div>
-      <div style="font-size:14.5px; color:#0f6fae; font-weight:700; margin-bottom:4px;">[항목 제목]</div>
+      <div style="font-size:14.5px; color:#234b73; font-weight:700; margin-bottom:4px;">[항목 제목]</div>
       <div style="font-size:14px; color:#414b56; line-height:1.55;">[이유 설명 1줄 — 강조할 부분은 <b style="color:#2f3942;">굵게</b>]</div>
     </div>
   </div>
-  <div style="display:flex; align-items:flex-start; gap:18px; padding:18px 0; border-top:1px solid #e3e7ec;">
-    <div style="font-size:40px; font-weight:700; color:#0f6fae; opacity:.18;
+  <div style="display:flex; align-items:flex-start; gap:18px; padding:18px 0; border-top:1px solid #c9d2dc;">
+    <div style="font-size:40px; font-weight:700; color:#234b73; opacity:.18;
                 line-height:1; flex-shrink:0; width:46px;">02</div>
     <div>
-      <div style="font-size:14.5px; color:#0f6fae; font-weight:700; margin-bottom:4px;">[항목 제목]</div>
+      <div style="font-size:14.5px; color:#234b73; font-weight:700; margin-bottom:4px;">[항목 제목]</div>
       <div style="font-size:14px; color:#414b56; line-height:1.55;">[이유 설명 1줄]</div>
     </div>
   </div>
@@ -197,18 +204,20 @@ stages: [image-gen]
 **③ 배지 + 2열 카드 타입**
 ```html
 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
-  <span style="background:#e8f4fd; color:#1e90d6; border-radius:20px;
-               padding:6px 14px; font-size:13px; font-weight:600;">[태그 1]</span>
-  <span style="background:#e8f4fd; color:#1e90d6; border-radius:20px;
-               padding:6px 14px; font-size:13px; font-weight:600;">[태그 2]</span>
+  <span style="display:flex; align-items:center; height:26px; background:#eef1f5; color:#234b73;
+               border:1px solid rgba(35,75,115,.18); border-radius:20px;
+               padding:0 13px; font-size:13px; font-weight:600;">[태그 1]</span>
+  <span style="display:flex; align-items:center; height:26px; background:#eef1f5; color:#234b73;
+               border:1px solid rgba(35,75,115,.18); border-radius:20px;
+               padding:0 13px; font-size:13px; font-weight:600;">[태그 2]</span>
 </div>
 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
   <div style="background:#f7f9fc; border-radius:8px; padding:14px;">
-    <div style="font-size:13px; font-weight:700; color:#1e90d6; margin-bottom:4px;">[특징 A]</div>
+    <div style="font-size:13px; font-weight:700; color:#234b73; margin-bottom:4px;">[특징 A]</div>
     <div style="font-size:12px; color:#555;">[설명 1줄]</div>
   </div>
   <div style="background:#f7f9fc; border-radius:8px; padding:14px;">
-    <div style="font-size:13px; font-weight:700; color:#1e90d6; margin-bottom:4px;">[특징 B]</div>
+    <div style="font-size:13px; font-weight:700; color:#234b73; margin-bottom:4px;">[특징 B]</div>
     <div style="font-size:12px; color:#555;">[설명 1줄]</div>
   </div>
 </div>
@@ -217,22 +226,22 @@ stages: [image-gen]
 **④ 비교 표 타입**
 ```html
 <table style="width:100%; border-collapse:collapse; font-size:13px;">
-  <tr style="background:#1e90d6; color:#fff;">
-    <th style="padding:10px 12px; text-align:left; border:1px solid #1a7bc4;">구분</th>
-    <th style="padding:10px 12px; text-align:center; border:1px solid #1a7bc4;">[대상 A]</th>
-    <th style="padding:10px 12px; text-align:center; border:1px solid #1a7bc4;">[대상 B]</th>
+  <tr style="background:#234b73; color:#fff;">
+    <th style="padding:10px 12px; text-align:left; border:1px solid #1a3a58;">구분</th>
+    <th style="padding:10px 12px; text-align:center; border:1px solid #1a3a58;">[대상 A]</th>
+    <th style="padding:10px 12px; text-align:center; border:1px solid #1a3a58;">[대상 B]</th>
   </tr>
   <tr>
     <td style="padding:10px 12px; border:1px solid #e0e0e0;">[항목 1]</td>
     <td style="padding:10px 12px; text-align:center; border:1px solid #e0e0e0; color:#888;">[값]</td>
-    <td style="padding:10px 12px; text-align:center; border:1px solid #e0e0e0; color:#1e90d6; font-weight:700;">[값]</td>
+    <td style="padding:10px 12px; text-align:center; border:1px solid #e0e0e0; color:#234b73; font-weight:700;">[값]</td>
   </tr>
 </table>
 ```
 
 **⑤ 소제목 요약 카드 타입**
 ```html
-<div style="background:#f0f7ff; border-left:4px solid #1e90d6;
+<div style="background:#eef1f5; border-left:4px solid #234b73;
             border-radius:0 8px 8px 0; padding:16px 20px; font-size:15px;
             color:#1a1a1a; line-height:1.6;">
   [소제목의 핵심 메시지 — 1~2문장, 구체적 수치 포함]
@@ -247,8 +256,8 @@ stages: [image-gen]
 |---|---|
 | 제작 방식 | 인라인 HTML + CSS (외부 리소스 로드 없음) |
 | 폰트 | 시스템 기본 한글 폰트 |
-| 배경 | 항상 옅은 회색 계열 미세 그라디언트(`linear-gradient(175deg, #f8f9fb, #eef1f5)`, 2-1절 템플릿 고정값). 순백(`#ffffff`)·어두운 배경 모두 금지 |
-| 강조색 | `#1e90d6` (파란색) 단일 사용. 임의로 색상 추가 금지 |
+| 배경 | 항상 옅은 회색 계열 미세 그라디언트(`linear-gradient(175deg, #f1f3f7, #e3e8ee)`, 2-1절 템플릿 고정값). 순백(`#ffffff`)·어두운 배경 모두 금지 |
+| 강조색 | `#234b73` (딥 네이비블루) 단일 사용. 임의로 색상 추가 금지 — 단, CTA 버튼은 이 색 계열 안에서 그라디언트를 쓸 수 있다(2-1절 참고) |
 | 카드 크기 | 폭 800px 고정 + 카드 타입별 목표 높이(1절 표) 준수 |
 | 여백 스케일 | 8px 배수(8·16·24·32·44px)만 사용 — 스케일 밖 임의 수치 금지 (2절 참고) |
 | 썸네일 크기 | 720 × 720px |

@@ -1,0 +1,30 @@
+<!--
+  대표 썸네일(720×720) 결정적 템플릿. guide/04-image-guide.md 1절 디자인 스펙을 그대로 마크업화한
+  것 — LLM이 매번 손으로 다시 그리는 대신 이 파일을 그대로 불러와 {{TITLE}}/{{SUBTITLE}}/{{MASCOT}}
+  세 곳만 치환한다. 디자인을 바꾸고 싶으면 이 파일만 수정하면 되고(코드 재배포 불필요), 이후
+  생성되는 모든 글의 썸네일에 즉시 동일하게 적용된다.
+-->
+<div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;
+            background:#18A0E8; width:720px; height:720px; padding:60px;
+            box-sizing:border-box; position:relative; display:flex; flex-direction:column;
+            justify-content:center; align-items:center; border:8px solid #ffffff;">
+
+  <!-- 좌상단 흰 모서리 장식선 -->
+  <div style="position:absolute; left:40px; top:40px; width:40px; height:40px; border-left:4px solid #ffffff; border-top:4px solid #ffffff;"></div>
+
+  <!-- 우상단 로고 자리 (로고 이미지 자산이 생기기 전까지는 국문 텍스트 고정) -->
+  <div style="position:absolute; right:40px; top:40px; color:#ffffff; font-size:18px; font-weight:700; letter-spacing:1px;">CS쉐어링</div>
+
+  <!-- 중앙 상단 흰 캡슐 배지 (부제/카테고리) -->
+  <div style="background:#ffffff; color:#18A0E8; border-radius:20px; padding:6px 20px; font-size:16px; font-weight:700; margin-bottom:24px; box-shadow:0 4px 6px rgba(0,0,0,0.1); max-width:600px; text-align:center;">
+    {{SUBTITLE}}
+  </div>
+
+  <!-- 글 제목 (흰색, 굵게, 최대 2줄) -->
+  <div style="color:#ffffff; font-size:36px; font-weight:800; text-align:center; line-height:1.4; word-break:keep-all; max-width:600px; margin-bottom:40px;">
+    {{TITLE}}
+  </div>
+
+  <!-- 좌하단 실제 브랜드 마스코트 -->
+  <img src="{{MASCOT}}" style="position:absolute; left:32px; bottom:28px; width:150px; height:auto;">
+</div>

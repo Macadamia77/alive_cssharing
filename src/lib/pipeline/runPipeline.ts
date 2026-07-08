@@ -26,7 +26,8 @@ import { parseFrontmatter } from "./frontmatter";
 import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample, addResearch } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
-import { spliceImageCards, extractCards } from "./imageCards";
+import { spliceImageCardsFromArray, extractCards } from "./imageCards";
+import { buildThumbnailCard, extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
 import type { CardAsset } from "./cardStorage";
 // captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
 // import하면, 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에
@@ -408,39 +409,52 @@ export async function runPipeline(
         console.log(`[engine] ${channel} · ${stage.id}: [IMAGE:...] 마커 없음 → 건너뜀`);
         continue;
       }
-      const system = persona + stageGuides;
-      const user =
-        `[주제]\n${topic}\n\n` +
-        `아래 draft 전문에서 [IMAGE: ...] 마커(${imageMarkers.length}개)들의 설명에 부합하는 브랜드 카드 HTML+CSS 코드를 작성하세요.\n\n` +
-        `[작성 규칙]\n` +
-        `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
-        `- 오직 각 마커에 들어갈 HTML 카드 코드블록들만 순서대로 작성하십시오.\n` +
-        `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
-        `- **첫 번째 마커 (인덱스 0)**는 블로그 대표 썸네일이므로, 720x720px 크기에 파란색/하늘색 배경(#18A0E8)을 가진 대표 이미지 프레임을 사용하십시오. ` +
-        `프레임 좌하단에 실제 브랜드 마스코트를 반드시 배치하십시오: ` +
-        `\`<img src="{{MASCOT}}" style="position:absolute; left:32px; bottom:28px; width:150px; height:auto;">\` ` +
-        `— src 값은 반드시 문자열 \`{{MASCOT}}\`를 그대로(따옴표 안에 다른 경로·설명으로 바꾸지 말고) 남겨두십시오. 이 토큰은 나중에 코드가 실제 이미지로 치환합니다. 카드 최상위 요소에는 \`position:relative;\`를 지정해 이 절대좌표 배치가 카드 안에서만 적용되게 하십시오.\n` +
-        `- **두 번째 마커 이후 (인덱스 1 이상)**는 본문 요약 및 자료 카드들이므로, 800px 너비에 옅은 회색 계열 그라디언트 배경(guide 2-1절 템플릿 고정값)을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오 (순백 #ffffff 금지 — 네이버 블로그 본문 배경도 흰색이라 카드 경계가 사라집니다). 이 카드들에는 \`{{MASCOT}}\`를 쓰지 마십시오(마스코트는 대표 썸네일 전용).\n\n` +
-        `[입력 draft 전문]\n${draft}`;
-      const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
 
-      const spliced = spliceImageCards(draft, cardsRaw);
+      // 대표 썸네일(마커 인덱스 0)은 더 이상 LLM이 손으로 그리지 않는다 — 매번 색상·레이아웃·
+      // 마커 문법이 조금씩 달라지며 같은 계열 버그(디자인 어설픔·정체불명 토큰 유출·최상단
+      // 배치 실패)가 반복 재발했기 때문. templates/thumbnail-template.html에 고정된 마크업을
+      // 그대로 불러와 제목·부제·마스코트 세 값만 결정적으로 치환한다(thumbnailBuilder.ts).
+      let thumbnailCard: string;
+      try {
+        const [template, mascotB64] = await Promise.all([
+          readChannelFile(channel, "templates/thumbnail-template.html", token),
+          readChannelFileBase64(channel, "assets/mascot.png", token),
+        ]);
+        thumbnailCard = buildThumbnailCard(
+          template,
+          extractDraftTitle(draft),
+          extractThumbnailSubtitle(draft),
+          `data:image/png;base64,${mascotB64}`
+        );
+      } catch (e) {
+        console.warn(`[engine] ${channel} · ${stage.id} 썸네일 템플릿/마스코트 로드 실패: ${e instanceof Error ? e.message : e}`);
+        thumbnailCard = "";
+      }
+
+      const bodyMarkerCount = imageMarkers.length - 1;
+      const system = persona + stageGuides;
+      let bodyCards: string[] = [];
+
+      if (bodyMarkerCount > 0) {
+        const user =
+          `[주제]\n${topic}\n\n` +
+          `아래 draft 전문에는 [IMAGE: ...] 마커가 총 ${imageMarkers.length}개 있습니다. ` +
+          `**첫 번째 마커(대표 썸네일)는 별도 로직이 이미 처리했으므로 작성하지 마십시오.** ` +
+          `두 번째 마커부터 마지막 마커까지, 순서대로 총 ${bodyMarkerCount}개 카드의 HTML+CSS 코드만 작성하세요.\n\n` +
+          `[작성 규칙]\n` +
+          `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
+          `- 오직 각 마커에 들어갈 HTML 카드 코드블록만 순서대로 작성하십시오 (총 ${bodyMarkerCount}개, 첫 번째 마커분 제외).\n` +
+          `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
+          `- 800px 너비에 옅은 회색 계열 그라디언트 배경(guide 2-1절 템플릿 고정값)을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오 (순백 #ffffff 금지 — 네이버 블로그 본문 배경도 흰색이라 카드 경계가 사라집니다). 이 카드들에는 \`{{MASCOT}}\`를 쓰지 마십시오(마스코트는 대표 썸네일 전용).\n\n` +
+          `[입력 draft 전문]\n${draft}`;
+        const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
+        bodyCards = extractCards(cardsRaw);
+      }
+
+      const spliced = spliceImageCardsFromArray(draft, [thumbnailCard, ...bodyCards]);
       draft = spliced.draft;
       let finalCards = spliced.cards;
       console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}/${imageMarkers.length}개 생성`);
-
-      // 대표 썸네일(카드 인덱스 0)의 {{MASCOT}} 토큰을 실제 브랜드 마스코트 이미지(base64 데이터
-      // URI)로 치환한다. 모델에게 거대한 base64 문자열을 그대로 베껴쓰게 하는 대신 짧은 토큰만
-      // 쓰게 하고 여기서 실제 값으로 바꿔 넣는 방식 — 재현성이 높고 토큰 낭비가 없다.
-      if (finalCards[0]?.includes("{{MASCOT}}")) {
-        try {
-          const mascotB64 = await readChannelFileBase64(channel, "assets/mascot.png", token);
-          finalCards[0] = finalCards[0].replace(/\{\{MASCOT\}\}/g, `data:image/png;base64,${mascotB64}`);
-        } catch (e) {
-          console.warn(`[engine] ${channel} · ${stage.id} 마스코트 자산 로드 실패, 플레이스홀더 제거: ${e instanceof Error ? e.message : e}`);
-          finalCards[0] = finalCards[0].replace(/<img[^>]*\{\{MASCOT\}\}[^>]*>/g, "").replace(/\{\{MASCOT\}\}/g, "");
-        }
-      }
 
       // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). Chromium 미설치나 업로드 실패
       // 등 어떤 이유로든 실패해도 기존 inline HTML 카드 흐름은 그대로 유지된다(폴백) —
@@ -454,6 +468,9 @@ export async function runPipeline(
         if (warnings.length > 0) {
           console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고 → 재조정 1회 시도:\n  ${warnings.join("\n  ")}`);
           try {
+            // 대표 썸네일(finalCards[0])은 결정적 템플릿이라 높이 변동이 없으므로 재조정
+            // 대상에서 제외한다 — 본문 카드(인덱스 1+)만 다시 쓰게 한다.
+            const bodyOnly = finalCards.slice(1);
             const heightReport = captured.slice(1)
               .map((c, i) => `본문 카드 ${i + 1}: ${c.heightPx}px`).join(", ");
             const retryUser =
@@ -461,11 +478,12 @@ export async function runPipeline(
               `방금 만든 본문 카드들을 실제로 캡처한 높이입니다 — ${heightReport}\n` +
               `이 중 편차(최댓값-최솟값)가 기준(200px)을 넘었습니다. 아래 원본 카드들을 참고해 ` +
               `콘텐츠 분량(문장 길이·리스트 항목 수)만 조정해서 카드끼리 높이가 비슷해지도록 다시 ` +
-              `작성하세요. 카드 개수(${finalCards.length}개)·순서·CARD_START/END 형식은 그대로 유지하세요.\n\n` +
-              `[원본 카드 전체]\n${finalCards.map(c => `<!-- CARD_START -->\n${c}\n<!-- CARD_END -->`).join("\n\n")}`;
+              `작성하세요. 카드 개수(${bodyOnly.length}개)·순서·CARD_START/END 형식은 그대로 유지하세요.\n\n` +
+              `[원본 카드 전체]\n${bodyOnly.map(c => `<!-- CARD_START -->\n${c}\n<!-- CARD_END -->`).join("\n\n")}`;
             const retryRaw = stripCodeFence(await call(sp, sk, sm, system, retryUser, maxTok, false, true));
-            const retryCards = extractCards(retryRaw);
-            if (retryCards.length === finalCards.length) {
+            const retryBodyCards = extractCards(retryRaw);
+            if (retryBodyCards.length === bodyOnly.length) {
+              const retryCards = [finalCards[0], ...retryBodyCards];
               const { cards: recaptured, warnings: warnings2 } = await captureCards(retryCards);
               if (warnings2.length < warnings.length) {
                 console.log(`[engine] ${channel} · ${stage.id} 재조정 성공 — 높이 게이트 통과`);
@@ -476,7 +494,7 @@ export async function runPipeline(
                 console.warn(`[engine] ${channel} · ${stage.id} 재조정해도 개선 없음 — 원본 카드 유지`);
               }
             } else {
-              console.warn(`[engine] ${channel} · ${stage.id} 재조정 응답 카드 개수 불일치(${retryCards.length}/${finalCards.length}) — 원본 카드 유지`);
+              console.warn(`[engine] ${channel} · ${stage.id} 재조정 응답 카드 개수 불일치(${retryBodyCards.length}/${bodyOnly.length}) — 원본 카드 유지`);
             }
           } catch (e) {
             console.warn(`[engine] ${channel} · ${stage.id} 높이 재조정 시도 실패 — 원본 카드 유지: ${e instanceof Error ? e.message : e}`);

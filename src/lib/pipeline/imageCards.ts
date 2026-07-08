@@ -32,14 +32,15 @@ export class ImageCardCountMismatchError extends Error {
 }
 
 // draft 안의 [IMAGE: ...] 마커를 <!-- HTML_CARD_N --> 플레이스홀더로 치환하고,
-// 실제 카드 HTML은 별도 배열로 반환한다.
+// 실제 카드 HTML은 별도 배열로 반환한다. cards[0](대표 썸네일)은 더 이상 LLM이 쓰지 않고
+// thumbnailBuilder.ts가 결정적으로 조립해 이 배열의 맨 앞에 미리 채워 넣은 상태로 들어온다 —
+// 이 함수는 그 배열을 그대로 마커 순서에 맞춰 꽂아 넣기만 한다.
 // 카드 개수가 마커 개수보다 적으면(응답 잘림 등) 원본 마커 텍스트를 그대로 흘려보내지 않고
 // ImageCardCountMismatchError를 던진다 — 호출자가 이 단계를 명시적 실패로 처리하도록 강제한다.
-export function spliceImageCards(
+export function spliceImageCardsFromArray(
   draft: string,
-  cardsRaw: string
+  cards: string[]
 ): { draft: string; cards: string[] } {
-  const cards = extractCards(cardsRaw);
   const markers = [...draft.matchAll(IMAGE_MARKER_RE)];
 
   if (cards.length < markers.length) {
@@ -57,4 +58,11 @@ export function spliceImageCards(
   });
 
   return { draft: spliced, cards: replacedCards };
+}
+
+export function spliceImageCards(
+  draft: string,
+  cardsRaw: string
+): { draft: string; cards: string[] } {
+  return spliceImageCardsFromArray(draft, extractCards(cardsRaw));
 }

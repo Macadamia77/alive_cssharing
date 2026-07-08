@@ -80,15 +80,17 @@ function hashtagHtml(trimmed: string): string {
   return `<p>${tags.join(" ")}</p>`;
 }
 
-function isCardPlaceholder(trimmed: string): boolean {
-  return /^<!--\s*HTML_CARD_\d+\s*-->$/.test(trimmed);
-}
+// 예전엔 "줄 전체가 정확히 이 코멘트여야만" 인식했다 — LLM이 같은 줄에 정체불명의
+// `{{THUMBNAIL}}` 같은 토큰을 덧붙여 출력하면(hl/center/hand 마커 패턴을 오인해 지어낸 것으로
+// 추정) 정확히 일치하지 않아 플레이스홀더를 못 찾고, 그 결과 (1) 대표 썸네일이 최상단으로
+// 끌어올려지지 않고 원래 위치에 그대로 남고 (2) 지어낸 토큰 텍스트가 그대로 본문에 노출되는
+// 두 가지 버그가 동시에 발생했다. 줄 안 어디에 있든 코멘트만 추출하고 나머지 텍스트는 버린다 —
+// 이런 잡텍스트는 실제 콘텐츠가 아니라 마커 형식 혼동이므로 보존할 필요가 없다.
+const CARD_PLACEHOLDER_RE = /<!--\s*HTML_CARD_(\d+)\s*-->/;
 
-// 카드 인덱스 0은 항상 글 대표 썸네일이다(writer.md/image-gen 프롬프트 규약). 본문 흐름 어디에
-// [IMAGE:] 마커가 있었든, 조립 단계에서 이 자리는 제목 위(최상단)로 끌어올린다 — 그래야
-// "블로그 대표 이미지"가 실제로 글의 대표 위치(제목보다 위)에 노출된다.
-function isThumbnailPlaceholder(trimmed: string): boolean {
-  return /^<!--\s*HTML_CARD_0\s*-->$/.test(trimmed);
+function extractCardPlaceholder(trimmed: string): { index: number; full: string } | null {
+  const m = trimmed.match(CARD_PLACEHOLDER_RE);
+  return m ? { index: parseInt(m[1], 10), full: m[0] } : null;
 }
 
 // LLM이 남긴 마크다운 코드펜스 줄(```html, ```, ~~~ 등). 본문에 그대로 노출되면 안 되므로 스킵한다.
@@ -201,13 +203,16 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
       }
       flushTable();
 
-      if (isThumbnailPlaceholder(trimmed) && thumbnailPlaceholder === null) {
+      const cardMatch = extractCardPlaceholder(trimmed);
+      if (cardMatch) {
         flushList();
-        thumbnailPlaceholder = trimmed;
+        if (cardMatch.index === 0 && thumbnailPlaceholder === null) {
+          thumbnailPlaceholder = cardMatch.full;
+        } else {
+          htmlParts.push(cardMatch.full);
+        }
         continue;
       }
-
-      if (isCardPlaceholder(trimmed)) { flushList(); htmlParts.push(trimmed); continue; }
 
       const rich = richBlockHtml(trimmed);
       if (rich) { flushList(); htmlParts.push(rich); continue; }
@@ -225,7 +230,12 @@ export function assembleNaverBlogHtml(draftOutput: string, shell?: string): stri
       }
 
       if (trimmed.startsWith("✅") || trimmed === "-" || trimmed.startsWith("- ")) {
-        const text = trimmed.replace(/^(✅|-)\s*/, "");
+        // "- [ ] 항목"/"- [x] 항목" (마크다운 체크박스 문법)을 그대로 두면 대괄호가 텍스트로
+        // 노출된다 — 자가 점검 체크리스트 등에서 writer가 종종 이 문법을 쓰므로 시각적
+        // 체크박스 기호로 치환한다.
+        const text = trimmed
+          .replace(/^(✅|-)\s*/, "")
+          .replace(/^\[[ xX]\]\s*/, (m) => (/x/i.test(m) ? "☑ " : "☐ "));
         if (!pendingList || pendingList.type !== "ul") { flushList(); pendingList = { type: "ul", items: [] }; }
         pendingList.items.push(applyInline(text));
         continue;

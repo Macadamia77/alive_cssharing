@@ -131,6 +131,41 @@ function guidesText(selected: GuideFile[]): string {
     .join("");
 }
 
+// ─── 부분 패치 적용 (전체 재작성 대신 find/replace만) ───────────
+// 검수 반려 시 글 전체를 다시 쓰게 하면 출력 토큰이 커서(naver-blog는 최대 24,000 토큰) 느리다 —
+// 실측 결과 content-review·tone-review가 각각 최대 3회씩 재시도되면 25분 넘게 걸릴 수 있었다.
+// 재시도 횟수가 많은 채널(현재는 naver-blog)만, "무엇을 어떻게 고칠지"를 작은 JSON 패치로만 받아
+// 코드에서 문자열 치환한다 — 출력 길이가 훨씬 짧아 응답 속도가 크게 준다.
+interface TextPatch { find: string; replace: string; }
+
+function parsePatches(raw: string): TextPatch[] | null {
+  const m = raw.trim().match(/\[[\s\S]*\]/); // 모델이 설명을 덧붙였을 경우를 대비해 배열 부분만 추출
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[0]);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (p): p is TextPatch => typeof p?.find === "string" && typeof p?.replace === "string" && p.find.length > 0
+    );
+  } catch {
+    return null;
+  }
+}
+
+// patches를 draft에 순서대로 적용. find가 draft에 없으면(모델이 원문을 살짝 다르게 인용)
+// 그 항목만 건너뛰고 나머지는 계속 적용한다 — 일부 실패로 전체를 포기하지 않는다.
+function applyPatches(draft: string, patches: TextPatch[]): { draft: string; appliedCount: number } {
+  let result = draft;
+  let appliedCount = 0;
+  for (const { find, replace } of patches) {
+    if (result.includes(find)) {
+      result = result.replace(find, replace);
+      appliedCount++;
+    }
+  }
+  return { draft: result, appliedCount };
+}
+
 // ─── 검수 결과 판정 (JSON verdict 또는 텍스트 PASS/FAIL/REJECT) ─
 function isRejected(reviewOutput: string): boolean {
   const s = reviewOutput.trim();
@@ -303,6 +338,10 @@ export async function runPipeline(
       // maxRetries 미지정(기본 1)이면 기존과 완전히 동일한 동작: 반려 시 재작성 1회 후 재검수 없이 진행.
       // maxRetries > 1인 채널(예: naver-blog)만 "재작성 → 같은 검수기로 재검수"를 반복한다.
       const maxRewrites = Math.max(1, stage.maxRetries ?? 1);
+      // naver-blog는 재시도가 최대 3회×2단계라 매번 전체 재작성이면 25분 넘게 걸릴 수 있다(실측).
+      // 부분 패치로 전환해 응답 길이를 줄인다 — 다른 채널은 재시도가 1회뿐이라(위 주석 참고)
+      // 기존 전체 재작성 방식을 그대로 둔다(동작 영향 없음).
+      const usePatchRewrite = channel === "naver-blog";
       for (let rewriteCount = 0; ; rewriteCount++) {
         // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
         const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
@@ -317,14 +356,46 @@ export async function runPipeline(
         // 기각 사례 자동 저장(회피 학습용) — 초안 통째가 아니라 "검수 피드백(사유+문제 문장)"만 저장. fire-and-forget
         void addBadExample(channel, review.replace(/\s+/g, " ").slice(0, 700), stage.id);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
-        const rewriteUser =
-          `[주제]\n${topic}\n\n` +
-          (contextParts.length ? `[참고 자료]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
-          `[이전 원고]\n${draft}\n\n` +
-          `[검수 피드백 — 아래 문제를 모두 해결해 전체를 다시 작성]\n${review}`;
-        // 재작성은 writer 모델로 (검수기 모델이 아니라)
-        const revised = stripCodeFence(await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, rewriteUser, meta.maxTokens ?? 24000, false, meta.disableThinking ?? false));
-        if (revised.trim()) draft = revised;
+
+        if (usePatchRewrite) {
+          const patchUser =
+            `[주제]\n${topic}\n\n` +
+            `[현재 원고]\n${draft}\n\n` +
+            `[검수 피드백 — 아래 문제를 해결하기 위한 부분 수정만 제시]\n${review}\n\n` +
+            `[출력 형식 — 반드시 이 형식만 출력, 다른 설명·마크다운·코드펜스 금지]\n` +
+            `전체 원고를 다시 쓰지 마십시오. 지적된 문제를 고치는 데 필요한 부분만 정확히 짚어 아래 ` +
+            `JSON 배열로만 출력하십시오. "find"는 [현재 원고]에 등장하는 문자열과 공백·줄바꿈까지 ` +
+            `정확히 일치해야 하며, "replace"는 그 자리를 대체할 새 문자열입니다. 문제와 무관한 부분은 ` +
+            `절대 건드리지 마십시오.\n` +
+            `[{"find": "원고에 실제로 있는 문장 그대로", "replace": "수정된 문장"}, ...]`;
+          // 재작성은 writer 모델로 (검수기 모델이 아니라). 패치는 출력이 짧으므로 사고모드를 끄고
+          // 토큰 예산도 작게 잡아 속도를 최대화한다.
+          const patchRaw = stripCodeFence(
+            await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, patchUser, 4096, false, true)
+          );
+          const patches = parsePatches(patchRaw);
+          if (patches && patches.length > 0) {
+            const { draft: patched, appliedCount } = applyPatches(draft, patches);
+            if (appliedCount > 0) {
+              draft = patched;
+              console.log(`[engine] ${channel} · ${stage.id} 부분 패치 ${appliedCount}/${patches.length}건 적용`);
+            } else {
+              console.warn(`[engine] ${channel} · ${stage.id} 패치 ${patches.length}건 모두 원고에서 못 찾음 — 원고 변경 없이 진행`);
+            }
+          } else {
+            console.warn(`[engine] ${channel} · ${stage.id} 패치 응답 파싱 실패 — 원고 변경 없이 진행`);
+          }
+        } else {
+          const rewriteUser =
+            `[주제]\n${topic}\n\n` +
+            (contextParts.length ? `[참고 자료]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
+            `[이전 원고]\n${draft}\n\n` +
+            `[검수 피드백 — 아래 문제를 모두 해결해 전체를 다시 작성]\n${review}`;
+          // 재작성은 writer 모델로 (검수기 모델이 아니라)
+          const revised = stripCodeFence(await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, rewriteUser, meta.maxTokens ?? 24000, false, meta.disableThinking ?? false));
+          if (revised.trim()) draft = revised;
+        }
+
         if (rewriteCount + 1 >= maxRewrites) {
           if (maxRewrites > 1) console.warn(`[engine] ${channel} · ${stage.id} 최대 재작성(${maxRewrites}회) 소진 — 마지막 원고로 진행`);
           break;

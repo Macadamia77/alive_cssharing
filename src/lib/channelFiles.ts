@@ -302,6 +302,99 @@ export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, 
   await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf-8");
 }
 
+// ─── 공용 에이전트(data/agents) — 채널에 속하지 않는 기본/폴백 페르소나 ────────────
+// 채널 가이드와 동일한 저장소(channel_files)를 재사용하되, 채널 이름 칸에 실제 채널과
+// 겹치지 않는 예약어 `_shared`를 넣어 저장한다(스키마 변경 없음). 읽기는 채널 파일과
+// 똑같이 Supabase(_shared) → GitHub(data/agents) → 로컬 번들 3단 폴백이라, 웹에서
+// 편집하면 재배포 없이 다음 생성부터 라이브로 반영된다.
+export const SHARED_AGENTS_CHANNEL = "_shared";
+const AGENTS_DIR = path.join(rootDir, "data", "agents");
+
+// 읽기 순서: Supabase(_shared, 편집본) → 로컬 번들(정본, 네트워크 0) → GitHub(최후).
+// 공용 에이전트의 편집본은 항상 Supabase에만 저장되고 미편집분은 로컬 번들 == 리포 원본이라,
+// GitHub는 로컬이 없을 때만 닿는 last-resort다(편집 안 한 대부분의 호출에서 GitHub 호출·rate-limit 0).
+export async function readSharedAgentFile(fileRel: string, token?: string): Promise<string> {
+  const safe = fileRel.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  if (sbConfigured()) {
+    try {
+      const f = await sbReadFile(SHARED_AGENTS_CHANNEL, safe);
+      if (f) {
+        if (!f.isBinary) return f.content;
+        if (isTextFile(safe.split("/").pop() ?? "")) return Buffer.from(f.content, "base64").toString("utf-8");
+      }
+    } catch (e) {
+      console.warn(`[readSharedAgentFile] ${safe} Supabase 읽기 실패, 로컬로 폴백:`, e);
+    }
+  }
+  const safeLocal = path.normalize(safe).replace(/^(\.\.[/\\])+/, "");
+  try {
+    return await fs.readFile(path.join(AGENTS_DIR, safeLocal), "utf-8");
+  } catch (e) {
+    console.warn(`[readSharedAgentFile] ${safe} 로컬 읽기 실패, GitHub로 폴백:`, e);
+  }
+  return githubRead(`data/agents/${safe}`, token);
+}
+
+/** 공용 에이전트 저장 (Supabase _shared, 미설정 시 로컬). 텍스트 전용. */
+export async function writeSharedAgentFile(fileRel: string, content: string): Promise<void> {
+  const safe = path.normalize(fileRel).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
+  if (sbConfigured()) {
+    await sbWriteFile(SHARED_AGENTS_CHANNEL, safe, content, false);
+    return;
+  }
+  const full = path.join(AGENTS_DIR, safe);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  await fs.writeFile(full, content, "utf-8");
+}
+
+/** 공용 에이전트 파일명 목록(정본=로컬 번들의 .md). 편집 여부와 무관하게 항상 전체를 보여준다. */
+export async function listSharedAgentFiles(): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(AGENTS_DIR, { withFileTypes: true });
+    return entries
+      .filter(e => e.isFile() && e.name.endsWith(".md") && !e.name.startsWith("_"))
+      .map(e => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+// ─── data/ 루트 직속 설정 파일(models.json 등) 라이브 read/write ────────────────
+// 공용 에이전트와 동일한 방식(Supabase _shared 채널 재사용, 스키마 변경 없음). 키는 data-상대
+// 경로(예: "models.json")라 에이전트 키(`*.md`)와 네임스페이스가 겹치지 않는다. 읽기 순서는
+// Supabase(편집본) → 로컬 번들(정본) → GitHub(최후)로 미편집 시 네트워크 0.
+export async function readSharedDataFile(dataRelPath: string, token?: string): Promise<string> {
+  const safe = dataRelPath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+  if (sbConfigured()) {
+    try {
+      const f = await sbReadFile(SHARED_AGENTS_CHANNEL, safe);
+      if (f && !f.isBinary) return f.content;
+    } catch (e) {
+      console.warn(`[readSharedDataFile] ${safe} Supabase 읽기 실패, 로컬로 폴백:`, e);
+    }
+  }
+  const safeLocal = path.normalize(safe).replace(/^(\.\.[/\\])+/, "");
+  try {
+    return await fs.readFile(path.join(rootDir, "data", safeLocal), "utf-8");
+  } catch (e) {
+    console.warn(`[readSharedDataFile] ${safe} 로컬 읽기 실패, GitHub로 폴백:`, e);
+  }
+  return githubRead(`data/${safe}`, token);
+}
+
+/** data/ 루트 설정 파일 저장 (Supabase _shared, 미설정 시 로컬). 텍스트 전용. */
+export async function writeSharedDataFile(dataRelPath: string, content: string): Promise<void> {
+  const safe = path.normalize(dataRelPath).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
+  if (sbConfigured()) {
+    await sbWriteFile(SHARED_AGENTS_CHANNEL, safe, content, false);
+    return;
+  }
+  const full = path.join(rootDir, "data", safe);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  await fs.writeFile(full, content, "utf-8");
+}
+
 // AI 시스템 프롬프트용 가이드 파일 자동 수집
 // _ 로 시작하는 파일(시스템 파일)과 CLAUDE.md만 제외, 나머지 모든 텍스트 파일 포함
 export async function collectGuideFiles(channel: ChannelKey, token?: string): Promise<string[]> {

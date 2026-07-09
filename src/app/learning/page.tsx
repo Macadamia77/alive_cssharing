@@ -125,8 +125,11 @@ function Section({
   );
 }
 
+// 채널 탭 + "공용"(채널 무관 공유 리서치) 탭
+type TabKey = ChannelKey | "shared";
+
 export default function LearningPage() {
-  const [channel, setChannel] = useState<ChannelKey>(CHANNELS[0]);
+  const [channel, setChannel] = useState<TabKey>(CHANNELS[0]);
   const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
   const [examples, setExamples] = useState<ExampleRow[]>([]);
   const [bad, setBad] = useState<BadRow[]>([]);
@@ -134,16 +137,23 @@ export default function LearningPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = useCallback(async (ch: ChannelKey) => {
+  const load = useCallback(async (ch: TabKey) => {
     setLoading(true); setErr(null);
     try {
-      const [f, e, b, rs] = await Promise.all([
-        fetch(`/api/feedback?channel=${ch}`).then(r => r.json()),
-        fetch(`/api/examples?channel=${ch}`).then(r => r.json()),
-        fetch(`/api/bad-examples?channel=${ch}`).then(r => r.json()),
-        fetch(`/api/research?channel=${ch}`).then(r => r.json()),
-      ]);
-      setFeedback(f.feedback ?? []); setExamples(e.examples ?? []); setBad(b.badExamples ?? []); setResearch(rs.research ?? []);
+      // [작업 5] 공용 탭은 채널 전용 데이터(피드백/우수작/기각)가 없으므로 research(shared)만 조회한다.
+      // (피드백 등은 channel=shared로 요청하면 400이라 아예 호출하지 않는다.)
+      if (ch === "shared") {
+        const rs = await fetch(`/api/research?channel=shared`).then(r => r.json());
+        setFeedback([]); setExamples([]); setBad([]); setResearch(rs.research ?? []);
+      } else {
+        const [f, e, b, rs] = await Promise.all([
+          fetch(`/api/feedback?channel=${ch}`).then(r => r.json()),
+          fetch(`/api/examples?channel=${ch}`).then(r => r.json()),
+          fetch(`/api/bad-examples?channel=${ch}`).then(r => r.json()),
+          fetch(`/api/research?channel=${ch}`).then(r => r.json()),
+        ]);
+        setFeedback(f.feedback ?? []); setExamples(e.examples ?? []); setBad(b.badExamples ?? []); setResearch(rs.research ?? []);
+      }
     } catch { setErr("학습 데이터를 불러오지 못했습니다."); }
     finally { setLoading(false); }
   }, []);
@@ -192,6 +202,11 @@ export default function LearningPage() {
                 </button>
               );
             })}
+            {/* [작업 5] 공용(채널 무관 공유 리서치) 탭 — CHANNEL_COLORS/LABELS에 없어 자체 스타일 */}
+            <button key="shared" onClick={() => setChannel("shared")}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${channel === "shared" ? "bg-slate-800 text-white border-slate-800" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"}`}>
+              <Globe className="w-3.5 h-3.5" />공용 리서치
+            </button>
           </div>
 
           {loading ? (
@@ -202,6 +217,11 @@ export default function LearningPage() {
             <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
               <AlertCircle className="w-4 h-4 shrink-0" />{err}
             </div>
+          ) : channel === "shared" ? (
+            // [작업 5] 공용 탭: 채널 무관 공유 리서치(브레인스토밍 research/research-voice/research-deep)만.
+            <Section title="공용 웹서치 아카이브 (브레인스토밍 리서치)" tone="slate" icon={<Globe className="w-4 h-4" />}
+              items={researchRows} readOnly
+              onDelete={id => del("/api/research", id, () => setResearch(l => l.filter(x => x.id !== id)))} />
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
               <Section title="피드백" tone="amber" icon={<MessageSquare className="w-4 h-4" />}

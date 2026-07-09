@@ -5,45 +5,30 @@
 // 기존 generateContent(단일 호출)·runAgentPipeline(네이버 전용)을 대체하는 3번째 경로.
 // _meta.json에 "engine": "pipeline"이 있는 채널만 이 엔진을 탄다(점진적 도입).
 
-import fs from "fs/promises";
-import { join } from "path";
-import { dataRoot } from "../dataRoot";
 import { type ChannelKey } from "../channels";
 import {
   getChannelMeta,
   readChannelFile,
   readChannelFileBase64,
-  collectGuideFiles,
-  isTextFile,
   type ChannelMeta,
 } from "../channelFiles";
-import { loadAIConfig, type Provider, type ProviderKey } from "../aiConfig";
-import { DEFAULT_MODELS } from "../resolveProvider";
-import {
-  callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch,
-} from "../apiClients";
-import { parseFrontmatter } from "./frontmatter";
+import { type Provider } from "../aiConfig";
+import { callProvider } from "../apiClients";
 import { resolveStages } from "./loadConfig";
-import { getRecentFeedback, getRecentExamples, getRecentBadExamples, addBadExample, addResearch } from "../pipelineMemory";
+import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentResearch, addBadExample, addResearch, contextBudget } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray, extractCards } from "./imageCards";
 import { buildThumbnailCard, extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
 import type { CardAsset } from "./cardStorage";
+// 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
+import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
+// provider 인증 해석 + 검색-불가 provider 자동 폴백은 auth.ts로 추출(M5 리팩터, 동작 무변화).
+import { createAuthResolver } from "./auth";
 // captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
 // import하면, 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에
 // 번들링/로딩이 실패한다 — 이 파일이 render-worker와 Next.js API route 양쪽에서 import되기
 // 때문에, 아래 image 단계 안에서만 동적 import(await import)로 지연 로드한다.
 import type { ResolvedStage } from "./types";
-
-// ─── 코드펜스 제거 (LLM이 감싸는 ```html 등) ────────────────────
-function stripCodeFence(text: string): string {
-  let s = text.trim();
-  const m = s.match(/^(?:```|~~~)[\w-]*\n?([\s\S]*?)\n?(?:```|~~~)\s*$/);
-  if (m) return m[1].trim();
-  s = s.replace(/^(?:```|~~~)[\w-]*[ \t]*\r?\n/, "");
-  s = s.replace(/\r?\n(?:```|~~~)[ \t]*$/, "");
-  return s.trim();
-}
 
 // ─── 단계 종류 추론 (config의 id로부터 엔진 동작 결정) ──────────
 type StageKind = "producer" | "writer" | "reviewer" | "image";
@@ -52,84 +37,6 @@ function stageKind(id: string): StageKind {
   if (id.includes("image")) return "image";
   if (id.includes("review")) return "reviewer";
   return "producer"; // research / brainstorm / research-deep / skeleton 등
-}
-
-// ─── 페르소나 파일 로딩 (채널 우선 → 공통 폴백) ────────────────
-// 1) data/channels/<채널>/agents/<persona>.md  (Supabase→GitHub→로컬)
-// 2) data/agents/<persona>.md                  (공통 — 로컬 번들/dataRoot)
-async function loadPersona(
-  channel: ChannelKey,
-  persona: string,
-  token?: string
-): Promise<string | null> {
-  try {
-    const txt = await readChannelFile(channel, `agents/${persona}.md`, token);
-    if (txt && txt.trim()) return parseFrontmatter(txt).body.trim();
-  } catch { /* 채널 전용 없음 → 공통으로 */ }
-  try {
-    const txt = await fs.readFile(join(dataRoot(), "data", "agents", `${persona}.md`), "utf-8");
-    if (txt && txt.trim()) return parseFrontmatter(txt).body.trim();
-  } catch { /* 공통도 없음 */ }
-  return null;
-}
-
-// ─── 채널 조각(가이드) 파일 전체 로딩 (frontmatter stages 태그 포함) ──
-interface GuideFile { path: string; body: string; stages: string[]; }
-
-async function loadAllGuides(channel: ChannelKey, token?: string): Promise<GuideFile[]> {
-  let keys: string[];
-  try {
-    keys = await collectGuideFiles(channel, token);
-  } catch {
-    return [];
-  }
-  const guideKeys = keys.filter(
-    k => isTextFile(k.split("/").pop() ?? "")
-      && !k.startsWith("agents/")
-      && !k.startsWith("templates/")
-  );
-  const out: GuideFile[] = [];
-  for (const k of guideKeys) {
-    try {
-      const raw = await readChannelFile(channel, k, token);
-      if (!raw.trim()) continue;
-      const parsed = parseFrontmatter(raw);
-      out.push({
-        path: k,
-        body: (parsed.body.trim() || raw.trim()),
-        stages: parsed.meta.stages ?? [],
-      });
-    } catch { /* skip */ }
-  }
-  // 회사 서비스 관련 검증된 사실 정보(지어낸 서비스·수치 방지)는 인스타그램/페이스북 채널에만 포함한다.
-  // legacy 엔진(channelFiles.ts::buildSystemPrompt)과 동일한 특례 — 파일 위치가 채널 폴더 밖(data/company-facts.md)이라 collectGuideFiles로는 못 잡는다.
-  if (channel === "instagram") {
-    try {
-      const facts = await fs.readFile(join(dataRoot(), "data", "company-facts.md"), "utf-8");
-      if (facts.trim()) out.push({ path: "company-facts.md", body: facts.trim(), stages: ["writer", "content-review"] });
-    } catch { /* 없으면 스킵 */ }
-  }
-  return out;
-}
-
-// 한 단계에 주입할 조각 텍스트를 조립한다.
-// 우선순위: ① _meta.pipeline[단계].guides(명시 할당) → ② frontmatter stages 태그
-//          → ③ (writer 한정) 태그 없는 파일 전부 (기존 호환)
-function selectGuides(all: GuideFile[], stage: ResolvedStage): GuideFile[] {
-  if (stage.guides !== undefined) {
-    // 명시 할당(빈 배열이면 "아무것도 안 붙임"을 의미)
-    return all.filter(g => stage.guides!.includes(g.path));
-  }
-  return all.filter(g =>
-    g.stages.includes(stage.id) || (stage.id === "writer" && g.stages.length === 0)
-  );
-}
-
-function guidesText(selected: GuideFile[]): string {
-  if (selected.length === 0) return "";
-  return selected
-    .map(g => `\n\n${"=".repeat(60)}\n# ${g.path}\n${"=".repeat(60)}\n\n${g.body}`)
-    .join("");
 }
 
 // ─── 부분 패치 적용 (전체 재작성 대신 find/replace만) ───────────
@@ -190,11 +97,24 @@ export async function runPipeline(
   apiKeyOverride?: string,
   // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
   // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
-  onCardAssets?: (assets: CardAsset[]) => void
+  onCardAssets?: (assets: CardAsset[]) => void,
+  // [M6] run_id로 finalize된 브레인스토밍 결과(리서치+심화+스켈레톤)를 여러 채널이 공유할 때
+  // 채널별 runPipeline 호출마다 이 문자열을 그대로 주입한다. contextParts 최우선에 push되어
+  // 이 채널의 자체 producer 단계보다 먼저 writer/producer에게 전달된다.
+  sharedContext?: string,
+  // 브라우저에서 고른 모델(활성 provider용) — 워커가 env/기본값 대신 이 모델로 강제한다.
+  // pipeline.json에 단계별 modelId가 명시된 경우엔 그게 우선(auth.ts에서 처리).
+  modelOverride?: string,
+  // [M8 재개선] 사용자가 준 개선 방향 — writer에 주입. includeAccumulated면 누적 리서치도 참고.
+  improveDirection?: string,
+  includeAccumulated?: boolean,
+  // [M8 ④] 컨텍스트 참조 예산('light'|'normal'|'heavy') — 누적 주입 건수·길이 조절.
+  contextBudgetName?: string
 ): Promise<string> {
   const meta: ChannelMeta = await getChannelMeta(channel, token);
   const draftProvided = !!(userDraft && userDraft.trim());
   const stages = resolveStages(channel, meta, { draftProvided });
+  const bud = contextBudget(contextBudgetName);
 
   console.log(`[engine] ${channel}: 활성 단계 ${stages.length}개 → ${stages.map(s => s.id).join(", ")}`);
 
@@ -206,20 +126,8 @@ export async function runPipeline(
     return `[engine mock] ${channel} · ${topic} · 단계: ${stages.map(s => s.id).join(">")}`;
   }
 
-  // ── Provider 인증 (단계별 모델 티어링: provider별 키/모델을 캐시) ──
-  const authCache = new Map<string, { apiKey: string; model: string } | null>();
-  const resolveAuth = async (p: Provider): Promise<{ apiKey: string; model: string } | null> => {
-    if (authCache.has(p)) return authCache.get(p)!;
-    const eKey = process.env[`${p.toUpperCase()}_API_KEY`]?.trim();
-    const eModel = process.env[`${p.toUpperCase()}_MODEL`]?.trim();
-    let pc = eKey ? { apiKey: eKey, model: eModel || DEFAULT_MODELS[p as ProviderKey] } : null;
-    if (!pc) pc = await loadAIConfig(token).then(c => c.providers[p as ProviderKey]).catch(() => null);
-    // apiKeyOverride는 사용자가 선택한 기본 provider에만 적용
-    if (p === provider && apiKeyOverride) pc = { apiKey: apiKeyOverride, model: pc?.model || eModel || DEFAULT_MODELS[p as ProviderKey] };
-    const result = pc?.apiKey ? { apiKey: pc.apiKey, model: pc.model || DEFAULT_MODELS[p as ProviderKey] } : null;
-    authCache.set(p, result);
-    return result;
-  };
+  // ── Provider 인증 해석 + 검색-불가 provider 자동 폴백 (auth.ts 공용 모듈에 위임, M5 리팩터 — 동작 무변화) ──
+  const { resolveAuth, resolveModelFor } = createAuthResolver(token, provider, apiKeyOverride, modelOverride);
 
   const baseAuth = await resolveAuth(provider);
   if (!baseAuth) {
@@ -227,49 +135,52 @@ export async function runPipeline(
   }
 
   // 단계의 provider/model 해석. 명시 지정한 provider 키가 워커에 없으면 명확한 에러(조용한 폴백 금지).
-  const resolveStageModel = async (s: ResolvedStage): Promise<{ p: Provider; apiKey: string; model: string }> => {
-    const requested = (s.model as Provider) || provider;
-    const a = await resolveAuth(requested);
-    if (a) return { p: requested, apiKey: a.apiKey, model: s.modelId || a.model };
-    // requested는 base가 아닌 오버라이드 provider(base는 위에서 이미 보장됨)인데 키가 없음.
-    // 예전엔 base로 폴백하며 modelId(예: claude-opus-4-8)를 유지 → Gemini에 claude 모델 요청 크래시.
-    throw new Error(
-      `이 단계는 '${requested}' 모델로 설정됐지만 워커에 ${requested.toUpperCase()}_API_KEY가 없습니다. ` +
-      `Railway(및 Vercel) 환경변수에 ${requested.toUpperCase()}_API_KEY를 추가하거나, ` +
-      `파이프라인 카드에서 이 단계/채널 모델을 '기본'으로 되돌리세요.`
-    );
-  };
+  const resolveStageModel = (s: ResolvedStage) =>
+    resolveModelFor({ model: s.model, modelId: s.modelId, useSearch: s.useSearch, stageId: s.id });
 
-  // ── LLM 호출 헬퍼 (provider·model을 인자로 받음) ──
-  const call = async (
+  // ── LLM 호출 헬퍼 (provider·model을 인자로 받음) — apiClients.callProvider에 위임 ──
+  const call = (
     p: Provider, apiKey: string, model: string,
     system: string, user: string, maxTokens: number,
     useSearch: boolean, disableThinking: boolean,
-    onSource?: (n: number) => void
-  ): Promise<string> => {
-    if (p === "gemini") {
-      return useSearch
-        ? callGeminiWithSearch(apiKey, model, system, user, disableThinking)
-        : callGemini(apiKey, model, system, user, maxTokens, disableThinking);
-    }
-    if (p === "claude") {
-      return useSearch
-        ? callClaudeWithNativeSearch(apiKey, model, system, user, maxTokens, onSource)
-        : callClaude(apiKey, model, system, user, maxTokens);
-    }
-    if (p === "openai") return callOpenAI(apiKey, model, system, user);
-    return "";
-  };
+    onSource?: (n: number) => void,
+    // config-driven: 단계에 thinking 예산이 설정된 경우에만 Claude 네이티브 thinking 활성화.
+    // claude 경로에서만 유효(gemini는 자체 thinkingConfig, openai는 무관). 검색 단계는 미적용.
+    thinkingBudget?: number
+  ): Promise<string> =>
+    callProvider(p, apiKey, model, system, user, maxTokens, {
+      useSearch, disableThinking, onSearchSource: onSource, thinkingBudget,
+    });
 
   const allGuides = await loadAllGuides(channel, token);
 
   // 누적 컨텍스트(producer 산출물) + 현재 초안
   const contextParts: string[] = [];
-  if (draftProvided) contextParts.push(`[작성자 초안]\n${userDraft}`);
+  if (sharedContext) contextParts.push(sharedContext);
+  if (draftProvided) {
+    contextParts.push(`[작성자 초안]\n${userDraft}`);
+    // [M8] 충실한 개선 지시 — 초안 개선(모드 B) 시 원문을 통째 재작성하지 않도록 명시.
+    contextParts.push(
+      `[개선 지시] 위 [작성자 초안]을 개선하라. 초안의 핵심 논지·메시지·목소리는 최대한 보존하고, ` +
+      `근거 부족·논리 비약·표현 약점만 보강한다. 통째 재작성 금지. 채널 형식엔 맞추되 초안의 본질은 유지한다. ` +
+      `(위 리서치 산출물이 있으면 약한 주장의 근거로 활용)`
+    );
+  }
+  // [M8 재개선] 사용자가 지정한 개선 방향(최우선 반영). 초안 보존 원칙과 상충하면 이 방향을 우선한다.
+  if (improveDirection && improveDirection.trim()) {
+    contextParts.push(`[사용자 개선 방향 — 최우선 반영]\n${improveDirection.trim()}`);
+  }
+  // [M8 재개선 ②] 전체 누적 리서치도 참고(관련도 아닌 최신순 — 참고용 보조).
+  if (includeAccumulated) {
+    const acc = await getRecentResearch(bud.research, bud.researchDays).catch(() => []);
+    if (acc.length) {
+      contextParts.push(`[누적 리서치 참고]\n${acc.map(r => `- (${r.stage}) ${r.content.slice(0, bud.cap)}`).join("\n")}`);
+    }
+  }
 
   // 동적 컨텍스트(Phase 4): 누적 피드백(전 단계) + 우수작 퓨샷(writer 전용)
-  const feedback = await getRecentFeedback(channel).catch(() => []);
-  const exampleTexts = await getRecentExamples(channel).catch(() => []);
+  const feedback = await getRecentFeedback(channel, bud.feedback).catch(() => []);
+  const exampleTexts = await getRecentExamples(channel, bud.examples).catch(() => []);
   if (feedback.length) {
     contextParts.push(`[누적 피드백 — 아래 지적을 반드시 반영]\n${feedback.map((f, i) => `${i + 1}. ${f}`).join("\n")}`);
     console.log(`[engine] ${channel}: 누적 피드백 ${feedback.length}개 주입`);
@@ -279,9 +190,9 @@ export async function runPipeline(
     : "";
   if (exampleTexts.length) console.log(`[engine] ${channel}: 우수 참고작 ${exampleTexts.length}개 주입`);
 
-  const badExamples = await getRecentBadExamples(channel).catch(() => []);
+  const badExamples = await getRecentBadExamples(channel, bud.bad).catch(() => []);
   const badBlock = badExamples.length
-    ? `[과거 기각 사례 — 검수에서 지적된 문제. 아래 같은 표현·패턴을 반드시 피할 것]\n${badExamples.map((b, i) => `${i + 1}. (${b.reason ?? ""}) ${b.content.slice(0, 500)}`).join("\n")}`
+    ? `[과거 기각 사례 — 검수에서 지적된 문제. 아래 같은 표현·패턴을 반드시 피할 것]\n${badExamples.map((b, i) => `${i + 1}. (${b.reason ?? ""}) ${b.content.slice(0, bud.cap)}`).join("\n")}`
     : "";
   if (badExamples.length) console.log(`[engine] ${channel}: 기각 사례 ${badExamples.length}개 주입(회피용)`);
 
@@ -312,11 +223,17 @@ export async function runPipeline(
         (contextParts.length ? `[이전 단계 산출물]\n${contextParts.join("\n\n---\n\n")}\n\n` : "") +
         `위 정보를 바탕으로 이 단계의 역할을 수행해 결과를 직접 출력하세요.`;
       const out = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, stage.useSearch, stage.disableThinking,
-        (n) => { if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`); }));
+        (n) => { if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`); }, stage.thinking?.budgetTokens));
       if (out.trim()) {
         contextParts.push(`[${stage.id} 산출물]\n${out}`);
-        // 웹서치 단계 산출물은 자료실용으로 아카이브(자동 저장) — fire-and-forget
-        if (stage.useSearch) void addResearch(channel, stage.id, topic, out);
+        // 웹서치 단계 산출물은 자료실용으로 아카이브(자동 저장) — fire-and-forget.
+        // 품질 게이트: 실제 검색으로 출처가 붙은 결과만 저장한다(apiClients가 성공 시
+        // 본문 끝에 "[출처]" 섹션을 덧붙임). 출처가 없으면 근거 없는 응답이므로
+        // "리서치"로 저장하지 않는다 — 예전엔 검색 실패 폴백 산출물까지 무조건 저장했음.
+        if (stage.useSearch) {
+          if (out.includes("[출처]")) void addResearch(channel, stage.id, topic, out);
+          else console.warn(`[engine] ${channel} · ${stage.id}: 출처 없는 리서치 산출물 → 아카이브 건너뜀`);
+        }
       }
       console.log(`[engine] ${channel} · ${stage.id} 완료 (${out.length}자)`);
 
@@ -345,7 +262,7 @@ export async function runPipeline(
       const usePatchRewrite = channel === "naver-blog";
       for (let rewriteCount = 0; ; rewriteCount++) {
         // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
-        const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false));
+        const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false, undefined, stage.thinking?.budgetTokens));
         if (!isRejected(review)) {
           console.log(rewriteCount > 0
             ? `[engine] ${channel} · ${stage.id} 재작성 ${rewriteCount}회 후 통과`

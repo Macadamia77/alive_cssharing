@@ -1,4 +1,4 @@
-import { BookOpen, ArrowLeft, ChevronRight } from "lucide-react";
+import { BookOpen, ArrowLeft, ChevronRight, Bot } from "lucide-react";
 import { CHANNELS, CHANNEL_LABELS, CHANNEL_COLORS, CHANNEL_DESCRIPTIONS, type ChannelKey } from "@/lib/channels";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
@@ -39,6 +39,26 @@ export default function GuidesPage() {
               폴더에 Markdown 형식으로 저장됩니다.
             </p>
           </div>
+
+          {/* 공용 에이전트(채널 무관) — 브레인스토밍·리서치·뼈대 설계 + 채널 폴백 기본 프롬프트 */}
+          <Link
+            href="/guides/agents"
+            className="glass-card rounded-2xl px-5 py-4 flex items-center justify-between hover:shadow-md transition-all duration-200 cursor-pointer group mb-3 border border-purple-100"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-600 shrink-0">
+                <Bot className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900 text-sm">공용 에이전트 <span className="text-[10px] font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full px-1.5 py-0.5 ml-1">채널 무관</span></div>
+                <div className="text-xs text-slate-500 mt-0.5">브레인스토밍·리서치·뼈대 설계 등 공통 단계 + 채널에 전용 에이전트가 없을 때의 기본 프롬프트</div>
+              </div>
+            </div>
+            <ChevronRight
+              className="w-4 h-4 text-slate-400 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all duration-200"
+              aria-hidden="true"
+            />
+          </Link>
 
           <div className="space-y-3" role="list" aria-label="채널 가이드 목록">
             {CHANNELS.map((channel) => {

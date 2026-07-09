@@ -4,107 +4,97 @@ import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import type { Provider } from "./aiConfig";
 
 export async function callClaude(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192
+  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192,
+  // 판단·논리 무거운 단계에서만 네이티브 extended thinking을 켠다. reasoning은 결과의 별도
+  // 필드로 반환되고 text에는 최종 답만 담기므로, 다운스트림 PASS/FAIL·JSON 파싱을 깨뜨리지 않는다.
+  thinking?: { budgetTokens: number }
 ): Promise<string> {
   const anthropic = createAnthropic({ apiKey });
+  // extended thinking은 thinking 예산이 max_tokens 안에 포함되므로, 최종 답변용 여유를 더한다.
+  const maxOut = thinking ? Math.max(maxTokens, thinking.budgetTokens + 4000) : maxTokens;
   const { text, finishReason } = await generateText({
     model: anthropic(model),
     system: systemPrompt,
     prompt: userMessage,
-    maxOutputTokens: maxTokens,
+    maxOutputTokens: maxOut,
+    ...(thinking
+      ? { providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: thinking.budgetTokens } } } }
+      : {}),
   });
   if (finishReason === "length") {
-    console.warn(`[apiClients] callClaude: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
+    console.warn(`[apiClients] callClaude: 최대 토큰(${maxOut}) 도달 — 응답이 잘렸습니다.`);
   }
   if (!text) throw new Error("Claude API 응답이 비어 있습니다.");
   return text;
 }
 
-interface AnthropicStreamEvent {
-  type: string;
-  index?: number;
-  content_block?: { type: string; name?: string };
-  delta?: { type: string; text?: string };
+// ─── 웹검색 공용 헬퍼 ──────────────────────────────────────────
+// generateText 결과의 sources(구조화 출처)에서 URL 소스만 추려 중복 제거.
+// AI SDK가 provider별 citation/groundingMetadata를 sources로 정규화해주므로,
+// 예전처럼 스트림을 손으로 파싱하다 출처를 통째로 흘리는 일이 없다.
+interface SearchSource { url: string; title?: string }
+function extractUrlSources(
+  sources: ReadonlyArray<{ sourceType?: string; url?: string; title?: string }> | undefined
+): SearchSource[] {
+  const seen = new Set<string>();
+  const out: SearchSource[] = [];
+  for (const s of sources ?? []) {
+    if (s?.sourceType === "url" && s.url && !seen.has(s.url)) {
+      seen.add(s.url);
+      out.push({ url: s.url, title: s.title });
+    }
+  }
+  return out;
+}
+// 출처 목록을 본문 끝에 명시적으로 덧붙인다 → 아카이브·하류 컨텍스트에 출처가 살아남는다.
+function appendSources(text: string, sources: SearchSource[]): string {
+  if (sources.length === 0) return text.trim();
+  const list = sources.map((s, i) => `${i + 1}. ${s.title ? `${s.title} — ` : ""}${s.url}`).join("\n");
+  return `${text.trim()}\n\n---\n[출처]\n${list}`;
 }
 
 /**
- * Claude 네이티브 web_search 툴을 사용해 실제 검색 기반으로 응답을 생성한다.
- * 스트리밍 응답을 직접 파싱해 검색 시작 시점마다 onSearchStart를 호출한다.
- * 스트리밍/검색이 어떤 이유로든 실패하면 검색 없는 callClaude로 폴백한다 —
- * 리서치 단계가 도구 실패 때문에 전체 파이프라인을 막아서는 안 되기 때문.
+ * Claude 웹검색 툴(AI SDK provider-executed)로 실제 검색 기반 응답을 생성한다.
+ * - sources(구조화 출처)를 추출해 본문 끝에 [출처] 목록으로 덧붙인다.
+ * - 검색 소스 수를 로그로 남긴다(관측성). onSearchStart로 상태 콜백도 호출.
+ * - 실패 시 조용히 검색 없는 응답으로 폴백하지 않는다: 1회 재시도 후 명시적 에러.
+ *   (검색 실패를 근거 없는 "가짜 리서치"로 덮지 않기 위함.)
  */
 export async function callClaudeWithNativeSearch(
   apiKey: string, model: string, systemPrompt: string, userMessage: string,
   maxTokens = 8192, onSearchStart?: (queryCountSoFar: number) => void
 ): Promise<string> {
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
+  const anthropic = createAnthropic({ apiKey });
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const { text, sources, finishReason } = await generateText({
+        model: anthropic(model),
         system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
-        stream: true,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
-      }),
-    });
-
-    if (!res.ok || !res.body) {
-      throw new Error(`Claude API (web_search) 오류 (HTTP ${res.status})`);
-    }
-
-    let text = "";
-    let searchCount = 0;
-    const blockTypes = new Map<number, string>();
-    let buffer = "";
-
-    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-      buffer += Buffer.from(chunk).toString("utf-8");
-      const events = buffer.split("\n\n");
-      buffer = events.pop() ?? "";
-
-      for (const eventBlock of events) {
-        const dataLine = eventBlock.split("\n").find(l => l.startsWith("data:"));
-        if (!dataLine) continue;
-        const jsonStr = dataLine.slice(5).trim();
-        if (!jsonStr) continue;
-
-        let event: AnthropicStreamEvent;
-        try {
-          event = JSON.parse(jsonStr) as AnthropicStreamEvent;
-        } catch {
-          continue;
-        }
-
-        if (event.type === "content_block_start" && typeof event.index === "number" && event.content_block) {
-          blockTypes.set(event.index, event.content_block.type);
-          if (event.content_block.type === "server_tool_use" && event.content_block.name === "web_search") {
-            searchCount++;
-            onSearchStart?.(searchCount);
-          }
-        } else if (event.type === "content_block_delta" && typeof event.index === "number") {
-          const blockType = blockTypes.get(event.index);
-          if (blockType === "text" && event.delta?.type === "text_delta" && event.delta.text) {
-            text += event.delta.text;
-          }
-        }
+        prompt: userMessage,
+        maxOutputTokens: maxTokens,
+        tools: { web_search: anthropic.tools.webSearch_20260209({ maxUses: 5 }) },
+      });
+      const urls = extractUrlSources(sources);
+      onSearchStart?.(urls.length);
+      console.log(
+        `[apiClients] Claude 웹검색 완료 — 소스 ${urls.length}개` +
+        (urls.length === 0 ? " (⚠ 검색 결과 0건 — 근거 없는 응답일 수 있음)" : "")
+      );
+      if (finishReason === "length") {
+        console.warn(`[apiClients] callClaudeWithNativeSearch: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
       }
+      if (!text.trim()) throw new Error("Claude 웹검색 응답이 비어 있습니다.");
+      return appendSources(text, urls);
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[apiClients] Claude 웹검색 실패(시도 ${attempt}/2): ${e instanceof Error ? e.message : e}`);
     }
-
-    if (!text.trim()) throw new Error("Claude API (web_search) 응답이 비어 있습니다.");
-    return text;
-  } catch (e) {
-    console.warn(`[apiClients] callClaudeWithNativeSearch 실패 — 검색 없이 폴백: ${e instanceof Error ? e.message : e}`);
-    return callClaude(apiKey, model, systemPrompt, userMessage, maxTokens);
   }
+  throw new Error(`Claude 웹검색이 2회 모두 실패했습니다: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
 export async function callOpenAI(
@@ -142,34 +132,75 @@ export async function callGemini(
   return text;
 }
 
+/**
+ * Gemini Google Search 그라운딩(AI SDK provider-executed 툴)로 검색 기반 응답 생성.
+ * Claude 버전과 동일하게 sources를 추출해 [출처]로 덧붙이고, 소스 수를 로그로 남기며,
+ * 실패 시 조용한 no-search 폴백 대신 1회 재시도 후 명시적 에러를 던진다.
+ * (예전 구현은 groundingMetadata를 안 읽어 출처를 통째로 버렸음.)
+ */
 export async function callGeminiWithSearch(
   apiKey: string, model: string, systemPrompt: string, userMessage: string, disableThinking = false
 ): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-  const generationConfig: Record<string, unknown> = { maxOutputTokens: 8192 };
-  if (disableThinking && model.includes("2.5-flash")) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  const google = createGoogleGenerativeAI({ apiKey });
+  const providerOptions =
+    disableThinking && model.includes("2.5-flash")
+      ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
+      : undefined;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const { text, sources, finishReason } = await generateText({
+        model: google(model),
+        system: systemPrompt,
+        prompt: userMessage,
+        maxOutputTokens: 8192,
+        providerOptions,
+        // 툴 키는 "google_search"여야 한다(@ai-sdk/google 계약).
+        tools: { google_search: google.tools.googleSearch({}) },
+      });
+      const urls = extractUrlSources(sources);
+      console.log(
+        `[apiClients] Gemini 웹검색 완료 — 소스 ${urls.length}개` +
+        (urls.length === 0 ? " (⚠ 검색 결과 0건 — 근거 없는 응답일 수 있음)" : "")
+      );
+      if (finishReason === "length") {
+        console.warn(`[apiClients] callGeminiWithSearch: 최대 토큰(8192) 도달 — 응답이 잘렸습니다.`);
+      }
+      if (!text.trim()) throw new Error("Gemini 웹검색 응답이 비어 있습니다.");
+      return appendSources(text, urls);
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[apiClients] Gemini 웹검색 실패(시도 ${attempt}/2): ${e instanceof Error ? e.message : e}`);
+    }
   }
+  throw new Error(`Gemini 웹검색이 2회 모두 실패했습니다: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+}
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      tools: [{ googleSearch: {} }],
-      generationConfig,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message ?? `Gemini API (Google Search) 오류 (HTTP ${res.status})`);
+/**
+ * provider·model을 인자로 받는 공용 LLM 호출 디스패처(runPipeline.ts의 내부 call() 헬퍼와
+ * 동일 로직을 공용 모듈로 추출 — 채널에 묶이지 않은 워커 잡(브레인스토밍 등)도 동일하게 재사용).
+ */
+export async function callProvider(
+  p: Provider, apiKey: string, model: string,
+  system: string, user: string, maxTokens: number,
+  opts?: {
+    useSearch?: boolean;
+    disableThinking?: boolean;
+    onSearchSource?: (n: number) => void;
+    // config-driven: 단계에 thinking 예산이 설정된 경우에만 Claude 네이티브 thinking 활성화.
+    thinkingBudget?: number;
   }
-  const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.map(p => p.text ?? "").join("").trim();
-  if (text) return text;
-
-  return callGemini(apiKey, model, systemPrompt, userMessage, 8192);
+): Promise<string> {
+  if (p === "gemini") {
+    return opts?.useSearch
+      ? callGeminiWithSearch(apiKey, model, system, user, opts?.disableThinking)
+      : callGemini(apiKey, model, system, user, maxTokens, opts?.disableThinking);
+  }
+  if (p === "claude") {
+    return opts?.useSearch
+      ? callClaudeWithNativeSearch(apiKey, model, system, user, maxTokens, opts?.onSearchSource)
+      : callClaude(apiKey, model, system, user, maxTokens, opts?.thinkingBudget ? { budgetTokens: opts.thinkingBudget } : undefined);
+  }
+  if (p === "openai") return callOpenAI(apiKey, model, system, user);
+  return "";
 }

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveGithubToken } from "@/lib/resolveToken";
 import { loadAIConfig, saveAIConfig, type AIConfig, type ProviderKey } from "@/lib/aiConfig";
-import { resolveProvider, resolveActiveProvider, DEFAULT_MODELS, COOKIE_OPTS } from "@/lib/resolveProvider";
+import { resolveProvider, resolveActiveProvider, resolveResearchProvider, DEFAULT_MODELS, COOKIE_OPTS } from "@/lib/resolveProvider";
+import { supabase } from "@/lib/supabaseClient";
 
 export type { AIConfig };
 
@@ -45,8 +46,20 @@ export async function GET(req: NextRequest) {
     return first ?? "mock";
   })();
 
+  // 리서치 전용 provider: 쿠키(1순위) → Supabase app_settings(내구성 백업, 쿠키 삭제 시 폴백) → "active" 기본값.
+  const researchProvider = await (async () => {
+    const cookieVal = resolveResearchProvider(req);
+    if (cookieVal) return cookieVal;
+    try {
+      const { data } = await supabase.from("app_settings").select("value").eq("key", "research_provider").maybeSingle();
+      if (data?.value) return data.value;
+    } catch { /* 테이블 미생성 등 — 기본값으로 폴백 */ }
+    return "active";
+  })();
+
   return NextResponse.json({
     activeProvider,
+    researchProvider,
     providers: Object.fromEntries(PROVIDERS.map(p => [p, getInfo(p)])),
   });
 }
@@ -59,10 +72,19 @@ export async function PUT(req: NextRequest) {
       apiKey?: string;
       model?: string;
       activeProvider?: string;
+      researchProvider?: string;
     };
 
     const p = body.provider as ProviderKey | undefined;
     const response = NextResponse.json({ ok: true });
+
+    if (body.researchProvider) {
+      response.cookies.set("ai_research_provider", body.researchProvider, COOKIE_OPTS);
+      // Supabase에도 백업 저장(best-effort) — 쿠키가 사라져도 다음 GET이 이 값을 폴백으로 씀.
+      try {
+        await supabase.from("app_settings").upsert({ key: "research_provider", value: body.researchProvider, updated_at: new Date().toISOString() });
+      } catch { /* app_settings 미생성 등 — 저장 실패해도 쿠키는 이미 저장됐으니 무시 */ }
+    }
 
     // ── 쿠키에 저장 (주 저장소) ──────────────────────────
     if (p && PROVIDERS.includes(p)) {

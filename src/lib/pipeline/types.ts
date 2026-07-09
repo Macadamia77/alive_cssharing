@@ -24,6 +24,10 @@ export interface StageDef {
   enabled?: boolean;          // 전역 기본 on/off (기본 true)
   /** reviewer 단계 전용: 반려 시 최대 재작성 횟수 (기본 1 = 재작성 1회 후 재검수 없이 진행) */
   maxRetries?: number;
+  /** 판단·논리 무거운 단계(brainstorm/skeleton/검수)에서만 Claude 네이티브 thinking을 켠다.
+   *  이 필드가 있으면 call()이 callClaude에 budgetTokens를 넘겨 extended thinking을 활성화.
+   *  형식 강제 단계(writer/image)엔 넣지 않아 원천 차단. Claude 경로에서만 유효. */
+  thinking?: { budgetTokens: number };
 }
 
 /** 전역 파이프라인 정의 파일 구조 */
@@ -61,4 +65,5 @@ export interface ResolvedStage {
   skipIf?: "draftProvided";
   guides?: string[];
   maxRetries?: number;
+  thinking?: { budgetTokens: number };
 }

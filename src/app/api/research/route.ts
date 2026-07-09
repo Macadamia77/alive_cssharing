@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { type ChannelKey } from "@/lib/channels";
-import { listResearch, deleteResearch } from "@/lib/pipelineMemory";
+import { listResearch, listSharedResearch, deleteResearch } from "@/lib/pipelineMemory";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "linkedin", "magazine"];
 const isValid = (c: string): c is ChannelKey => VALID.includes(c as ChannelKey);
 
-/** GET /api/research?channel= — 웹서치(리서치) 아카이브 목록 */
+/** GET /api/research?channel= — 웹서치(리서치) 아카이브 목록.
+ *  channel=shared 는 [작업 5] 채널 무관 공유 리서치(channel=null)를 반환한다. */
 export async function GET(req: NextRequest) {
   const channel = req.nextUrl.searchParams.get("channel") ?? "";
+  if (channel === "shared") {
+    try {
+      return NextResponse.json({ research: await listSharedResearch() });
+    } catch (e) {
+      return NextResponse.json({ error: String(e) }, { status: 500 });
+    }
+  }
   if (!isValid(channel)) return NextResponse.json({ error: "invalid channel" }, { status: 400 });
   try {
     return NextResponse.json({ research: await listResearch(channel) });

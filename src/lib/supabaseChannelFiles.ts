@@ -2,7 +2,6 @@
 // channelFiles.ts가 이 함수들을 통해 Supabase를 "최우선 소스"로 쓰고,
 // 실패/미설정 시 기존 GitHub → 로컬 번들 폴백으로 넘어간다 (비파괴적).
 import { supabase } from "./supabaseClient";
-import type { ChannelKey } from "./channels";
 
 export interface SbFile {
   content: string;   // 텍스트 원문 (is_binary면 base64 문자열)
@@ -21,7 +20,7 @@ export function sbConfigured(): boolean {
 }
 
 /** 단일 파일 읽기. 행이 없으면 null. */
-export async function sbReadFile(channel: ChannelKey, path: string): Promise<SbFile | null> {
+export async function sbReadFile(channel: string, path: string): Promise<SbFile | null> {
   const { data, error } = await supabase
     .from("channel_files")
     .select("content, is_binary")
@@ -34,7 +33,7 @@ export async function sbReadFile(channel: ChannelKey, path: string): Promise<SbF
 }
 
 /** 채널의 모든 파일 경로 목록. */
-export async function sbListPaths(channel: ChannelKey): Promise<string[]> {
+export async function sbListPaths(channel: string): Promise<string[]> {
   const { data, error } = await supabase
     .from("channel_files")
     .select("path")
@@ -45,7 +44,7 @@ export async function sbListPaths(channel: ChannelKey): Promise<string[]> {
 
 /** 파일 업서트(있으면 갱신, 없으면 삽입). */
 export async function sbWriteFile(
-  channel: ChannelKey,
+  channel: string,
   path: string,
   content: string,
   isBinary = false
@@ -58,7 +57,7 @@ export async function sbWriteFile(
 }
 
 /** 단일 파일 삭제. */
-export async function sbDeleteFile(channel: ChannelKey, path: string): Promise<void> {
+export async function sbDeleteFile(channel: string, path: string): Promise<void> {
   const { error } = await supabase
     .from("channel_files")
     .delete()
@@ -68,7 +67,7 @@ export async function sbDeleteFile(channel: ChannelKey, path: string): Promise<v
 }
 
 /** 경로 접두사(폴더) 아래 전체 삭제. 예: prefix="guide/" */
-export async function sbDeletePrefix(channel: ChannelKey, prefix: string): Promise<void> {
+export async function sbDeletePrefix(channel: string, prefix: string): Promise<void> {
   const { error } = await supabase
     .from("channel_files")
     .delete()

@@ -40,3 +40,14 @@ export function resolveProvider(req: NextRequest, provider: ProviderKey): Resolv
 export function resolveActiveProvider(req: NextRequest): string {
   return req.cookies.get("ai_active_provider")?.value ?? "mock";
 }
+
+/**
+ * 리서치 전용 provider(결정 #10) — 미지정("active" 또는 쿠키 없음)이면 null을 반환해
+ * 호출부가 활성 provider를 그대로 쓰게 한다(하위호환). API 키는 여기서 다루지 않는다 —
+ * 워커가 Railway 자체 환경변수로 해당 provider의 키를 스스로 찾는다.
+ */
+export function resolveResearchProvider(req: NextRequest): ProviderKey | null {
+  const v = req.cookies.get("ai_research_provider")?.value;
+  if (!v || v === "active") return null;
+  return v as ProviderKey;
+}

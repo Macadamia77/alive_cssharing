@@ -15,6 +15,7 @@ interface ProviderState {
 
 interface SettingsData {
   activeProvider: string;
+  researchProvider: string;
   providers: Record<ProviderKey, ProviderState>;
 }
 
@@ -65,12 +66,15 @@ const PROVIDER_INFO: Record<ProviderKey, {
 };
 
 // ── 개별 provider 섹션 ─────────────────────────────────────
-function ProviderSection({ providerKey, state, onSaveSuccess }: {
+function ProviderSection({ providerKey, state, options, onSaveSuccess }: {
   providerKey: ProviderKey;
   state: ProviderState;
+  options?: string[]; // /api/models(=models.json) 기반 목록. 없으면 하드코딩 프리셋으로 폴백.
   onSaveSuccess?: () => void;
 }) {
   const info = PROVIDER_INFO[providerKey];
+  // 모델 목록은 models.json을 단일 소스로 사용(채널 파이프라인 설정과 동일). 로드 전엔 프리셋 폴백.
+  const modelOptions = options && options.length ? options : info.models;
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [model, setModel] = useState(state.model || info.defaultModel);
   const [showKey, setShowKey] = useState(false);
@@ -198,18 +202,20 @@ function ProviderSection({ providerKey, state, onSaveSuccess }: {
         </div>
       </div>
 
-      {/* Model */}
+      {/* Model — provider의 전 모델을 드롭다운으로. select는 입력값과 무관하게 항상 전체를 보여준다
+          (input+datalist는 현재 텍스트로 필터링돼 한 개만 보이는 문제가 있어 select로 교체). */}
       <div className="mb-4">
         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">모델</label>
-        <input
-          type="text"
+        <select
           value={model}
           onChange={e => setModel(e.target.value)}
-          placeholder={info.defaultModel}
-          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white mb-1.5"
-        />
+          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer mb-1.5">
+          {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          {model && !modelOptions.includes(model) && <option value={model}>{model} (직접 지정)</option>}
+        </select>
+        {/* 빠른 선택 칩(선택된 모델 강조) */}
         <div className="flex flex-wrap gap-1.5">
-          {info.models.map(m => (
+          {modelOptions.map(m => (
             <button key={m} onClick={() => setModel(m)}
               className={`px-2.5 py-1 rounded-lg text-xs border transition-colors cursor-pointer ${
                 model === m
@@ -220,6 +226,7 @@ function ProviderSection({ providerKey, state, onSaveSuccess }: {
             </button>
           ))}
         </div>
+        <p className="text-[11px] text-slate-400 mt-1.5">목록에 없는 새 모델은 <code className="bg-slate-100 px-1 rounded font-mono">data/models.json</code>에 추가하면 나타납니다.</p>
       </div>
 
       {/* 상태 메시지 */}
@@ -284,10 +291,169 @@ function ProviderSection({ providerKey, state, onSaveSuccess }: {
   );
 }
 
+// ── 리서치 전용 provider (활성 provider와 독립 선택) ──────────
+function ResearchProviderSection({ value, onSaveSuccess }: { value: string; onSaveSuccess?: () => void }) {
+  const [selected, setSelected] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
+
+  useEffect(() => setSelected(value), [value]);
+
+  const handleSave = async (next: string) => {
+    setSelected(next);
+    setSaving(true);
+    setSaveStatus("idle");
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ researchProvider: next }),
+      });
+      if (!res.ok) throw new Error();
+      setSaveStatus("success");
+      onSaveSuccess?.();
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch {
+      setSaveStatus("error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-card rounded-2xl p-5 border border-slate-200">
+      <div className="mb-3">
+        <div className="text-sm font-semibold text-slate-700">리서치 전용 provider</div>
+        <p className="text-xs text-slate-400 mt-0.5">
+          웹서치가 필요한 리서치 단계(research/research-voice/research-deep)만 활성 provider와 다른 AI로 돌립니다. writer·검수 등 나머지 단계엔 영향 없습니다.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <select
+          value={selected}
+          disabled={saving}
+          onChange={e => void handleSave(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 cursor-pointer">
+          <option value="active">활성 provider 따름 (기본)</option>
+          <option value="claude">Claude</option>
+          <option value="gemini">Gemini</option>
+        </select>
+        {saving && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+        {saveStatus === "success" && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
+        {saveStatus === "error" && <AlertCircle className="w-3.5 h-3.5 text-red-500" />}
+      </div>
+    </div>
+  );
+}
+
+// ── 모델 목록 관리 (data/models.json 라이브 편집) ─────────────
+function ModelListEditor({ initial, onSaved }: { initial: Record<string, string[]>; onSaved: () => void }) {
+  const [lists, setLists] = useState<Record<string, string[]>>({});
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<"idle" | "ok" | "err">("idle");
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  // 편집 대상 provider 순서: 알려진 3개 우선 + initial에 있는 기타 키
+  const providers = Array.from(new Set([
+    ...(["claude", "openai", "gemini"] as string[]),
+    ...Object.keys(initial),
+  ]));
+
+  useEffect(() => {
+    const base: Record<string, string[]> = {};
+    for (const p of providers) base[p] = initial[p] ? [...initial[p]] : [];
+    setLists(base);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial]);
+
+  const setAt = (prov: string, i: number, val: string) =>
+    setLists(l => ({ ...l, [prov]: (l[prov] ?? []).map((m, idx) => idx === i ? val : m) }));
+  const removeAt = (prov: string, i: number) =>
+    setLists(l => ({ ...l, [prov]: (l[prov] ?? []).filter((_, idx) => idx !== i) }));
+  const addAt = (prov: string) =>
+    setLists(l => ({ ...l, [prov]: [...(l[prov] ?? []), ""] }));
+
+  const save = async () => {
+    setSaving(true); setStatus("idle"); setErr(null);
+    const cleaned: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(lists)) cleaned[k] = v.map(s => s.trim()).filter(Boolean);
+    try {
+      const r = await fetch("/api/models", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: cleaned }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error ?? "저장 실패");
+      setStatus("ok"); setTimeout(() => setStatus("idle"), 2500);
+      onSaved();
+    } catch (e) {
+      setStatus("err"); setErr(e instanceof Error ? e.message : "저장 실패");
+    } finally { setSaving(false); }
+  };
+
+  const info = (p: string) => PROVIDER_INFO[p as ProviderKey] ?? null;
+
+  return (
+    <div className="glass-card rounded-2xl border border-slate-200 overflow-hidden">
+      <button onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-5 py-4 hover:bg-slate-50/50 cursor-pointer text-left">
+        <span className="flex-1">
+          <span className="block text-sm font-semibold text-slate-700">모델 목록 관리</span>
+          <span className="block text-xs text-slate-400 mt-0.5">위 provider 모델 드롭다운과 채널 파이프라인 설정에 뜨는 목록(= data/models.json). 저장 즉시 반영됩니다.</span>
+        </span>
+        {status === "ok" && <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />}
+        {open ? <span className="text-slate-400 text-xs">접기</span> : <span className="text-blue-600 text-xs font-medium">편집</span>}
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 border-t border-slate-100 pt-4 space-y-4">
+          {providers.map(p => (
+            <div key={p}>
+              <div className="flex items-center gap-2 mb-1.5">
+                {info(p) && <span className={`w-2 h-2 rounded-full ${info(p)!.dot}`} />}
+                <span className={`text-xs font-semibold ${info(p)?.color ?? "text-slate-600"}`}>{info(p)?.label ?? p}</span>
+                <span className="text-[10px] text-slate-400">{(lists[p] ?? []).length}개</span>
+              </div>
+              <div className="space-y-1.5">
+                {(lists[p] ?? []).map((m, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <input
+                      value={m}
+                      onChange={e => setAt(p, i, e.target.value)}
+                      placeholder="모델 ID (예: claude-sonnet-4-6)"
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+                    <button onClick={() => removeAt(p, i)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 cursor-pointer shrink-0" title="삭제">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <button onClick={() => addAt(p)}
+                  className="text-xs text-blue-600 font-medium hover:text-blue-700 cursor-pointer">+ 모델 추가</button>
+              </div>
+            </div>
+          ))}
+
+          {err && <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{err}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={save} disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 cursor-pointer">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? "저장 중..." : "모델 목록 저장"}
+            </button>
+            {status === "ok" && <span className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" />저장됨 — 드롭다운에 반영</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 메인 패널 ─────────────────────────────────────────────
 export default function SettingsPanel() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
 
   // GitHub 토큰 상태
   const [githubToken, setGithubToken] = useState("");
@@ -314,6 +480,14 @@ export default function SettingsPanel() {
   }, []);
 
   useEffect(() => { void fetchSettings(); void fetchGithubStatus(); }, [fetchSettings, fetchGithubStatus]);
+
+  // 모델 목록(provider별) — 채널 파이프라인 설정과 동일하게 /api/models(models.json) 단일 소스
+  const fetchModels = useCallback(() => {
+    return fetch("/api/models").then(r => r.json())
+      .then(d => setModelsByProvider(d.models ?? {}))
+      .catch(() => {});
+  }, []);
+  useEffect(() => { void fetchModels(); }, [fetchModels]);
 
   const handleSaveGithubToken = async () => {
     if (!githubToken.trim()) return;
@@ -371,11 +545,18 @@ export default function SettingsPanel() {
               key={p}
               providerKey={p}
               state={settings?.providers[p] ?? { apiKeySet: false, apiKeyMasked: "", model: PROVIDER_INFO[p].defaultModel }}
+              options={modelsByProvider[p]}
               onSaveSuccess={fetchSettings}
             />
           ))}
         </div>
       </div>
+
+      {/* 리서치 전용 provider (활성 provider와 독립 선택) */}
+      <ResearchProviderSection value={settings?.researchProvider ?? "active"} onSaveSuccess={fetchSettings} />
+
+      {/* 모델 목록 관리 (data/models.json 라이브 편집) */}
+      <ModelListEditor initial={modelsByProvider} onSaved={fetchModels} />
 
       {/* Mock 모드 안내 */}
       <div className="glass-card rounded-2xl p-4 bg-slate-50 border border-slate-200">

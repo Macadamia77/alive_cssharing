@@ -21,6 +21,10 @@ render-worker/node_modules
 # production
 /build
 
+# render-worker 빌드 산출물·디버그 덤프(원본 소스만 추적)
+render-worker/dist/
+render-worker/debug_pipeline/
+
 # misc
 .DS_Store
 *.pem
@@ -43,3 +47,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# 개인 로컬 설정(키·권한 등) — 커밋 금지
+.claude/settings.local.json

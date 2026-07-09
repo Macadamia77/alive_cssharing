@@ -13,11 +13,9 @@
     "guide/06-naver-seo.md"
   ],
   "pipeline": {
-    "research": { "enabled": true },
     "content-review": { "enabled": true, "maxRetries": 3 },
     "tone-review": { "enabled": true, "maxRetries": 3 },
     "image-gen": { "enabled": true },
-    "image-review": { "enabled": false },
-    "skeleton": { "enabled": false }
+    "image-review": { "enabled": false }
   }
 }

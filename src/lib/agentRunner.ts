@@ -458,7 +458,8 @@ export async function runInstagramStructuralQc(
   draft: string,
   provider: Provider,
   token?: string,
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  modelOverride?: string
 ): Promise<string> {
   if (provider === "mock") return content;
 
@@ -472,6 +473,7 @@ export async function runInstagramStructuralQc(
   let pc = envKey ? { apiKey: envKey, model: envModel || DEFAULT_MODELS[provider] } : null;
   if (!pc) pc = await loadAIConfig(token).then(c => c.providers[provider as ProviderKey]).catch(() => null);
   if (apiKeyOverride) pc = { apiKey: apiKeyOverride, model: pc?.model || envModel || DEFAULT_MODELS[provider] };
+  if (modelOverride) pc = { apiKey: pc?.apiKey || apiKeyOverride || "", model: modelOverride };
   if (!pc?.apiKey) return content; // 키 없으면 검수 없이 파이프라인 결과 그대로 사용
 
   const userMessage = draft
@@ -494,7 +496,9 @@ export async function generateContent(
   token?: string,
   suggestions?: string[],
   apiKeyOverride?: string,
-  angle?: string
+  angle?: string,
+  modelOverride?: string,
+  improveDirection?: string
 ): Promise<string> {
   // 채널 설정(_meta.json)에서 생성 튜닝 로드 (없으면 코드 기본값)
   const meta = await getChannelMeta(channel, token).catch(() => null);
@@ -518,12 +522,16 @@ export async function generateContent(
   }
 
   const angleContext = angle ? `\n\n[선택된 방향]\n${angle}` : "";
+  // [M8 재개선] 사용자가 준 개선 방향(최우선 반영) — 레거시 경로에도 주입.
+  const directionContext = improveDirection && improveDirection.trim()
+    ? `\n\n[사용자 개선 방향 — 최우선 반영]\n${improveDirection.trim()}`
+    : "";
 
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
 
 [주제]
-${topic}${suggestionContext}${angleContext}
+${topic}${suggestionContext}${angleContext}${directionContext}
 
 [작성자 초안]
 ${draft}
@@ -531,7 +539,7 @@ ${draft}
 위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요. [선택된 방향]이 명시되어 있다면 그 방향에 맞는 카드 흐름 구조를 채널 가이드에서 찾아 적용하세요. 단, 초안에 등장하는 구체적 수치가 출처 없는 것이라면 "예를 들어" 같은 표현으로 가상 예시임을 밝히고, 김 대리 같은 인물도 실존 인물처럼 단정하지 말고 가상의 예시로 서술하세요.
 
 [중요] 이 요청에는 이미 작성자 초안이 포함되어 있습니다. 기획 방향(A/B/C) 제안 절차는 건너뛰고, 위 초안의 핵심 질문과 주장을 선택된 방향으로 간주하여 최종 완성 콘텐츠를 즉시 생성하세요. 방향을 묻거나 제안하는 응답은 하지 마세요.${imageCardGuide}`
-    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}${imageCardGuide}`;
+    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}${directionContext}${imageCardGuide}`;
 
   if (provider !== "mock") {
     // Vercel 환경변수 우선 조회, 없으면 ai-config.json에서 조회
@@ -545,6 +553,10 @@ ${draft}
 
     if (apiKeyOverride) {
       pc = { apiKey: apiKeyOverride, model: pc?.model || envModel || DEFAULT_MODELS[provider] };
+    }
+
+    if (modelOverride) {
+      pc = { apiKey: pc?.apiKey || apiKeyOverride || "", model: modelOverride };
     }
 
     if (!pc?.apiKey) {
@@ -583,7 +595,9 @@ export async function runAgentPipeline(
   apiKeyOverride?: string,
   // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
   // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
-  onCardAssets?: (assets: CardAsset[]) => void
+  onCardAssets?: (assets: CardAsset[]) => void,
+  modelOverride?: string,
+  improveDirection?: string
 ): Promise<string> {
   // 채널 설정(_meta.json) — 리서치/글쓰기 가이드 선택·순서를 여기서 읽는다 (하드코딩 금지)
   const meta = await getChannelMeta(channel, token).catch(() => null);
@@ -626,6 +640,10 @@ export async function runAgentPipeline(
 
   if (apiKeyOverride) {
     pc = { apiKey: apiKeyOverride, model: pc?.model || envModel || DEFAULT_MODELS[provider] };
+  }
+
+  if (modelOverride) {
+    pc = { apiKey: pc?.apiKey || apiKeyOverride || "", model: modelOverride };
   }
 
   if (!pc?.apiKey) {
@@ -738,6 +756,7 @@ export async function runAgentPipeline(
 
   const writeUser =
     `[주제]\n${topic}\n\n` +
+    (improveDirection && improveDirection.trim() ? `[사용자 개선 방향 — 최우선 반영]\n${improveDirection.trim()}\n\n` : "") +
     `[이전 단계 출력 — research.md]\n${researchOutput}\n\n` +
     `위 리서치 결과와 시스템 프롬프트의 모든 가이드 파일 규칙을 철저히 적용해 블로그 초안을 작성하세요.\n` +
     `(분량·구조·톤·이모지·CTA·해시태그 등 모든 기준은 가이드 파일에 명시되어 있습니다)\n\n` +

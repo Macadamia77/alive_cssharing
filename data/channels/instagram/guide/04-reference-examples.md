@@ -52,7 +52,7 @@ stages: [brainstorm, writer]
 
 ### 5장 (cta)
 - title: 여름철 성수기 CS, 미리 준비하세요.
-- cta: "sales@csisystems.co.kr\n1522-5539"
+- cta: "프로필 링크를 통해 상담 받아보세요!"
 
 ---
 

@@ -184,11 +184,12 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     "고객이 화내는 건 응대가 늦어서가 아니라, 대답이 매번 달라서입니다",
     "같은 문의 100건, 몇 건이 운영 문제일까",
     "그 문의, 이번 달에도\n또 들어왔다면\n상담사 탓이 아닙니다",
-  ].map((s) => s.replace(/\s+/g, ""));
+  ].map((s) => s.split(/[,\n]/).map((seg) => seg.replace(/\s+/g, "")).filter(Boolean));
   checks["후킹_예시문장_재사용"] = first
     ? (() => {
         const normalized = `${first.title || ""}${first.subtitle || ""}`.replace(/\s+/g, "");
-        return HOOK_DEMO_PHRASES.some((p) => normalized.includes(p)) ? "FAIL" : "PASS";
+        // 절 단위로 쪼개서 전부 포함되는지 확인 — 중간에 다른 문구를 끼워넣어 이어붙이기를 피해가는 경우도 잡는다.
+        return HOOK_DEMO_PHRASES.some((segments) => segments.every((seg) => normalized.includes(seg))) ? "FAIL" : "PASS";
       })()
     : "PASS";
 
@@ -227,6 +228,13 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     !c.highlight_text || (c.title || "").includes(c.highlight_text)
   ) ? "PASS" : "FAIL";
 
+  // steps_vertical 박스는 1줄만 표시되게 고정이라, item.body가 25자를 넘으면 Figma에서 2줄로 밀려 아래가 잘린다.
+  checks["steps_vertical_body_길이"] = middles.every((c) => {
+    if (c.layout_type !== "steps_vertical") return true;
+    const items: any[] = Array.isArray(c.items) ? c.items : [];
+    return items.every((it) => (it?.body || "").length <= 25);
+  }) ? "PASS" : "FAIL";
+
   // title/subtitle에 "N단계", "N가지"처럼 숫자를 명시했으면 items 개수가 실제로 N개인지 대조
   checks["숫자_문구_일치"] = middles.every((c) => {
     const text = `${c.title || ""} ${c.subtitle || ""}`;
@@ -237,16 +245,22 @@ function computeAutoChecks(parsed: any): Record<string, "PASS" | "FAIL"> {
     return claimed === n;
   }) ? "PASS" : "FAIL";
 
-  // 카드에 "N%"/"N배" 같은 구체적 성과 수치를 인용했으면, 그 카드의 cta 필드에 출처를 남겨야 한다(00-brand-scope.md 출처 표기 규칙).
-  // cta는 중간 카드에서는 출처 문구, 마지막 카드에서는 실제 CTA 문구로 쓰인다.
+  // company-facts.md "외부 리서치를 인용한 수치" 섹션의 특정 수치만 출처 표기 대상이다.
+  // "개별 고객사 사례"(CS쉐어링 자체 사례) 수치는 우리 회사 자료라 출처가 필요 없어서 제외한다(00-brand-scope.md 참고).
+  // company-facts.md의 "외부 리서치" 섹션이 바뀌면 이 목록도 같이 업데이트해야 한다.
+  const EXTERNAL_STAT_PATTERNS = [/\b88\s*%/, /\b70\s*%/, /\b60\s*%/, /\b78\.6\s*%/, /\b10\s*배/];
   checks["수치_출처_표기"] = middles.every((c) => {
     const itemsText = Array.isArray(c.items)
       ? c.items.map((it: any) => `${it?.title || ""} ${it?.body || ""}`).join(" ")
       : "";
     const text = `${c.title || ""} ${c.subtitle || ""} ${c.highlight_text || ""} ${itemsText}`;
-    const hasStat = /\d+\s*%|\d+\s*배/.test(text);
-    return !hasStat || !!(c.cta && String(c.cta).trim());
+    const hasExternalStat = EXTERNAL_STAT_PATTERNS.some((p) => p.test(text));
+    return !hasExternalStat || !!(c.cta && String(c.cta).trim());
   }) ? "PASS" : "FAIL";
+
+  // 캡션 이모지 개수 3~5개 (06-content-rules.md 캡션 규칙)
+  const emojiCount = ((parsed?.caption || "").match(/\p{Extended_Pictographic}/gu) || []).length;
+  checks["캡션_이모지_개수"] = emojiCount >= 3 && emojiCount <= 5 ? "PASS" : "FAIL";
 
   const hashtags: any[] = Array.isArray(parsed?.hashtags) ? parsed.hashtags : [];
   const hasRequiredTags = REQUIRED_HASHTAGS.every((t) => hashtags.includes(t));
@@ -276,8 +290,9 @@ function applyMechanicalFixes(parsed: any): void {
 }
 
 // Figma에서 수동으로 바로 고칠 수 있는 항목은 전체 판정을 막지 않는다 (재생성 낭비 방지).
-// highlight_text_일치: 강조 위치는 Figma에서 수동 조정 가능. 중간카드_title_줄바꿈: 글자수·줄바꿈도 Figma 텍스트박스에서 손으로 바로 고칠 수 있는 사소한 항목이라 재생성까지 갈 필요 없음.
-const NON_BLOCKING_AUTO_CHECKS = new Set(["highlight_text_일치", "중간카드_title_줄바꿈"]);
+// highlight_text_일치: 강조 위치는 Figma에서 수동 조정 가능. 중간카드_title_줄바꿈·중간카드_subtitle·첫장_CTA_글자수:
+// 글자수·줄바꿈도 Figma 텍스트박스에서 손으로 바로 고칠 수 있는 사소한 항목이라 재생성까지 갈 필요 없음.
+const NON_BLOCKING_AUTO_CHECKS = new Set(["highlight_text_일치", "중간카드_title_줄바꿈", "중간카드_subtitle", "첫장_CTA_글자수"]);
 
 // 정성 평가 30점 만점 기준. PASS 26점 이상(평균 4.33/5), 조건부 PASS 22~25점, 그 미만은 FAIL.
 // LLM 채점 특성상 30점 만점(전 항목 5점)을 매번 요구하면 사실상 통과가 불가능해져 기준 자체가 무의미해지므로,
@@ -384,6 +399,9 @@ ${text}
     for (const c of criteria) {
       if (c && CRITERIA_NAMES.includes(c.name) && typeof c.score === "number") scores[c.name] = c.score;
     }
+    // 6개 항목 중 일부라도 빠지면(형식을 안 지켰거나 파싱이 어긋난 경우) 조용히 0점 처리하지 않고
+    // 파싱 실패와 동일하게 취급해 재시도 경로를 타게 한다.
+    if (Object.keys(scores).length < CRITERIA_NAMES.length) return null;
     const values = Object.values(scores);
     const sum = values.reduce((a, b) => a + b, 0);
     const average = values.length ? Math.round((sum / values.length) * 100) / 100 : 0;
@@ -684,7 +702,7 @@ export async function runAgentPipeline(
 
   // 리서치 단계에 넣을 가이드 — _meta.json의 researchGuides (없으면 코드 기본값)
   const RESEARCH_GUIDE_KEYS = new Set(
-    meta?.researchGuides ?? ["guide/05-brand-cta-reference.md", "guide/06-naver-seo.md"]
+    meta?.researchGuides ?? ["guide/06-brand-cta-reference.md", "guide/08-naver-seo.md"]
   );
   const researchGuideKeys = guideKeys.filter(k => RESEARCH_GUIDE_KEYS.has(k));
 
@@ -723,8 +741,9 @@ export async function runAgentPipeline(
     "guide/04-image-guide.md",
     "guide/02-examples.md",
     "guide/03-quality-check.md",
-    "guide/06-naver-seo.md",
-    "guide/05-brand-cta-reference.md",
+    "guide/08-naver-seo.md",
+    "guide/06-brand-cta-reference.md",
+    "guide/07-recatch-style.md",
     "guide/01-writing-guide.md", // 핵심 규칙 — 가장 마지막에 배치
   ];
   const writeGuideKeys = [

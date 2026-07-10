@@ -38,7 +38,7 @@ interface Candidate {
   overlap_check?: string;
   outline?: string;
 }
-interface ChannelResult { status: ChannelStatus; content?: string; stage?: string; }
+interface ChannelResult { status: ChannelStatus; content?: string; stage?: string; cardAssets?: CardAsset[]; }
 
 const EXAMPLE_TOPICS = [
   "CS 아웃소싱으로 비용 절감하는 방법",
@@ -364,7 +364,7 @@ export default function HomePage() {
           const n = { ...prev };
           for (const t of data.tasks) {
             if (t.status === "completed") {
-              n[t.channel] = { status: "done", content: t.result };
+              n[t.channel] = { status: "done", content: t.result, cardAssets: t.cardAssets };
               if (t.cardAssets && t.cardAssets.length > 0) cardAssetsMap[t.channel] = t.cardAssets;
             } else if (t.status === "failed") {
               n[t.channel] = { status: "error" };
@@ -999,7 +999,7 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {resultChannels.map(channel => (
                   <div key={channel} className={resultChannels.length === 1 ? "lg:col-span-2" : ""}>
-                    <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} stage={results[channel].stage} />
+                    <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} stage={results[channel].stage} cardAssets={results[channel].cardAssets} />
                   </div>
                 ))}
               </div>

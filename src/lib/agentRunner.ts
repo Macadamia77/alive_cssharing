@@ -881,13 +881,14 @@ export async function runAgentPipeline(
     // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). 어떤 이유로든 실패해도 기존
     // inline HTML 카드 흐름은 그대로 유지된다(폴백) — 이 블록은 finalDraft를 건드리지 않는다.
     try {
+      // 2026-07 개편: cardCapture.ts는 이제 @resvg/resvg-js로 SVG만 래스터화한다(naver-blog
+      // 전용 cardTemplateBuilder.ts가 만든 SVG 기준). 이 레거시 엔진(agentRunner.ts)은 image-maker
+      // 가 자유 HTML을 쓰던 예전 방식 그대로라 이 구간은 더 이상 유효한 SVG를 만들지 않는다 —
+      // 다만 실제로 image-maker.md를 가진 채널이 naver-blog뿐이고 naver-blog는 항상 새 엔진
+      // (runPipeline.ts)만 타므로 이 레거시 이미지 단계는 현재 어떤 채널에서도 실행되지 않는다.
+      // 혹시 남아있다면 캡처 실패가 곧바로 catch로 떨어져 기존 inline HTML 폴백으로 이어진다.
       const { captureCards } = await import("./pipeline/cardCapture");
-      const { cards: captured, warnings } = await captureCards(spliced.cards);
-      if (warnings.length > 0) {
-        console.warn(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 경고:\n  ${warnings.join("\n  ")}`);
-      } else {
-        console.log(`[pipeline] ${channel} Step 2.5 카드 높이 게이트 통과`);
-      }
+      const { cards: captured } = captureCards(spliced.cards);
       if (onCardAssets) {
         const { uploadCards } = await import("./pipeline/cardStorage");
         const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

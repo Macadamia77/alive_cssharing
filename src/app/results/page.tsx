@@ -11,7 +11,7 @@ import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib
 import InstagramCardPreview, { tryParseInstagramJson } from "@/components/InstagramCardPreview";
 import {
   copyToClipboard, htmlToText, splitHashtags, extractCards, downloadCardPng, downloadCardsZip,
-  downloadPngFromUrl, downloadPngUrlsZip,
+  downloadPngFromUrl, downloadPngUrlsZip, downloadSvgFromUrl, downloadSvgUrlsZip,
 } from "@/lib/resultDownload";
 import type { CardAsset } from "@/lib/pipeline/cardStorage";
 
@@ -88,6 +88,9 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
   // (html2canvas 재렌더링보다 품질이 높고 매번 다시 그릴 필요도 없음). 개수가 안 맞으면
   // (예: 오래된 결과물) 기존 html2canvas 방식으로 안전하게 폴백.
   const hasCapturedPng = !!cardAssets && cardAssets.length === allCards.length;
+  // 네이버 블로그 카드만 진짜 벡터 SVG 원본을 갖는다(cardTemplateBuilder.ts) — 다른 채널의
+  // CardAsset은 svgUrl이 없으므로 자연히 이 버튼들이 숨겨진다.
+  const hasSvg = hasCapturedPng && cardAssets!.every(c => !!c.svgUrl);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(initialContent);
   const [saved, setSaved] = useState(initialContent);
@@ -280,15 +283,27 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
               <Images className="w-3.5 h-3.5" />이미지 카드 {allCards.length}장
             </div>
-            <button
-              onClick={() => runBusy("zip", () => hasCapturedPng
-                ? downloadPngUrlsZip(cardAssets!.map(c => c.pngUrl), channel)
-                : downloadCardsZip(allCards, channel))}
-              disabled={busy !== null}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
-              {busy === "zip" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-              {busy === "zip" ? "생성 중" : "전체 ZIP"}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => runBusy("zip", () => hasCapturedPng
+                  ? downloadPngUrlsZip(cardAssets!.map(c => c.pngUrl), channel)
+                  : downloadCardsZip(allCards, channel))}
+                disabled={busy !== null}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
+                {busy === "zip" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                {busy === "zip" ? "생성 중" : "PNG ZIP"}
+              </button>
+              {hasSvg && (
+                <button
+                  onClick={() => runBusy("svgzip", () => downloadSvgUrlsZip(cardAssets!.map(c => c.svgUrl), channel))}
+                  disabled={busy !== null}
+                  title="Figma·일러스트레이터에서 편집 가능한 원본 벡터"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 text-slate-700 text-xs font-medium hover:bg-slate-100 disabled:opacity-50 cursor-pointer">
+                  {busy === "svgzip" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  {busy === "svgzip" ? "생성 중" : "SVG ZIP"}
+                </button>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {allCards.map((card, i) => (
@@ -301,15 +316,27 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
                     <div style={{ width: 640, transform: "scale(0.28)", transformOrigin: "top left", pointerEvents: "none" }} dangerouslySetInnerHTML={{ __html: card }} />
                   )}
                 </div>
-                <button
-                  onClick={() => runBusy(`img${i}`, () => hasCapturedPng
-                    ? downloadPngFromUrl(cardAssets![i].pngUrl, `${channel}_${String(i + 1).padStart(2, "0")}.png`)
-                    : downloadCardPng(card, `${channel}_${String(i + 1).padStart(2, "0")}.png`))}
-                  disabled={busy !== null}
-                  className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
-                  {busy === `img${i}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                  {String(i + 1).padStart(2, "0")} 다운로드
-                </button>
+                <div className="flex divide-x divide-slate-100 border-t border-slate-100">
+                  <button
+                    onClick={() => runBusy(`img${i}`, () => hasCapturedPng
+                      ? downloadPngFromUrl(cardAssets![i].pngUrl, `${channel}_${String(i + 1).padStart(2, "0")}.png`)
+                      : downloadCardPng(card, `${channel}_${String(i + 1).padStart(2, "0")}.png`))}
+                    disabled={busy !== null}
+                    className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+                    {busy === `img${i}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                    PNG
+                  </button>
+                  {hasSvg && (
+                    <button
+                      onClick={() => runBusy(`svg${i}`, () => downloadSvgFromUrl(cardAssets![i].svgUrl, `${channel}_${String(i + 1).padStart(2, "0")}.svg`))}
+                      disabled={busy !== null}
+                      title="Figma·일러스트레이터에서 편집 가능한 원본 벡터"
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+                      {busy === `svg${i}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                      SVG
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

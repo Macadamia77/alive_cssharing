@@ -1,6 +1,0 @@
-# Railway(Nixpacks)가 이 서비스를 빌드할 때 Playwright의 헤드리스 Chromium을
-# 함께 설치하도록 지정한다. 이미지 카드 서버사이드 캡처(src/lib/pipeline/cardCapture.ts)에
-# 필요 — 이 파일이 없으면 빌드는 성공해도 런타임에 Chromium이 없어 캡처 단계가 실패하고
-# (로그에 경고만 남고) 기존 inline HTML 카드로 자동 폴백한다.
-[phases.install]
-cmds = ["npm ci || npm install", "npx playwright install --with-deps chromium"]

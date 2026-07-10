@@ -18,16 +18,17 @@ import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentResearch, addBadExample, addResearch, contextBudget } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray, extractCards } from "./imageCards";
-import { buildThumbnailCard, extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
+import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
+import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, type CardContent } from "./cardTemplateBuilder";
 import type { CardAsset } from "./cardStorage";
 // 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
 import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
 // provider 인증 해석 + 검색-불가 provider 자동 폴백은 auth.ts로 추출(M5 리팩터, 동작 무변화).
 import { createAuthResolver } from "./auth";
-// captureCards/uploadCards는 Playwright(네이티브 브라우저 바이너리 필요)를 정적 최상단에서
-// import하면, 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에
-// 번들링/로딩이 실패한다 — 이 파일이 render-worker와 Next.js API route 양쪽에서 import되기
-// 때문에, 아래 image 단계 안에서만 동적 import(await import)로 지연 로드한다.
+// captureCards/uploadCards는 @resvg/resvg-js(네이티브 바이너리)를 정적 최상단에서 import하면,
+// 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에 번들링/로딩이
+// 실패한다 — 이 파일이 render-worker와 Next.js API route 양쪽에서 import되기 때문에, 아래
+// image 단계 안에서만 동적 import(await import)로 지연 로드한다.
 import type { ResolvedStage } from "./types";
 
 // ─── 단계 종류 추론 (config의 id로부터 엔진 동작 결정) ──────────
@@ -327,110 +328,90 @@ export async function runPipeline(
         continue;
       }
 
-      // 대표 썸네일(마커 인덱스 0)은 더 이상 LLM이 손으로 그리지 않는다 — 매번 색상·레이아웃·
-      // 마커 문법이 조금씩 달라지며 같은 계열 버그(디자인 어설픔·정체불명 토큰 유출·최상단
-      // 배치 실패)가 반복 재발했기 때문. templates/thumbnail-template.html에 고정된 마크업을
-      // 그대로 불러와 제목·부제·마스코트 세 값만 결정적으로 치환한다(thumbnailBuilder.ts).
-      let thumbnailCard: string;
+      // 대표 썸네일(마커 인덱스 0)은 LLM이 손으로 그리지 않는다 — 매번 색상·레이아웃·마커
+      // 문법이 조금씩 달라지며 같은 계열 버그가 반복 재발했기 때문. cardTemplateBuilder.ts의
+      // buildThumbnailSvg()가 제목·부제·마스코트 세 값만으로 결정적으로 SVG를 조립한다
+      // (디자인 값 자체가 그 함수 안에 있다 — 이전처럼 별도 템플릿 파일을 읽지 않는다).
+      let mascotDataUri: string | null = null;
       try {
-        const [template, mascotB64] = await Promise.all([
-          readChannelFile(channel, "templates/thumbnail-template.html", token),
-          readChannelFileBase64(channel, "assets/mascot.png", token),
-        ]);
-        thumbnailCard = buildThumbnailCard(
-          template,
-          extractDraftTitle(draft),
-          extractThumbnailSubtitle(draft),
-          `data:image/png;base64,${mascotB64}`
-        );
+        const mascotB64 = await readChannelFileBase64(channel, "assets/mascot.png", token);
+        mascotDataUri = `data:image/png;base64,${mascotB64}`;
       } catch (e) {
-        console.warn(`[engine] ${channel} · ${stage.id} 썸네일 템플릿/마스코트 로드 실패: ${e instanceof Error ? e.message : e}`);
-        thumbnailCard = "";
+        console.warn(`[engine] ${channel} · ${stage.id} 마스코트 로드 실패(마스코트 없이 썸네일 진행): ${e instanceof Error ? e.message : e}`);
       }
+      // 실패해도 빈 문자열이 아니라 항상 유효한 SVG를 반환한다 — 마커 인덱스 정렬 유지를 위해
+      // 아래에서 이 값을 걸러내지(filter) 않고 그대로 배열에 포함시킨다.
+      const thumbnailSvg = buildThumbnailSvg(
+        extractDraftTitle(draft),
+        extractThumbnailSubtitle(draft),
+        mascotDataUri
+      );
 
       const bodyMarkerCount = imageMarkers.length - 1;
       const system = persona + stageGuides;
-      let bodyCards: string[] = [];
+      let bodySvgs: string[] = [];
 
       if (bodyMarkerCount > 0) {
         const user =
           `[주제]\n${topic}\n\n` +
           `아래 draft 전문에는 [IMAGE: ...] 마커가 총 ${imageMarkers.length}개 있습니다. ` +
           `**첫 번째 마커(대표 썸네일)는 별도 로직이 이미 처리했으므로 작성하지 마십시오.** ` +
-          `두 번째 마커부터 마지막 마커까지, 순서대로 총 ${bodyMarkerCount}개 카드의 HTML+CSS 코드만 작성하세요.\n\n` +
+          `두 번째 마커부터 마지막 마커까지, 순서대로 총 ${bodyMarkerCount}개 카드의 콘텐츠 JSON만 작성하세요.\n\n` +
           `[작성 규칙]\n` +
           `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
-          `- 오직 각 마커에 들어갈 HTML 카드 코드블록만 순서대로 작성하십시오 (총 ${bodyMarkerCount}개, 첫 번째 마커분 제외).\n` +
-          `- 각 카드 코드블록은 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸주십시오.\n` +
-          `- 800px 너비에 옅은 회색 계열 그라디언트 배경(guide 2-1절 템플릿 고정값)을 가진 본문 이미지 브랜드 카드 프레임을 사용하십시오 (순백 #ffffff 금지 — 네이버 블로그 본문 배경도 흰색이라 카드 경계가 사라집니다). 이 카드들에는 \`{{MASCOT}}\`를 쓰지 마십시오(마스코트는 대표 썸네일 전용).\n\n` +
+          `- 오직 각 마커에 들어갈 카드 1개당 JSON 객체 하나만 순서대로 작성하십시오 (총 ${bodyMarkerCount}개, 첫 번째 마커분 제외).\n` +
+          `- 각 JSON 객체는 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸고, 다른 텍스트 없이 JSON만 그 안에 쓰십시오.\n` +
+          `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.\n\n` +
           `[입력 draft 전문]\n${draft}`;
         const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
-        bodyCards = extractCards(cardsRaw);
+        const rawBlocks = extractCards(cardsRaw);
+        // JSON 파싱 실패는 카드 1개 단위 문제일 뿐이라 전체 초안을 실패시키지 않는다 —
+        // 그 카드만 안전한 요약형 폴백 카드로 대체하고 나머지는 정상 진행한다.
+        bodySvgs = rawBlocks.map((block, i) => {
+          try {
+            const content = JSON.parse(block) as CardContent;
+            return buildCardSvg(content);
+          } catch (e) {
+            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} JSON 파싱 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}`);
+            return buildFallbackCardSvg(extractDraftTitle(draft) || topic);
+          }
+        });
       }
 
-      const spliced = spliceImageCardsFromArray(draft, [thumbnailCard, ...bodyCards]);
+      const finalSvgs = [thumbnailSvg, ...bodySvgs];
+      const spliced = spliceImageCardsFromArray(draft, finalSvgs);
       draft = spliced.draft;
-      let finalCards = spliced.cards;
+      const finalCards = spliced.cards; // SVG 문자열 배열(이전엔 HTML 문자열이었음)
       console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}/${imageMarkers.length}개 생성`);
 
-      // 서버사이드 캡처(품질 확인·높이 게이트 + 실제 PNG 업로드). Chromium 미설치나 업로드 실패
-      // 등 어떤 이유로든 실패해도 기존 inline HTML 카드 흐름은 그대로 유지된다(폴백) —
-      // 이 블록은 draft를 건드리지 않는다.
-      try {
-        const { captureCards } = await import("./cardCapture");
-        let { cards: captured, warnings } = await captureCards(finalCards);
+      // SVG → PNG 래스터화. 결정적으로 조립한 SVG(임의 LLM CSS 없음)라 브라우저 캡처보다
+      // 실패 가능성이 낮다 — 여기서 실패하면 폴백으로 감추지 않고 그대로 실패를 전파해
+      // (render-worker의 상위 catch가 task를 failed 처리) 배포 문제를 바로 드러낸다.
+      const { captureCards } = await import("./cardCapture");
+      const captured = captureCards(finalCards).cards;
 
-        // 높이 편차 게이트: 예전엔 경고만 남기고 그대로 발행했다 — 실제로 한 번 다시
-        // 만들어보게 해서 편차를 줄인다(최대 1회, 비용 통제 목적). 개선이 없으면 원본 유지.
-        if (warnings.length > 0) {
-          console.warn(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 경고 → 재조정 1회 시도:\n  ${warnings.join("\n  ")}`);
-          try {
-            // 대표 썸네일(finalCards[0])은 결정적 템플릿이라 높이 변동이 없으므로 재조정
-            // 대상에서 제외한다 — 본문 카드(인덱스 1+)만 다시 쓰게 한다.
-            const bodyOnly = finalCards.slice(1);
-            const heightReport = captured.slice(1)
-              .map((c, i) => `본문 카드 ${i + 1}: ${c.heightPx}px`).join(", ");
-            const retryUser =
-              `[주제]\n${topic}\n\n` +
-              `방금 만든 본문 카드들을 실제로 캡처한 높이입니다 — ${heightReport}\n` +
-              `이 중 편차(최댓값-최솟값)가 기준(200px)을 넘었습니다. 아래 원본 카드들을 참고해 ` +
-              `콘텐츠 분량(문장 길이·리스트 항목 수)만 조정해서 카드끼리 높이가 비슷해지도록 다시 ` +
-              `작성하세요. 카드 개수(${bodyOnly.length}개)·순서·CARD_START/END 형식은 그대로 유지하세요.\n\n` +
-              `[원본 카드 전체]\n${bodyOnly.map(c => `<!-- CARD_START -->\n${c}\n<!-- CARD_END -->`).join("\n\n")}`;
-            const retryRaw = stripCodeFence(await call(sp, sk, sm, system, retryUser, maxTok, false, true));
-            const retryBodyCards = extractCards(retryRaw);
-            if (retryBodyCards.length === bodyOnly.length) {
-              const retryCards = [finalCards[0], ...retryBodyCards];
-              const { cards: recaptured, warnings: warnings2 } = await captureCards(retryCards);
-              if (warnings2.length < warnings.length) {
-                console.log(`[engine] ${channel} · ${stage.id} 재조정 성공 — 높이 게이트 통과`);
-                finalCards = retryCards;
-                captured = recaptured;
-                warnings = warnings2;
-              } else {
-                console.warn(`[engine] ${channel} · ${stage.id} 재조정해도 개선 없음 — 원본 카드 유지`);
-              }
-            } else {
-              console.warn(`[engine] ${channel} · ${stage.id} 재조정 응답 카드 개수 불일치(${retryBodyCards.length}/${bodyOnly.length}) — 원본 카드 유지`);
-            }
-          } catch (e) {
-            console.warn(`[engine] ${channel} · ${stage.id} 높이 재조정 시도 실패 — 원본 카드 유지: ${e instanceof Error ? e.message : e}`);
-          }
-        } else {
-          console.log(`[engine] ${channel} · ${stage.id} 카드 높이 게이트 통과`);
-        }
-
-        if (onCardAssets) {
+      // Supabase 업로드(SVG/PNG 다운로드 기능용) — 순수 부가 기능이라 실패해도 본문 임베딩엔
+      // 영향 없다(best-effort). 실패하면 사용자는 그냥 SVG 다운로드 옵션만 못 받는다.
+      if (onCardAssets) {
+        try {
           const { uploadCards } = await import("./cardStorage");
           const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const assets = await uploadCards(channel, jobId, captured);
           onCardAssets(assets);
+        } catch (e) {
+          console.warn(`[engine] ${channel} · ${stage.id} 카드 업로드 실패(다운로드용 링크만 없음, 본문엔 영향 없음): ${e instanceof Error ? e.message : e}`);
         }
-      } catch (e) {
-        console.warn(`[engine] ${channel} · ${stage.id} 서버사이드 캡처/업로드 실패(폴백: inline HTML 유지) — ${e instanceof Error ? e.message : e}`);
       }
 
-      replacedCards.push(...finalCards);
+      // 본문에는 래스터화된 PNG를 <figure>로 감싸 삽입한다(네이버 에디터엔 SVG를 직접 붙여넣기
+      // 어려움). <figure> 래핑은 resultDownload.ts의 extractCards()가 다른 채널과 동일한 방식으로
+      // naver-blog 카드 경계도 찾을 수 있게 하기 위함 — 예전엔 맨 <div>만 들어가 있어
+      // naver-blog 카드가 항상 0개로 잡히던 문제가 있었다.
+      replacedCards.push(...captured.map((c) =>
+        `<figure style="margin:24px 0;text-align:center;">` +
+        `<img src="data:image/png;base64,${c.png.toString("base64")}" style="max-width:100%;height:auto;" alt=""/>` +
+        `</figure>`
+      ));
     }
   }
 

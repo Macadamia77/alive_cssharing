@@ -1,113 +1,79 @@
-// 이미지 카드 HTML → 실제 PNG 서버사이드 캡처.
-// 클라이언트의 html2canvas(src/lib/resultDownload.ts)는 실제 브라우저 렌더링을 근사만 하므로
-// 그림자·그라디언트·폰트 렌더링이 최종 디자인과 미묘하게 어긋날 수 있다. 로컬 blog/ 파이프라인이
-// 이미 검증한 방식(Playwright 헤드리스 브라우저로 1회 실행해 순차 캡처)을 그대로 재사용한다.
-// 참고: data 채널의 guide/04-image-guide.md 4절 캡처 코드, agents/image-maker.md 4.5단계(높이 검증).
+// 이미지 카드 SVG → 실제 PNG 래스터화.
+// 예전엔 Playwright 헤드리스 브라우저로 카드 HTML을 한 장씩 스크린샷했다(로컬 blog/ 파이프라인의
+// 방식을 그대로 가져온 것). 카드가 이제 image-maker LLM의 자유 HTML이 아니라
+// cardTemplateBuilder.ts가 결정적으로 조립한 SVG라, 브라우저 없이 @resvg/resvg-js(Rust 기반
+// 네이티브 SVG 렌더러)로 직접 래스터화할 수 있다 — 브라우저 기동·networkidle 대기·폰트 로딩
+// 레이스 컨디션이 전부 사라지고, Railway 빌드에서 Chromium 설치 단계도 없어진다.
 //
-// page.evaluate() 콜백은 Playwright가 브라우저 컨텍스트에서 실행하므로 런타임에는 document가
-// 항상 존재한다 — 아래 참조는 render-worker(별도 tsconfig, lib에 "dom" 미포함)에서도 타입
-// 체크가 통과하도록 이 파일에만 DOM lib을 명시적으로 끌어온다.
-/// <reference lib="dom" />
+// 참고: data 채널의 guide/04-image-guide.md 2절(카드 스키마), agents/image-maker.md(출력 형식).
 
-import { chromium, type Browser } from "playwright";
-import { PRETENDARD_REGULAR_BASE64, PRETENDARD_BOLD_BASE64 } from "./pretendardFontData";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { Resvg, type ResvgRenderOptions } from "@resvg/resvg-js";
 
 export interface CapturedCard {
-  html: string;
+  svg: string;
   png: Buffer;
   heightPx: number;
 }
 
 export interface CaptureResult {
   cards: CapturedCard[];
-  // 본문 카드(인덱스 1+) 높이 최댓값-최솟값 편차가 200px을 넘으면 경고 메시지가 담긴다.
-  // 1차 버전은 파이프라인을 막지 않고 경고만 남긴다 — 자동 재작성 루프는 범위 밖.
-  warnings: string[];
 }
 
-const THUMBNAIL_WIDTH = 720;
-const THUMBNAIL_HEIGHT = 720;
-const BODY_CARD_WIDTH = 800;
-const MAX_BODY_HEIGHT_VARIANCE = 200;
+// Pretendard 정적 OTF(=TTF 계열, resvg/fontdb가 안정적으로 지원)를 직접 파일로 로드한다.
+// 예전엔 pretendardFontData.ts에 base64 WOFF2로 박아두고 브라우저 @font-face로 주입했는데,
+// resvg는 파일 경로 기반 폰트 로딩만 지원해 그 방식이 안 맞는다 — npm의 정식 `pretendard`
+// 패키지가 정적 OTF 파일을 그대로 배포하므로 그걸 직접 가리킨다(base64 인라인 불필요).
+//
+// require.resolve()로 .otf 파일 경로를 직접 가리키면 안 된다 — Next.js(Turbopack/webpack)가
+// 이 파일을 정적으로 추적해 "번들링할 모듈"로 취급하는데, .otf는 알려진 모듈 타입이 아니라
+// 빌드 자체가 깨진다(다른 채널 API 라우트가 agentRunner.ts를 거쳐 이 파일까지 정적으로 참조
+// 가능해서, 실제로 이 코드가 Vercel에서 실행되지 않아도 빌드 시점엔 추적된다). 대신
+// package.json(알려진 .json 확장자라 안전)의 위치만 resolve하고, 실제 폰트 파일 경로는
+// 런타임에 순수 문자열 조합(path.join)으로 만든다 — 번들러의 정적 분석 대상이 되지 않는다.
+const PRETENDARD_STATIC_DIR = join(dirname(require.resolve("pretendard/package.json")), "dist/public/static");
+const FONT_REGULAR = join(PRETENDARD_STATIC_DIR, "Pretendard-Regular.otf");
+const FONT_BOLD = join(PRETENDARD_STATIC_DIR, "Pretendard-Bold.otf");
 
-// 카드 HTML은 전부 font-family:'Malgun Gothic','맑은 고딕',sans-serif를 인라인으로 쓰고 있다
-// (guide/04-image-guide.md 템플릿 고정값 — 여러 채널/agents 문서에 흩어져 있어 그쪽을 고치는
-// 대신, 같은 이름으로 @font-face를 선언해 캡처 시점에만 실제 사용 폰트를 바꿔치기한다).
-// Windows 로컬에서는 원래도 Malgun Gothic이 설치돼 있어 문제 없었지만, 배포 서버(Linux
-// 컨테이너)엔 이 폰트가 없어 임의 대체 폰트로 캡처될 수 있었다 — Pretendard(SIL OFL 1.1,
-// pretendardFontData.ts)를 data URI로 인라인해 두 환경의 캡처 결과를 항상 동일하게 만든다.
-function wrapHtml(cardHtml: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    @font-face {
-      font-family: 'Malgun Gothic';
-      font-weight: 400;
-      src: url(data:font/woff2;base64,${PRETENDARD_REGULAR_BASE64}) format('woff2');
-    }
-    @font-face {
-      font-family: 'Malgun Gothic';
-      font-weight: 600 700;
-      src: url(data:font/woff2;base64,${PRETENDARD_BOLD_BASE64}) format('woff2');
-    }
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'Malgun Gothic','맑은 고딕',sans-serif; }
-  </style></head><body>${cardHtml}</body></html>`;
-}
+const RESVG_OPTIONS: ResvgRenderOptions = {
+  font: {
+    fontFiles: [FONT_REGULAR, FONT_BOLD],
+    loadSystemFonts: false, // 배포 서버(Linux)마다 설치된 폰트가 달라 결과가 흔들리는 걸 방지 — 지정한 두 파일만 쓴다.
+    defaultFontFamily: "Pretendard",
+    sansSerifFamily: "Pretendard",
+  },
+  background: "rgba(255,255,255,0)",
+};
 
-async function captureOne(
-  browser: Browser,
-  html: string,
-  isThumbnail: boolean
-): Promise<{ png: Buffer; heightPx: number }> {
-  const page = await browser.newPage({
-    viewport: isThumbnail
-      ? { width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }
-      : { width: BODY_CARD_WIDTH, height: 1200 },
-    // 레티나/고DPI 화면에서 텍스트·그라디언트가 흐려 보이는 문제 방지.
-    // 카드가 단색 배경 + 텍스트 위주라 2배 해상도로도 파일 용량 증가폭이 작다
-    // (실측: 1x 기준 16~29KB → 500KB 제한에 여유가 커서 안전하게 올릴 수 있음).
-    deviceScaleFactor: 2,
+// cardTemplateBuilder.ts가 만든 SVG 문자열 하나를 PNG Buffer로 래스터화한다.
+// scale=2로 렌더링해 레티나/고DPI 화면에서도 텍스트·그라디언트가 흐려 보이지 않게 한다
+// (예전 Playwright deviceScaleFactor:2와 동일한 의도).
+export function renderSvgToPng(svg: string, scale = 2): { png: Buffer; heightPx: number } {
+  const resvg = new Resvg(svg, {
+    ...RESVG_OPTIONS,
+    fitTo: { mode: "zoom", value: scale },
   });
-  try {
-    await page.setContent(wrapHtml(html), { waitUntil: "networkidle" });
-    // data URI 폰트는 네트워크 요청이 없어 networkidle만으로는 파싱·적용 완료를 보장하지
-    // 않는다 — 캡처 전에 폰트 로딩이 실제로 끝났는지 확인해 폰트 미적용 상태 캡처를 방지.
-    await page.evaluate(() => document.fonts.ready);
-    const png = await page.screenshot({ fullPage: !isThumbnail });
-    const heightPx = isThumbnail
-      ? THUMBNAIL_HEIGHT
-      : await page.evaluate(() => document.body.scrollHeight);
-    return { png, heightPx };
-  } finally {
-    await page.close();
-  }
+  const rendered = resvg.render();
+  const png = rendered.asPng();
+  // 실제 높이는 SVG 원본 좌표계 기준(스케일 배율 적용 전) — cardTemplateBuilder가 계산한 값과
+  // 맞추기 위해 렌더링된 픽셀 높이를 다시 scale로 나눈다.
+  const heightPx = Math.round(rendered.height / scale);
+  return { png, heightPx };
 }
 
-// cards: imageCards.ts의 spliceImageCards()가 반환한 카드 HTML 배열(인덱스 0 = 썸네일).
-// Playwright/Chromium이 설치돼 있지 않으면 chromium.launch()가 던지는 에러가 그대로 위로
-// 전파된다 — 호출자가 이를 잡아 inline HTML 폴백으로 처리한다(runPipeline.ts/agentRunner.ts).
-export async function captureCards(cards: string[]): Promise<CaptureResult> {
-  const browser = await chromium.launch();
-  try {
-    const captured: CapturedCard[] = [];
-    for (let i = 0; i < cards.length; i++) {
-      const { png, heightPx } = await captureOne(browser, cards[i], i === 0);
-      captured.push({ html: cards[i], png, heightPx });
-    }
+// cards: imageCards.ts가 반환한 SVG 문자열 배열(인덱스 0 = 썸네일, cardTemplateBuilder.ts가 조립).
+// 순수 함수 호출이라 실패하더라도(SVG 문법 오류 등) 카드 1개 단위 예외이므로 호출자가 개별 처리한다.
+export function captureCards(cards: string[]): CaptureResult {
+  const captured: CapturedCard[] = cards.map((svg) => {
+    const { png, heightPx } = renderSvgToPng(svg);
+    return { svg, png, heightPx };
+  });
+  return { cards: captured };
+}
 
-    const warnings: string[] = [];
-    const bodyHeights = captured.slice(1).map((c) => c.heightPx);
-    if (bodyHeights.length > 1) {
-      const variance = Math.max(...bodyHeights) - Math.min(...bodyHeights);
-      if (variance > MAX_BODY_HEIGHT_VARIANCE) {
-        warnings.push(
-          `본문 카드 높이 편차 ${variance}px (기준 ${MAX_BODY_HEIGHT_VARIANCE}px 초과) — ` +
-          `실측값: [${bodyHeights.join(", ")}]`
-        );
-      }
-    }
-
-    return { cards: captured, warnings };
-  } finally {
-    await browser.close();
-  }
+// 로컬 개발 환경 등에서 폰트 파일 존재를 미리 확인하고 싶을 때 쓰는 헬퍼(선택 사용).
+export function assertFontsAvailable(): void {
+  readFileSync(FONT_REGULAR);
+  readFileSync(FONT_BOLD);
 }

@@ -106,3 +106,26 @@ export async function downloadPngUrlsZip(urls: string[], baseName: string): Prom
   const out = await zip.generateAsync({ type: "blob" });
   saveAs(out, `${baseName}_images.zip`);
 }
+
+// ── 원본 SVG(Supabase Storage) 다운로드 — Figma/일러스트레이터 편집용 ──────
+// 네이버 블로그 카드는 cardTemplateBuilder.ts가 조립한 진짜 벡터 SVG라, PNG처럼 다시 렌더링할
+// 필요 없이 저장된 SVG 텍스트를 그대로 받으면 된다(html2canvas 근사 렌더링 대상이 아님).
+export async function downloadSvgFromUrl(url: string, filename: string): Promise<void> {
+  const { saveAs } = await import("file-saver");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`SVG 다운로드 실패: HTTP ${res.status}`);
+  saveAs(await res.blob(), filename);
+}
+
+export async function downloadSvgUrlsZip(urls: string[], baseName: string): Promise<void> {
+  const { saveAs } = await import("file-saver");
+  const zip = new JSZip();
+  for (let i = 0; i < urls.length; i++) {
+    const res = await fetch(urls[i]);
+    if (!res.ok) throw new Error(`SVG 다운로드 실패: HTTP ${res.status}`);
+    const num = String(i + 1).padStart(2, "0");
+    zip.file(`${baseName}_${num}.svg`, await res.blob());
+  }
+  const out = await zip.generateAsync({ type: "blob" });
+  saveAs(out, `${baseName}_svg.zip`);
+}

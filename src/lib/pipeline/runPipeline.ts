@@ -391,8 +391,12 @@ export async function runPipeline(
           // 실측 확인됐다 — 담당 구간을 명시하면 이 문제가 구조적으로 없어진다. draft 전문도
           // 함께 줘서 문맥 이해(품질)는 그대로 유지한다.
           const marker = bodyMarkers[i];
-          const prevMarker = bodyMarkers[i - 1];
-          const sectionStart = prevMarker ? prevMarker.index! + prevMarker[0].length : 0;
+          // 첫 번째 본문 카드(i=0)의 "이전 마커"는 썸네일 마커(imageMarkers[0])다 — bodyMarkers[-1]로
+          // undefined를 만들어 draft 맨 앞(0)으로 폴백하면 <!-- PUBLISH:START --> 같은 조립용
+          // 내부 마커·NOTES 블록까지 구간에 섞여 들어간다(실측 확인: 카드에 원본 마커 텍스트가
+          // 그대로 노출되는 버그로 이어짐). 항상 "바로 앞 마커" 기준으로 잘라야 안전하다.
+          const prevMarker = i === 0 ? imageMarkers[0] : bodyMarkers[i - 1];
+          const sectionStart = prevMarker.index! + prevMarker[0].length;
           const sectionEnd = marker.index! + marker[0].length;
           const section = draft.slice(sectionStart, sectionEnd).trim();
 
@@ -418,7 +422,14 @@ export async function runPipeline(
         // 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제) 최소한 서로 달라진다.
         // Promise.all은 입력 배열 순서를 보존하므로 cardRaws[i]가 곧 (i+1)번째 카드다.
         bodySvgs = cardRaws.map(({ raw, section }, i) => {
-          const fallbackText = section.replace(/\s+/g, " ").trim().slice(0, 60) || extractDraftTitle(draft) || topic;
+          // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
+          // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
+          // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어).
+          const cleanSection = section
+            .replace(/<!--[\s\S]*?-->/g, " ")
+            .replace(/\[IMAGE:[^\]]*\]/g, " ")
+            .replace(/\s+/g, " ").trim();
+          const fallbackText = cleanSection.slice(0, 60) || extractDraftTitle(draft) || topic;
           const rawBlock = extractCards(stripCodeFence(raw))[0];
           if (!rawBlock) {
             console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 응답에서 JSON 블록을 못 찾음 — 대체 카드로 진행. 원본 응답(앞 300자): ${raw.slice(0, 300)}`);

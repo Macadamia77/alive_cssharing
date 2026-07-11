@@ -31,6 +31,11 @@ export async function callClaude(
   return text;
 }
 
+// 검색 단계(research/research-voice/research-deep)가 이 시간을 넘기면 (주로 provider 웹검색
+// 도구 자체의 rate limit 때문) 더 기다리지 않고 포기해 빈 결과를 반환한다 — 상위 로직(누적
+// 리서치 폴백)이 이미 있어 조용히 이어서 진행되고, 파이프라인 전체가 덩달아 늘어지는 걸 막는다.
+const SEARCH_TIMEOUT_MS = 4 * 60 * 1000;
+
 // ─── 웹검색 공용 헬퍼 ──────────────────────────────────────────
 // generateText 결과의 sources(구조화 출처)에서 URL 소스만 추려 중복 제거.
 // AI SDK가 provider별 citation/groundingMetadata를 sources로 정규화해주므로,
@@ -70,6 +75,8 @@ export async function callClaudeWithNativeSearch(
   const anthropic = createAnthropic({ apiKey });
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
     try {
       const { text, sources, finishReason } = await generateText({
         model: anthropic(model),
@@ -77,6 +84,7 @@ export async function callClaudeWithNativeSearch(
         prompt: userMessage,
         maxOutputTokens: maxTokens,
         tools: { web_search: anthropic.tools.webSearch_20260209({ maxUses: 5 }) },
+        abortSignal: controller.signal,
       });
       const urls = extractUrlSources(sources);
       onSearchStart?.(urls.length);
@@ -90,8 +98,14 @@ export async function callClaudeWithNativeSearch(
       if (!text.trim()) throw new Error("Claude 웹검색 응답이 비어 있습니다.");
       return appendSources(text, urls);
     } catch (e) {
+      if (controller.signal.aborted) {
+        console.warn(`[apiClients] Claude 웹검색이 ${SEARCH_TIMEOUT_MS / 1000}초 안에 안 끝나 중단 — 검색 없이 진행합니다(상위 로직이 누적 데이터로 폴백).`);
+        return "";
+      }
       lastErr = e;
       console.warn(`[apiClients] Claude 웹검색 실패(시도 ${attempt}/2): ${e instanceof Error ? e.message : e}`);
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw new Error(`Claude 웹검색이 2회 모두 실패했습니다: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
@@ -148,6 +162,8 @@ export async function callGeminiWithSearch(
       : undefined;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
     try {
       const { text, sources, finishReason } = await generateText({
         model: google(model),
@@ -157,6 +173,7 @@ export async function callGeminiWithSearch(
         providerOptions,
         // 툴 키는 "google_search"여야 한다(@ai-sdk/google 계약).
         tools: { google_search: google.tools.googleSearch({}) },
+        abortSignal: controller.signal,
       });
       const urls = extractUrlSources(sources);
       console.log(
@@ -169,8 +186,14 @@ export async function callGeminiWithSearch(
       if (!text.trim()) throw new Error("Gemini 웹검색 응답이 비어 있습니다.");
       return appendSources(text, urls);
     } catch (e) {
+      if (controller.signal.aborted) {
+        console.warn(`[apiClients] Gemini 웹검색이 ${SEARCH_TIMEOUT_MS / 1000}초 안에 안 끝나 중단 — 검색 없이 진행합니다(상위 로직이 누적 데이터로 폴백).`);
+        return "";
+      }
       lastErr = e;
       console.warn(`[apiClients] Gemini 웹검색 실패(시도 ${attempt}/2): ${e instanceof Error ? e.message : e}`);
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw new Error(`Gemini 웹검색이 2회 모두 실패했습니다: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);

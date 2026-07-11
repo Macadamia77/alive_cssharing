@@ -62,7 +62,14 @@ const BUDGET_FIELDS: { key: keyof CtxBudget; label: string }[] = [
 
 const PAGE_SIZE = 3;           // 후보를 3개씩 넘겨본다(클라이언트 슬라이싱, 추가 fetch 없음)
 const POLL_INTERVAL_MS = 2500;
-const POLL_TIMEOUT_MS = 12 * 60 * 1000; // 12분 — 워커 stale 워치독(10분)보다 살짝 길게. 정상 케이스는 워치독이 10분에 run을 failed로 전파해 그 전에 실패를 받으므로, 이 값은 순수 백스톱.
+// 25분 — 워커 stale 워치독(20분, render-worker/index.ts STALE_TIMEOUT_MS)보다 살짝 길게.
+// 정상 케이스는 워치독이 20분에 run을 failed로 전파해 그 전에 실패를 받으므로, 이 값은 순수 백스톱.
+// naver-blog는 검수 재작성이 겹치면 실측상 20분 가까이도 걸릴 수 있어(2026-07-11 실측 사례),
+// 예전 12분은 너무 짧아 정상적으로 끝나는 생성까지 "실패"로 잘못 표시하는 일이 실제로 있었다.
+// (참고: 이 값이 만료돼도 결과 자체는 유실되지 않는다 — 워커가 작업 종료 시 서버에서 직접
+// results에 저장하므로, 여기 타임아웃은 순수히 "화면에 언제까지 기다릴지"만 결정한다.)
+const POLL_TIMEOUT_MS = 25 * 60 * 1000;
+const POLL_TIMEOUT_MIN = POLL_TIMEOUT_MS / 60000;
 
 const emptyResults = () =>
   Object.fromEntries(CHANNELS.map(c => [c, { status: "idle" }])) as Record<ChannelKey, ChannelResult>;
@@ -276,7 +283,7 @@ export default function HomePage() {
     pollRef.current = setInterval(async () => {
       if (Date.now() - started > POLL_TIMEOUT_MS) {
         clearPoll(); setBsLoading(false);
-        setBsError("브레인스토밍이 너무 오래 걸려 중단했습니다(18분 초과). 잠시 후 다시 시도해주세요.");
+        setBsError(`브레인스토밍이 너무 오래 걸려 중단했습니다(${POLL_TIMEOUT_MIN}분 초과). 잠시 후 다시 시도해주세요.`);
         return;
       }
       try {
@@ -325,12 +332,10 @@ export default function HomePage() {
   const pollResults = useCallback((id: string, targeted: ChannelKey[]) => {
     clearPoll();
     const started = Date.now();
-    const cardAssetsMap: Record<string, CardAsset[]> = {};
-    let runSelectedTopic = ""; // [M8 함정1] 워커가 채운 selected_topic(초안 추출/입력 한 줄) — 보관함 제목용
     pollRef.current = setInterval(async () => {
       if (Date.now() - started > POLL_TIMEOUT_MS) {
         clearPoll(); setGenerating(false); generatingRef.current = false;
-        setGenError("응답이 너무 오래 걸려 중단했습니다(18분 초과). 잠시 후 다시 시도해주세요.");
+        setGenError(`응답이 너무 오래 걸려 화면 표시를 중단했습니다(${POLL_TIMEOUT_MIN}분 초과). 생성 자체는 서버에서 계속 진행되며, 완료되면 결과물 보관함에 자동으로 저장됩니다.`);
         setResults(prev => { const n = { ...prev }; for (const ch of targeted) if (n[ch].status === "loading") n[ch] = { status: "error" }; return n; });
         return;
       }
@@ -342,7 +347,6 @@ export default function HomePage() {
           error?: string;
         };
         if (!res.ok) throw new Error(data.error ?? "상태 조회 실패");
-        if (data.selectedTopic) runSelectedTopic = data.selectedTopic;
 
         if (data.runStatus === "failed") {
           clearPoll(); setGenerating(false); generatingRef.current = false;
@@ -365,7 +369,6 @@ export default function HomePage() {
           for (const t of data.tasks) {
             if (t.status === "completed") {
               n[t.channel] = { status: "done", content: t.result, cardAssets: t.cardAssets };
-              if (t.cardAssets && t.cardAssets.length > 0) cardAssetsMap[t.channel] = t.cardAssets;
             } else if (t.status === "failed") {
               n[t.channel] = { status: "error" };
             } else {
@@ -378,29 +381,19 @@ export default function HomePage() {
         const allSettled = data.tasks.length >= targeted.length
           && data.tasks.every(t => t.status === "completed" || t.status === "failed");
         if (allSettled) {
+          // 결과물 저장(results 아카이브)은 더 이상 여기서 하지 않는다 — 워커가 작업을 종료
+          // 처리하는 시점에 서버에서 직접 저장한다(archiveRunResultsIfSettled, render-worker/index.ts).
+          // 프론트가 폴링 타임아웃으로 먼저 포기해도(naver-blog처럼 오래 걸리는 채널) 워커가
+          // 나중에 완성한 결과가 항상 남게 하기 위함 — 여기서 같이 저장하면 정상적으로 빨리
+          // 끝나는 경우 서버와 중복 저장된다.
           clearPoll(); setGenerating(false); generatingRef.current = false;
-          const channelsMap: Record<string, string> = {};
-          for (const t of data.tasks) if (t.status === "completed" && t.result) channelsMap[t.channel] = t.result;
-          if (Object.keys(channelsMap).length > 0) {
-            const selTopic = (selectedIdx !== null && candidates[selectedIdx]?.topic)
-              || runSelectedTopic || topic.trim() || userDraft.trim().slice(0, 40) || "제목 없음";
-            void fetch("/api/results", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                topic: selTopic,
-                channels: channelsMap,
-                ...(Object.keys(cardAssetsMap).length > 0 ? { cardAssets: cardAssetsMap } : {}),
-              }),
-            });
-          }
         }
       } catch (e) {
         clearPoll(); setGenerating(false); generatingRef.current = false;
         setGenError(e instanceof Error ? e.message : "상태 조회 실패");
       }
     }, POLL_INTERVAL_MS);
-  }, [candidates, selectedIdx, topic, userDraft]);
+  }, []);
 
   const handleGenerate = useCallback(async () => {
     if (generatingRef.current || generating || selectedIdx === null || selectedChannels.length === 0 || !runId) return;

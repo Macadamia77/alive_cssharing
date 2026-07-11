@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Copy, Check, BookOpen, ThumbsUp, MessageSquarePlus, Loader2, Send, Download, Images, X } from "lucide-react";
 import { type ChannelKey, CHANNEL_LABELS, CHANNEL_COLORS } from "@/lib/channels";
 import InstagramCardPreview, { tryParseInstagramJson } from "./InstagramCardPreview";
-import { copyToClipboard, extractCards, htmlToText, downloadCardsZip, downloadPngUrlsZip } from "@/lib/resultDownload";
+import { copyToClipboard, extractCards, htmlToText, downloadCardsZip, downloadPngUrlsZip, downloadSvgUrlsZip } from "@/lib/resultDownload";
 import type { CardAsset } from "@/lib/pipeline/cardStorage";
 
 export type { ChannelKey };
@@ -109,12 +109,18 @@ export default function ChannelResultCard({ channel, status, content, stage, car
     } catch { /* noop */ }
   };
 
-  // "발행 준비" ② — 이미지 카드를 실제 PNG로 받아 ZIP 다운로드
-  const handleDownloadZip = async () => {
+  // "발행 준비" ② — 이미지 카드를 PNG(본문 삽입용) 또는 SVG(Figma/일러스트레이터 편집용)로 ZIP 다운로드.
+  // 가이드(04-image-guide.md §3) 기준 "PNG + SVG 둘 다 제공"인데 지금까지 PNG 경로만 UI에
+  // 연결돼 있었다 — SVG는 image-gen 단계에서 이미 Storage에 올라가 있어(cardAssets[].svgUrl)
+  // 새로 만들 것 없이 다운로드 함수만 연결하면 된다.
+  const handleDownloadZip = async (format: "png" | "svg") => {
     if (cards.length === 0 || zipBusy) return;
     setZipBusy(true);
     try {
-      if (hasCapturedPng) {
+      if (format === "svg") {
+        if (!hasCapturedPng) throw new Error("SVG 원본이 없습니다(캡처 전이거나 구버전 결과물).");
+        await downloadSvgUrlsZip(cardAssets!.map(c => c.svgUrl), channel);
+      } else if (hasCapturedPng) {
         await downloadPngUrlsZip(cardAssets!.map(c => c.pngUrl), channel);
       } else {
         await downloadCardsZip(cards, channel);
@@ -265,16 +271,30 @@ export default function ChannelResultCard({ channel, status, content, stage, car
           <div className="flex items-center justify-between gap-3 bg-white rounded-lg border border-slate-200 px-3 py-2">
             <div className="min-w-0">
               <p className="text-xs font-medium text-slate-700">② 이미지 카드 {cards.length}개 받기</p>
-              <p className="text-[10px] text-slate-400">PNG로 {hasCapturedPng ? "" : "렌더링해 "}ZIP으로 다운로드</p>
+              <p className="text-[10px] text-slate-400">
+                PNG(본문 삽입용){hasCapturedPng ? " 또는 SVG(Figma/일러스트레이터 편집용)" : "로 렌더링해"} ZIP으로 다운로드
+              </p>
             </div>
-            <button
-              onClick={handleDownloadZip}
-              disabled={cards.length === 0 || zipBusy}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-200 bg-blue-50 text-xs text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 cursor-pointer shrink-0"
-            >
-              {zipBusy ? <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" /> : <Download className="w-3 h-3" aria-hidden="true" />}
-              {zipBusy ? "생성 중" : "ZIP 받기"}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => handleDownloadZip("png")}
+                disabled={cards.length === 0 || zipBusy}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-200 bg-blue-50 text-xs text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 cursor-pointer"
+              >
+                {zipBusy ? <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" /> : <Download className="w-3 h-3" aria-hidden="true" />}
+                PNG
+              </button>
+              {hasCapturedPng && (
+                <button
+                  onClick={() => handleDownloadZip("svg")}
+                  disabled={cards.length === 0 || zipBusy}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 cursor-pointer"
+                  title="Figma/일러스트레이터 편집용 원본 벡터"
+                >
+                  SVG
+                </button>
+              )}
+            </div>
           </div>
 
           <p className="text-[10px] text-slate-400 leading-relaxed">

@@ -378,35 +378,51 @@ export async function runPipeline(
         // 카드 1개당 호출 1개로 병렬 실행(이전엔 N개 카드를 호출 1번에 순서대로 다 쓰게 시켜서,
         // 응답이 잘리면 뒤쪽 카드가 통째로 사라져 ImageCardCountMismatchError로 단계 전체가
         // 실패했다 — 카드별로 나누면 그 카드 슬롯만 buildFallbackCardSvg로 채워 개수가 항상
-        // 마커 수와 일치하고, 응답도 병렬이라 더 빠르다). 각 호출엔 draft 전문을 그대로 줘서
-        // "이전엔 모델이 한 번에 훑으며 파악하던 문맥"을 그대로 유지한다(품질 저하 방지).
+        // 마커 수와 일치하고, 응답도 병렬이라 더 빠르다).
         // 채널 하나 안에서의 카드 동시 호출 상한. 채널 자체가 이미 최대 5개까지 동시에 돌 수
         // 있으므로(위 주석 참고) 이 값 × 5가 provider에 실제로 튀는 최악의 동시 요청 수가 된다.
         const CARD_CONCURRENCY = 3;
+        const bodyMarkers = imageMarkers.slice(1); // 인덱스 0(썸네일) 제외 — 본문 카드에 대응하는 마커들
         const cardIndexes = Array.from({ length: bodyMarkerCount }, (_, i) => i);
         const cardRaws = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, (i) => {
+          // 각 카드가 담당할 구간(이전 마커 끝~이 마커 끝)을 미리 잘라 명시한다. draft 전문을
+          // 그대로 다 주고 "몇 번째 카드"라고만 알려주면, 카드끼리 서로 뭘 다뤘는지 모른 채
+          // 독립적으로 훑다가 같은 대목(예: 가장 눈에 띄는 통계 하나)을 중복으로 고르는 사례가
+          // 실측 확인됐다 — 담당 구간을 명시하면 이 문제가 구조적으로 없어진다. draft 전문도
+          // 함께 줘서 문맥 이해(품질)는 그대로 유지한다.
+          const marker = bodyMarkers[i];
+          const prevMarker = bodyMarkers[i - 1];
+          const sectionStart = prevMarker ? prevMarker.index! + prevMarker[0].length : 0;
+          const sectionEnd = marker.index! + marker[0].length;
+          const section = draft.slice(sectionStart, sectionEnd).trim();
+
           const user =
             `[주제]\n${topic}\n\n` +
-            `아래 draft 전문에는 [IMAGE: ...] 마커가 총 ${imageMarkers.length}개 있습니다. ` +
-            `**첫 번째 마커(대표 썸네일)는 별도 로직이 이미 처리했으므로 신경 쓰지 마십시오.** ` +
+            `[전체 draft — 문맥 이해용]\n${draft}\n\n` +
             `지금 작성할 카드는 두 번째 마커부터 세어 ${i + 1}번째 카드(전체 마커 중 ${i + 2}번째)입니다. ` +
+            `**이 카드는 반드시 아래 [담당 구간]에 있는 내용만 다루십시오.** 다른 카드가 이미 다루는 ` +
+            `구간과 겹치지 않도록, 이 구간 밖의 내용(다른 소제목 등)은 가져오지 마십시오.\n\n` +
+            `[담당 구간]\n${section}\n\n` +
             `그 카드 1개의 콘텐츠만 작성하세요.\n\n` +
             `[작성 규칙]\n` +
             `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
             `- 오직 이 카드 1개의 JSON 객체 하나만 작성하십시오.\n` +
             `- JSON 객체는 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸고, 다른 텍스트 없이 JSON만 그 안에 쓰십시오.\n` +
-            `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.\n\n` +
-            `[입력 draft 전문]\n${draft}`;
-          return call(sp, sk, sm, system, user, Math.min(maxTok, 4000), false, true);
+            `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.`;
+          return call(sp, sk, sm, system, user, Math.min(maxTok, 4000), false, true)
+            .then((raw) => ({ raw, section }));
         });
         // JSON 파싱 실패(또는 블록 자체를 못 찾음)는 카드 1개 단위 문제일 뿐이라 전체를
         // 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로 대체하고 나머지는 정상 진행한다.
+        // 폴백도 draft 제목 대신 그 카드의 담당 구간 텍스트를 쓴다 — 여러 카드가 동시에
+        // 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제) 최소한 서로 달라진다.
         // Promise.all은 입력 배열 순서를 보존하므로 cardRaws[i]가 곧 (i+1)번째 카드다.
-        bodySvgs = cardRaws.map((raw, i) => {
+        bodySvgs = cardRaws.map(({ raw, section }, i) => {
+          const fallbackText = section.replace(/\s+/g, " ").trim().slice(0, 60) || extractDraftTitle(draft) || topic;
           const rawBlock = extractCards(stripCodeFence(raw))[0];
           if (!rawBlock) {
-            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 응답에서 JSON 블록을 못 찾음 — 대체 카드로 진행`);
-            return buildFallbackCardSvg(extractDraftTitle(draft) || topic);
+            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 응답에서 JSON 블록을 못 찾음 — 대체 카드로 진행. 원본 응답(앞 300자): ${raw.slice(0, 300)}`);
+            return buildFallbackCardSvg(fallbackText);
           }
           // 카드 1개만 요청하면 모델이 CARD_START/END "안쪽"에서 또 ```json 코드펜스로 감싸는
           // 빈도가 높아진다(실측). 위 stripCodeFence는 응답 전체가 통째로 펜스에 싸인 경우만
@@ -416,8 +432,8 @@ export async function runPipeline(
             const content = JSON.parse(block) as CardContent;
             return buildCardSvg(content);
           } catch (e) {
-            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} JSON 파싱 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}`);
-            return buildFallbackCardSvg(extractDraftTitle(draft) || topic);
+            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} JSON 파싱 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}. 원본 블록(앞 300자): ${block.slice(0, 300)}`);
+            return buildFallbackCardSvg(fallbackText);
           }
         });
       }

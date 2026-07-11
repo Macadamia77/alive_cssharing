@@ -40,6 +40,26 @@ function stageKind(id: string): StageKind {
   return "producer"; // research / brainstorm / research-deep / skeleton 등
 }
 
+// ─── 동시성 상한을 둔 병렬 map ──────────────────────────────────
+// Railway 워커는 채널 최대 5개를 동시에 처리한다(MAX_CONCURRENT, render-worker/index.ts).
+// 카드 호출처럼 채널 하나 안에서도 병렬로 여러 번 호출하는 작업을 그냥 Promise.all로 다 풀어버리면,
+// 로컬에서 채널 1개만 테스트할 땐 안 걸리다가 실제 배포에서 채널 5개가 겹칠 때 provider API의
+// 분당 요청 한도를 순간적으로 초과하기 쉽다 — 여기서 상한을 걸어 실제 운영 동시성 기준으로 안전하게 만든다.
+async function mapWithConcurrency<T, R>(
+  items: T[], limit: number, fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // ─── 부분 패치 적용 (전체 재작성 대신 find/replace만) ───────────
 // 검수 반려 시 글 전체를 다시 쓰게 하면 출력 토큰이 커서(naver-blog는 최대 24,000 토큰) 느리다 —
 // 실측 결과 content-review·tone-review가 각각 최대 3회씩 재시도되면 25분 넘게 걸릴 수 있었다.
@@ -180,8 +200,12 @@ export async function runPipeline(
   }
 
   // 동적 컨텍스트(Phase 4): 누적 피드백(전 단계) + 우수작 퓨샷(writer 전용)
-  const feedback = await getRecentFeedback(channel, bud.feedback).catch(() => []);
-  const exampleTexts = await getRecentExamples(channel, bud.examples).catch(() => []);
+  // 서로 무관한 조회 3개라 순차 대기 대신 병렬 실행(brainstorm 경로와 동일 패턴).
+  const [feedback, exampleTexts, badExamples] = await Promise.all([
+    getRecentFeedback(channel, bud.feedback).catch(() => []),
+    getRecentExamples(channel, bud.examples).catch(() => []),
+    getRecentBadExamples(channel, bud.bad).catch(() => []),
+  ]);
   if (feedback.length) {
     contextParts.push(`[누적 피드백 — 아래 지적을 반드시 반영]\n${feedback.map((f, i) => `${i + 1}. ${f}`).join("\n")}`);
     console.log(`[engine] ${channel}: 누적 피드백 ${feedback.length}개 주입`);
@@ -191,7 +215,6 @@ export async function runPipeline(
     : "";
   if (exampleTexts.length) console.log(`[engine] ${channel}: 우수 참고작 ${exampleTexts.length}개 주입`);
 
-  const badExamples = await getRecentBadExamples(channel, bud.bad).catch(() => []);
   const badBlock = badExamples.length
     ? `[과거 기각 사례 — 검수에서 지적된 문제. 아래 같은 표현·패턴을 반드시 피할 것]\n${badExamples.map((b, i) => `${i + 1}. (${b.reason ?? ""}) ${b.content.slice(0, bud.cap)}`).join("\n")}`
     : "";
@@ -352,22 +375,43 @@ export async function runPipeline(
       let bodySvgs: string[] = [];
 
       if (bodyMarkerCount > 0) {
-        const user =
-          `[주제]\n${topic}\n\n` +
-          `아래 draft 전문에는 [IMAGE: ...] 마커가 총 ${imageMarkers.length}개 있습니다. ` +
-          `**첫 번째 마커(대표 썸네일)는 별도 로직이 이미 처리했으므로 작성하지 마십시오.** ` +
-          `두 번째 마커부터 마지막 마커까지, 순서대로 총 ${bodyMarkerCount}개 카드의 콘텐츠 JSON만 작성하세요.\n\n` +
-          `[작성 규칙]\n` +
-          `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
-          `- 오직 각 마커에 들어갈 카드 1개당 JSON 객체 하나만 순서대로 작성하십시오 (총 ${bodyMarkerCount}개, 첫 번째 마커분 제외).\n` +
-          `- 각 JSON 객체는 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸고, 다른 텍스트 없이 JSON만 그 안에 쓰십시오.\n` +
-          `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.\n\n` +
-          `[입력 draft 전문]\n${draft}`;
-        const cardsRaw = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, true));
-        const rawBlocks = extractCards(cardsRaw);
-        // JSON 파싱 실패는 카드 1개 단위 문제일 뿐이라 전체 초안을 실패시키지 않는다 —
-        // 그 카드만 안전한 요약형 폴백 카드로 대체하고 나머지는 정상 진행한다.
-        bodySvgs = rawBlocks.map((block, i) => {
+        // 카드 1개당 호출 1개로 병렬 실행(이전엔 N개 카드를 호출 1번에 순서대로 다 쓰게 시켜서,
+        // 응답이 잘리면 뒤쪽 카드가 통째로 사라져 ImageCardCountMismatchError로 단계 전체가
+        // 실패했다 — 카드별로 나누면 그 카드 슬롯만 buildFallbackCardSvg로 채워 개수가 항상
+        // 마커 수와 일치하고, 응답도 병렬이라 더 빠르다). 각 호출엔 draft 전문을 그대로 줘서
+        // "이전엔 모델이 한 번에 훑으며 파악하던 문맥"을 그대로 유지한다(품질 저하 방지).
+        // 채널 하나 안에서의 카드 동시 호출 상한. 채널 자체가 이미 최대 5개까지 동시에 돌 수
+        // 있으므로(위 주석 참고) 이 값 × 5가 provider에 실제로 튀는 최악의 동시 요청 수가 된다.
+        const CARD_CONCURRENCY = 3;
+        const cardIndexes = Array.from({ length: bodyMarkerCount }, (_, i) => i);
+        const cardRaws = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, (i) => {
+          const user =
+            `[주제]\n${topic}\n\n` +
+            `아래 draft 전문에는 [IMAGE: ...] 마커가 총 ${imageMarkers.length}개 있습니다. ` +
+            `**첫 번째 마커(대표 썸네일)는 별도 로직이 이미 처리했으므로 신경 쓰지 마십시오.** ` +
+            `지금 작성할 카드는 두 번째 마커부터 세어 ${i + 1}번째 카드(전체 마커 중 ${i + 2}번째)입니다. ` +
+            `그 카드 1개의 콘텐츠만 작성하세요.\n\n` +
+            `[작성 규칙]\n` +
+            `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
+            `- 오직 이 카드 1개의 JSON 객체 하나만 작성하십시오.\n` +
+            `- JSON 객체는 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸고, 다른 텍스트 없이 JSON만 그 안에 쓰십시오.\n` +
+            `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.\n\n` +
+            `[입력 draft 전문]\n${draft}`;
+          return call(sp, sk, sm, system, user, Math.min(maxTok, 4000), false, true);
+        });
+        // JSON 파싱 실패(또는 블록 자체를 못 찾음)는 카드 1개 단위 문제일 뿐이라 전체를
+        // 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로 대체하고 나머지는 정상 진행한다.
+        // Promise.all은 입력 배열 순서를 보존하므로 cardRaws[i]가 곧 (i+1)번째 카드다.
+        bodySvgs = cardRaws.map((raw, i) => {
+          const rawBlock = extractCards(stripCodeFence(raw))[0];
+          if (!rawBlock) {
+            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 응답에서 JSON 블록을 못 찾음 — 대체 카드로 진행`);
+            return buildFallbackCardSvg(extractDraftTitle(draft) || topic);
+          }
+          // 카드 1개만 요청하면 모델이 CARD_START/END "안쪽"에서 또 ```json 코드펜스로 감싸는
+          // 빈도가 높아진다(실측). 위 stripCodeFence는 응답 전체가 통째로 펜스에 싸인 경우만
+          // 벗겨내므로, 마커 안쪽 펜스는 블록을 추출한 뒤 한 번 더 벗겨야 한다.
+          const block = stripCodeFence(rawBlock);
           try {
             const content = JSON.parse(block) as CardContent;
             return buildCardSvg(content);

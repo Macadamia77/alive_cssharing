@@ -345,7 +345,18 @@ export async function runPipeline(
       }
 
     } else if (kind === "image") {
-      const imageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
+      const allImageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
+      // naver-blog(html) 최종 조립은 <!-- PUBLISH:START/END --> 블록 안쪽만 채택하고 나머지는
+      // 버린다(assembleNaverBlogHtml). 그런데 여기서 마커를 draft 전체에서 세면, PUBLISH 블록
+      // 밖(NOTES 등)에 우연히 섞인 마커까지 카드로 만들어버려 "카드는 8장 만들었는데 실제 글엔
+      // 6장만 들어감" 같은 개수 불일치가 실측 확인됐다 — cardAssets 개수와 본문 <figure> 개수가
+      // 어긋나면 SVG 다운로드 버튼이 숨겨지고 PNG도 저화질 폴백으로 떨어진다. PUBLISH 블록이
+      // 있으면 그 범위 안의 마커만, 없으면(다른 채널·형식) 기존대로 draft 전체를 그대로 쓴다.
+      const publishBlock = draft.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
+      const imageMarkers = publishBlock
+        ? allImageMarkers.filter(m =>
+            m.index! >= publishBlock.index! && m.index! < publishBlock.index! + publishBlock[0].length)
+        : allImageMarkers;
       if (imageMarkers.length === 0) {
         console.log(`[engine] ${channel} · ${stage.id}: [IMAGE:...] 마커 없음 → 건너뜀`);
         continue;
@@ -399,6 +410,7 @@ export async function runPipeline(
           const sectionStart = prevMarker.index! + prevMarker[0].length;
           const sectionEnd = marker.index! + marker[0].length;
           const section = draft.slice(sectionStart, sectionEnd).trim();
+          const markerDesc = marker[1]?.trim() ?? ""; // "[IMAGE: 설명]"의 설명 — writer가 카드마다 다르게 쓰므로 항상 카드별로 구분되는 텍스트다.
 
           const user =
             `[주제]\n${topic}\n\n` +
@@ -413,15 +425,21 @@ export async function runPipeline(
             `- 오직 이 카드 1개의 JSON 객체 하나만 작성하십시오.\n` +
             `- JSON 객체는 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸고, 다른 텍스트 없이 JSON만 그 안에 쓰십시오.\n` +
             `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.`;
-          return call(sp, sk, sm, system, user, Math.min(maxTok, 4000), false, true)
-            .then((raw) => ({ raw, section }));
+          // 동시에 3개가 정확히 같은 타이밍에 발사되면 provider가 그 순간만 유독 부하를 크게
+          // 느껴 한꺼번에 이상 응답을 내는 사례가 실측 확인됐다(첫 웨이브 카드 3개가 전부 동일한
+          // 대체 카드로 떨어짐) — 정확한 서버 측 원인은 알 수 없지만, 시작 시점을 살짝 흩뿌리는
+          // 것만으로 값싸게 완화할 수 있어 넣는다(워커 슬롯당 최대 250ms, 속도엔 영향 거의 없음).
+          const stagger = (i % CARD_CONCURRENCY) * 250;
+          return new Promise<void>((resolve) => setTimeout(resolve, stagger))
+            .then(() => call(sp, sk, sm, system, user, Math.min(maxTok, 4000), false, true))
+            .then((raw) => ({ raw, section, markerDesc }));
         });
         // JSON 파싱 실패(또는 블록 자체를 못 찾음)는 카드 1개 단위 문제일 뿐이라 전체를
         // 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로 대체하고 나머지는 정상 진행한다.
         // 폴백도 draft 제목 대신 그 카드의 담당 구간 텍스트를 쓴다 — 여러 카드가 동시에
         // 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제) 최소한 서로 달라진다.
         // Promise.all은 입력 배열 순서를 보존하므로 cardRaws[i]가 곧 (i+1)번째 카드다.
-        bodySvgs = cardRaws.map(({ raw, section }, i) => {
+        bodySvgs = cardRaws.map(({ raw, section, markerDesc }, i) => {
           // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
           // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
           // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어).
@@ -429,7 +447,11 @@ export async function runPipeline(
             .replace(/<!--[\s\S]*?-->/g, " ")
             .replace(/\[IMAGE:[^\]]*\]/g, " ")
             .replace(/\s+/g, " ").trim();
-          const fallbackText = cleanSection.slice(0, 60) || extractDraftTitle(draft) || topic;
+          // 구간 텍스트가 비거나 너무 짧아도(짧은 리스트 항목 뒤에 마커가 바로 붙는 경우 등),
+          // [IMAGE: 설명] 안의 설명 문구는 writer가 카드마다 항상 다르게 쓰므로 최후 보루로 쓴다
+          // — 실측 확인된 "여러 카드가 동시에 실패하면 전부 똑같은 대체 카드가 뜨는" 문제의
+          // 직접적인 재발 방지책(구간이 비어도 최소한 카드별로 다른 문구가 뜨게 됨).
+          const fallbackText = cleanSection.slice(0, 60) || markerDesc || extractDraftTitle(draft) || topic;
           const rawBlock = extractCards(stripCodeFence(raw))[0];
           if (!rawBlock) {
             console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 응답에서 JSON 블록을 못 찾음 — 대체 카드로 진행. 원본 응답(앞 300자): ${raw.slice(0, 300)}`);

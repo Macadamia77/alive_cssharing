@@ -377,6 +377,11 @@ export function buildCardSvg(content: CardContent): string {
   const cardHeight = y + PAD_BOTTOM;
 
   return (
+    // XML 선언으로 인코딩을 명시한다 — SVG 자체엔 HTTP Content-Type 같은 헤더가 없어서, 이
+    // 선언이 없으면 파일을 여는 도구(브라우저 "다른 이름으로 저장", 텍스트 에디터, Figma 등)가
+    // 인코딩을 추측해야 한다. 실제로 UTF-8로 정상 저장·서빙되고 있어도(Supabase Storage에서
+    // 직접 확인함), 추측이 틀리면 한글이 깨져 보인다 — 선언을 넣어 추측 자체를 없앤다.
+    `<?xml version="1.0" encoding="UTF-8"?>` +
     `<svg width="${CARD_WIDTH}" height="${cardHeight}" viewBox="0 0 ${CARD_WIDTH} ${cardHeight}" ` +
     `xmlns="http://www.w3.org/2000/svg">` +
     `<defs>` +
@@ -461,6 +466,8 @@ export function buildThumbnailSvg(title: string, subtitleRaw: string, mascotData
     : "";
 
   return (
+    // buildCardSvg와 동일한 이유로 XML 인코딩 선언을 명시한다(위 373행 주석 참고).
+    `<?xml version="1.0" encoding="UTF-8"?>` +
     `<svg width="${THUMBNAIL_SIZE}" height="${THUMBNAIL_SIZE}" viewBox="0 0 ${THUMBNAIL_SIZE} ${THUMBNAIL_SIZE}" ` +
     `xmlns="http://www.w3.org/2000/svg">` +
     `<rect x="4" y="4" width="${THUMBNAIL_SIZE - 8}" height="${THUMBNAIL_SIZE - 8}" fill="${THUMBNAIL_BG}" ` +

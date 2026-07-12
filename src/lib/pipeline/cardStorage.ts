@@ -29,8 +29,11 @@ export async function uploadCards(
       upsert: true,
     });
     if (pngErr) throw new Error(`카드 ${i} PNG 업로드 실패: ${pngErr.message}`);
+    // charset을 명시하지 않으면 Storage가 그대로 "image/svg+xml" 헤더로 서빙하는데, 이 경우
+    // SVG를 직접 열어보는 도구(브라우저 저장, 텍스트 에디터 등)가 인코딩을 추측해야 한다 —
+    // 텍스트 자체는 UTF-8로 정상 저장되지만(실측 확인) 추측이 틀리면 한글이 깨져 보인다.
     const { error: svgErr } = await supabase.storage.from(BUCKET).upload(svgPath, cards[i].svg, {
-      contentType: "image/svg+xml",
+      contentType: "image/svg+xml;charset=utf-8",
       upsert: true,
     });
     if (svgErr) throw new Error(`카드 ${i} SVG 업로드 실패: ${svgErr.message}`);

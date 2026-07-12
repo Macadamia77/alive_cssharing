@@ -144,9 +144,19 @@ function textLine(x: number, y: number, s: string, o: TextOpts): string {
 // 확인 — render-worker는 Vercel과 별도 저장소/설정으로 배포되는 Railway 워커라 root에서
 // `tsc`가 통과해도 안심할 수 없다). 타입을 스키마에서 파생시키면 애초에 "따로 맞출 두 타입"이
 // 없어져 이 클래스의 드리프트가 구조적으로 불가능해진다.
+// z.tuple([a, b])는 JSON Schema로 변환될 때 "items"가 [schemaA, schemaB] 형태(위치별 스키마
+// 배열)가 되는데, 구조화 출력 강제 모드는 이 형태를 거부한다 — 실제 프로덕션 에러로 확인됨:
+// "Array types must be specified with a single object schema for 'items'." (Railway 로그,
+// 2026-07-13). @ai-sdk/provider-utils의 zodSchema()로 직접 변환해 재현·검증했다. cardBaseShape의
+// headline·cta가 모든 레이아웃에 공통으로 들어가는 필드라 이 스키마를 쓰는 카드는 예외 없이 전부
+// 이 에러로 실패해 폴백 카드로 떨어지고 있었다(subtext null 수정만으로는 해결되지 않았던 진짜
+// 원인). "정확히 2개"라는 제약은 동일한 유지한 채, items가 단일 스키마가 되도록 array+length()로
+// 바꾼다 — 의미상 동일(두 원소 다 같은 타입이라 애초에 tuple일 필요가 없었다).
+const pairOfStrings = z.array(z.string()).length(2);
+
 const cardBaseShape = {
   contextLabel: z.string(),
-  headline: z.tuple([z.string(), z.string()]),
+  headline: pairOfStrings,
   // .optional()은 필드가 아예 없는 것(undefined)만 허용하고 null은 거부한다 — 그런데 구조화
   // 출력(스키마 강제) 모드에서는 provider가 "이 선택 필드는 안 쓴다"를 필드 생략이 아니라
   // 명시적 null로 채워 보내는 경우가 흔하다(실측 확인: subtext가 선택 필드라 카드 대부분이
@@ -154,7 +164,7 @@ const cardBaseShape = {
   // "폴백을 없애려던" 수정이 오히려 사실상 항상 폴백이 뜨는 상태를 만든 셈). null도 허용하도록
   // .nullish()로 바꾼다.
   subtext: z.string().nullish(),
-  cta: z.tuple([z.string(), z.string()]),
+  cta: pairOfStrings,
 };
 
 export const cardContentSchema = z.discriminatedUnion("layout", [
@@ -165,20 +175,17 @@ export const cardContentSchema = z.discriminatedUnion("layout", [
   }),
   z.object({
     ...cardBaseShape, layout: z.literal("chat"),
-    bubbles: z.tuple([z.string(), z.string()]), conclusion: z.string(),
+    bubbles: pairOfStrings, conclusion: z.string(),
   }),
   z.object({
     ...cardBaseShape, layout: z.literal("badges"),
     tags: z.array(z.string()).min(2).max(4),
-    gridItems: z.tuple([
-      z.object({ title: z.string(), desc: z.string() }),
-      z.object({ title: z.string(), desc: z.string() }),
-    ]),
+    gridItems: z.array(z.object({ title: z.string(), desc: z.string() })).length(2),
   }),
   z.object({
     ...cardBaseShape, layout: z.literal("table"),
-    columns: z.tuple([z.string(), z.string()]),
-    rows: z.array(z.object({ label: z.string(), values: z.tuple([z.string(), z.string()]) })).min(2).max(3),
+    columns: pairOfStrings,
+    rows: z.array(z.object({ label: z.string(), values: pairOfStrings })).min(2).max(3),
   }),
 ]);
 

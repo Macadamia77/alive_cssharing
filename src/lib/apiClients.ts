@@ -237,20 +237,29 @@ export async function callProvider(
  * 없어진다. 스키마를 못 만족하면(재시도 후에도) NoObjectGeneratedError를 던지므로 호출자가
  * 명시적으로 처리한다.
  */
-export async function callProviderForObject<T>(
+export async function callProviderForObject<S extends z.ZodType>(
   p: Provider, apiKey: string, model: string,
-  system: string, user: string, maxTokens: number, schema: z.ZodType<T>
-): Promise<T> {
+  system: string, user: string, maxTokens: number, schema: S
+): Promise<z.infer<S>> {
   const languageModel =
     p === "gemini" ? createGoogleGenerativeAI({ apiKey })(model) :
     p === "claude" ? createAnthropic({ apiKey })(model) :
     createOpenAI({ apiKey })(model);
+  // prompt(문자열)와 messages(배열) 중 하나만 써야 하는 유니언인데(AI SDK Prompt 타입), root
+  // tsconfig(moduleResolution:"bundler")에서는 prompt만 써도 통과하지만 render-worker(자체
+  // tsconfig, moduleResolution 기본값)에서는 같은 유니언이 다르게 해석돼 "messages 없음" 에러가
+  // 났다(실측 확인 — render-worker는 Railway에 별도 배포되는 워커라 root의 tsc 통과만으론
+  // 안심할 수 없다). messages로 명시하면 유니언의 한쪽 분기를 애매함 없이 직접 만족시켜 두
+  // 환경 모두에서 안정적으로 통과한다.
   const { object } = await generateObject({
     model: languageModel,
     schema,
     system,
-    prompt: user,
+    messages: [{ role: "user", content: user }],
     maxOutputTokens: maxTokens,
   });
-  return object;
+  // generateObject의 반환 타입은 (배열/enum/no-schema 출력 모드까지 아우르는) 조건부 타입이라
+  // "항상 object 모드로 쓴다"는 이 함수의 전제를 TS가 알 길이 없어 캐스팅이 필요하다 — 런타임
+  // 값 자체는 스키마로 이미 검증된 상태다.
+  return object as z.infer<S>;
 }

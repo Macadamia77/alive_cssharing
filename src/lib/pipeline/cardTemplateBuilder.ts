@@ -136,26 +136,14 @@ function textLine(x: number, y: number, s: string, o: TextOpts): string {
 }
 
 // ─── 카드 콘텐츠 스키마 (image-maker LLM이 채우는 값) ──────────────
-interface CardBase {
-  contextLabel: string;       // 상단 컨텍스트 바 — 글 제목 축약, 10~20자
-  headline: [string, string]; // 메인 헤드라인 2행 (1행 검정·2행 네이비)
-  subtext?: string;           // 보조 설명 1줄 (선택)
-  cta: [string, string];      // CTA 2행 (1행 일반, 2행 강조)
-}
-
-export type CardContent =
-  | (CardBase & { layout: "summary"; body: string })
-  | (CardBase & { layout: "numbered"; items: { title: string; desc: string }[] })
-  | (CardBase & { layout: "chat"; bubbles: [string, string]; conclusion: string })
-  | (CardBase & { layout: "badges"; tags: string[]; gridItems: [{ title: string; desc: string }, { title: string; desc: string }] })
-  | (CardBase & { layout: "table"; columns: [string, string]; rows: { label: string; values: [string, string] }[] });
-
-// ─── CardContent와 1:1로 맞춘 zod 스키마 — AI SDK의 generateObject가 이 스키마로 구조화
-// 출력을 강제한다. 예전엔 "JSON 하나만, CARD_START/END로 감싸서" 같은 프롬프트 지시에만
-// 의존했는데, 모델이 코드펜스를 덧씌우거나 문장을 곁들이거나 필드를 빠뜨리면 JSON.parse가
-// 깨지고 그 카드가 통째로 밋밋한 대체 카드(buildFallbackCardSvg)로 떨어졌다(실측 확인). 스키마
-// 강제 모드는 provider가 자체적으로 스키마를 만족하는 응답만 반환하도록 보장해 이 실패 경로
-// 자체를 없앤다.
+// zod 스키마가 단일 소스이고, CardContent 타입은 그 스키마에서 파생한다(z.infer) — 예전엔
+// TS 유니언 타입(CardContent)과 zod 스키마를 따로 손으로 맞춰 썼는데, Next.js(root tsconfig,
+// moduleResolution:"bundler")에서는 구조가 일치해도 render-worker(자체 tsconfig,
+// moduleResolution 기본값="node10")에서는 zod/AI SDK의 조건부 exports 해석이 달라져 tuple
+// 타입이 헐겁게 추론되면서(`[string?, string?, ...]`) 두 타입이 어긋나 빌드가 깨졌다(실측
+// 확인 — render-worker는 Vercel과 별도 저장소/설정으로 배포되는 Railway 워커라 root에서
+// `tsc`가 통과해도 안심할 수 없다). 타입을 스키마에서 파생시키면 애초에 "따로 맞출 두 타입"이
+// 없어져 이 클래스의 드리프트가 구조적으로 불가능해진다.
 const cardBaseShape = {
   contextLabel: z.string(),
   headline: z.tuple([z.string(), z.string()]),
@@ -187,6 +175,8 @@ export const cardContentSchema = z.discriminatedUnion("layout", [
     rows: z.array(z.object({ label: z.string(), values: z.tuple([z.string(), z.string()]) })).min(2).max(3),
   }),
 ]);
+
+export type CardContent = z.infer<typeof cardContentSchema>;
 
 // ─── 콘텐츠 영역 렌더러 (5종) — 각자 자기 높이를 반환한다(코드가 결정 → 편차 문제 구조적 해소) ──
 interface Rendered { svg: string; height: number; }

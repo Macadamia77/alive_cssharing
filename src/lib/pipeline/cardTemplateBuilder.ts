@@ -147,7 +147,13 @@ function textLine(x: number, y: number, s: string, o: TextOpts): string {
 const cardBaseShape = {
   contextLabel: z.string(),
   headline: z.tuple([z.string(), z.string()]),
-  subtext: z.string().optional(),
+  // .optional()은 필드가 아예 없는 것(undefined)만 허용하고 null은 거부한다 — 그런데 구조화
+  // 출력(스키마 강제) 모드에서는 provider가 "이 선택 필드는 안 쓴다"를 필드 생략이 아니라
+  // 명시적 null로 채워 보내는 경우가 흔하다(실측 확인: subtext가 선택 필드라 카드 대부분이
+  // 이 값을 안 쓰는데, 그때마다 null이 와서 검증에 실패 → 매번 폴백 카드로 떨어졌다 —
+  // "폴백을 없애려던" 수정이 오히려 사실상 항상 폴백이 뜨는 상태를 만든 셈). null도 허용하도록
+  // .nullish()로 바꾼다.
+  subtext: z.string().nullish(),
   cta: z.tuple([z.string(), z.string()]),
 };
 

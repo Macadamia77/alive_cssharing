@@ -91,6 +91,12 @@ async function archiveRunResultsIfSettled(runId: string): Promise<void> {
 // 최대 토큰(16384) + thinking 예산을 다 채우는 극단적 경우도 커버하면서 무한 대기는 막는다.
 const PLANNING_CALL_TIMEOUT_MS = 6 * 60 * 1000;
 
+// research-deep은 기본 검색 타임아웃(4분, apiClients.ts SEARCH_TIMEOUT_MS)을 다 채우고 실패해도
+// skeleton이 누적 데이터로 그대로 폴백한다 — 실패 시 얻는 게 없으니 더 짧게 실패하는 게 순수
+// 이득이다(실측 확인: 2026-07-12, 정확히 240초를 다 채우고 폐기됨). research/research-voice는
+// 이 문제가 없어서(실측상 여유 있게 완료) 손대지 않는다.
+const DEEP_RESEARCH_SEARCH_TIMEOUT_MS = 2.5 * 60 * 1000;
+
 // ── M5: 브레인스토밍 작업(job_type='brainstorm') ──────────────────
 // 채널이 아직 없는 시점(주제 단계)에서 research+research-voice를 병렬 실행하고,
 // 그 산출물 + 누적 리서치/우수작 요약/피드백을 근거로 brainstorm 페르소나가 주제 후보
@@ -398,7 +404,11 @@ async function processFinalizeJob(task: any) {
         (n) => void statusCallback(`소스 ${n}개 검색 중`),
         researchProviderOverride,
         // [M8 Q2] 모드 B는 입력이 초안 전문이지만 아카이브엔 한 줄 주제(selected_topic)를 저장
-        isImproveMode ? (selectedTopic || undefined) : undefined
+        isImproveMode ? (selectedTopic || undefined) : undefined,
+        // research-deep은 실패해도 skeleton이 누적 데이터로 그대로 폴백한다 — 기본 4분을 다
+        // 채우고 실패하면 그 4분은 순수 손실이다(실측 확인: 2026-07-12, 정확히 이 케이스로
+        // 240초를 다 채우고 폐기됨). 결과가 같다면 더 짧게 실패하는 게 이득이라 2.5분으로 당긴다.
+        DEEP_RESEARCH_SEARCH_TIMEOUT_MS
       );
     }
 

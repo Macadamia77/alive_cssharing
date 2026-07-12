@@ -202,6 +202,23 @@ export const cardContentSchema = z.union([
 
 export type CardContent = z.infer<typeof cardContentSchema>;
 
+// ─── 이미지 시각 검수(image-review 단계) 응답 스키마 ────────────────
+// 카드 여러 장을 한 번에 vision 모델에 첨부해 한 번의 호출로 묶어 검수한다(장당 개별 호출보다
+// 비용·시간이 훨씬 적게 든다). index는 첨부한 이미지 순서(0-based, 본문 카드 기준 — 썸네일 제외)와
+// 반드시 일치해야 한다. OpenAI 구조화 출력 제약(이 파일 위쪽 tuple/oneOf 관련 주석 참고)을 그대로
+// 적용해 배열 요소 스키마는 항상 단일 object, 모든 필드는 required(선택은 nullable로 표현)로 둔다.
+export const imageReviewSchema = z.object({
+  results: z.array(z.object({
+    index: z.number().int(),
+    verdict: z.enum(["approved", "reject"]),
+    // reject일 때만 사유가 있고 approved면 없다 — optional 대신 nullable(이 파일의 subtext와
+    // 동일한 이유: OpenAI 구조화 출력은 필드 생략을 허용하지 않는다).
+    issue: z.string().nullable(),
+  })),
+});
+
+export type ImageReviewResult = z.infer<typeof imageReviewSchema>;
+
 // generateObject에 넘길 실제 요청 스키마는 cardContentSchema를 그대로 쓰지 않고 한 겹 감싼다 —
 // OpenAI 구조화 출력은 최상위 스키마가 반드시 단일 object여야 한다(anyOf/oneOf 등 유니언이
 // 최상위에 오는 것 자체를 허용하지 않음). 필드 하나(`card`)로 감싸면 최상위는 object가 되고

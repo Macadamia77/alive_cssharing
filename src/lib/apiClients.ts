@@ -93,13 +93,17 @@ function appendSources(text: string, sources: SearchSource[]): string {
  */
 export async function callClaudeWithNativeSearch(
   apiKey: string, model: string, systemPrompt: string, userMessage: string,
-  maxTokens = 8192, onSearchStart?: (queryCountSoFar: number) => void
+  maxTokens = 8192, onSearchStart?: (queryCountSoFar: number) => void,
+  // research-deep처럼 결과가 어차피 실패 시 누적 데이터로 폴백되는 단계는, 4분을 다 채워
+  // 타임아웃나도 얻는 게 없다 — 실측 확인(2026-07-12): 4분 꽉 채우고 실패해 그대로 폐기됨.
+  // 호출부가 더 짧은 상한을 지정할 수 있게 하되, 지정 안 하면 기존 4분 그대로(회귀 없음).
+  searchTimeoutMs = SEARCH_TIMEOUT_MS
 ): Promise<string> {
   const anthropic = createAnthropic({ apiKey });
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), searchTimeoutMs);
     try {
       const { text, sources, finishReason } = await generateText({
         model: anthropic(model),
@@ -122,7 +126,7 @@ export async function callClaudeWithNativeSearch(
       return appendSources(text, urls);
     } catch (e) {
       if (controller.signal.aborted) {
-        console.warn(`[apiClients] Claude 웹검색이 ${SEARCH_TIMEOUT_MS / 1000}초 안에 안 끝나 중단 — 검색 없이 진행합니다(상위 로직이 누적 데이터로 폴백).`);
+        console.warn(`[apiClients] Claude 웹검색이 ${searchTimeoutMs / 1000}초 안에 안 끝나 중단 — 검색 없이 진행합니다(상위 로직이 누적 데이터로 폴백).`);
         return "";
       }
       lastErr = e;
@@ -179,7 +183,8 @@ export async function callGemini(
  * (예전 구현은 groundingMetadata를 안 읽어 출처를 통째로 버렸음.)
  */
 export async function callGeminiWithSearch(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, disableThinking = false
+  apiKey: string, model: string, systemPrompt: string, userMessage: string, disableThinking = false,
+  searchTimeoutMs = SEARCH_TIMEOUT_MS
 ): Promise<string> {
   const google = createGoogleGenerativeAI({ apiKey });
   const providerOptions =
@@ -189,7 +194,7 @@ export async function callGeminiWithSearch(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), searchTimeoutMs);
     try {
       const { text, sources, finishReason } = await generateText({
         model: google(model),
@@ -213,7 +218,7 @@ export async function callGeminiWithSearch(
       return appendSources(text, urls);
     } catch (e) {
       if (controller.signal.aborted) {
-        console.warn(`[apiClients] Gemini 웹검색이 ${SEARCH_TIMEOUT_MS / 1000}초 안에 안 끝나 중단 — 검색 없이 진행합니다(상위 로직이 누적 데이터로 폴백).`);
+        console.warn(`[apiClients] Gemini 웹검색이 ${searchTimeoutMs / 1000}초 안에 안 끝나 중단 — 검색 없이 진행합니다(상위 로직이 누적 데이터로 폴백).`);
         return "";
       }
       lastErr = e;
@@ -239,18 +244,22 @@ export async function callProvider(
     // config-driven: 단계에 thinking 예산이 설정된 경우에만 Claude 네이티브 thinking 활성화.
     thinkingBudget?: number;
     // 검색 단계 전용이 아닌 일반 생성 호출에 상한을 두고 싶을 때만 지정(기본은 무제한 — 기존
-    // 동작 유지). useSearch=true면 검색 전용 함수 자체의 4분 타임아웃이 이미 적용되므로 무시된다.
+    // 동작 유지). useSearch=true면 이 값 대신 아래 searchTimeoutMs가 적용된다.
     timeoutMs?: number;
+    // useSearch=true 전용 타임아웃 — 지정 안 하면 검색 함수 자체의 기본값(4분)을 그대로 쓴다.
+    // research-deep처럼 실패해도 어차피 누적 데이터로 폴백되는 단계는 더 짧게 잡아 낭비를
+    // 줄일 수 있다(호출부 예: render-worker/index.ts의 research-deep 호출).
+    searchTimeoutMs?: number;
   }
 ): Promise<string> {
   if (p === "gemini") {
     return opts?.useSearch
-      ? callGeminiWithSearch(apiKey, model, system, user, opts?.disableThinking)
+      ? callGeminiWithSearch(apiKey, model, system, user, opts?.disableThinking, opts?.searchTimeoutMs)
       : callGemini(apiKey, model, system, user, maxTokens, opts?.disableThinking, opts?.timeoutMs);
   }
   if (p === "claude") {
     return opts?.useSearch
-      ? callClaudeWithNativeSearch(apiKey, model, system, user, maxTokens, opts?.onSearchSource)
+      ? callClaudeWithNativeSearch(apiKey, model, system, user, maxTokens, opts?.onSearchSource, opts?.searchTimeoutMs)
       : callClaude(apiKey, model, system, user, maxTokens, opts?.thinkingBudget ? { budgetTokens: opts.thinkingBudget } : undefined, opts?.timeoutMs);
   }
   if (p === "openai") return callOpenAI(apiKey, model, system, user, opts?.timeoutMs);
@@ -289,5 +298,35 @@ export async function callProviderForObject<S extends z.ZodType>(
   // generateObject의 반환 타입은 (배열/enum/no-schema 출력 모드까지 아우르는) 조건부 타입이라
   // "항상 object 모드로 쓴다"는 이 함수의 전제를 TS가 알 길이 없어 캐스팅이 필요하다 — 런타임
   // 값 자체는 스키마로 이미 검증된 상태다.
+  return object as z.infer<S>;
+}
+
+/**
+ * callProviderForObject의 멀티모달 버전 — 이미지(들)를 첨부해 vision 모델에게 구조화 출력을
+ * 요청한다(image-review 단계 전용). Claude/OpenAI/Gemini 모두 이 세 provider의 최신 모델은
+ * 기본적으로 vision을 지원하므로, 텍스트 전용 호출과 동일한 모델 해석 경로를 그대로 쓴다 —
+ * 별도의 "vision 모델" 선택 로직이 필요 없다.
+ */
+export async function callProviderForObjectWithImages<S extends z.ZodType>(
+  p: Provider, apiKey: string, model: string,
+  system: string, text: string, images: Buffer[], maxTokens: number, schema: S
+): Promise<z.infer<S>> {
+  const languageModel =
+    p === "gemini" ? createGoogleGenerativeAI({ apiKey })(model) :
+    p === "claude" ? createAnthropic({ apiKey })(model) :
+    createOpenAI({ apiKey })(model);
+  const { object } = await generateObject({
+    model: languageModel,
+    schema,
+    system,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text },
+        ...images.map((data) => ({ type: "file" as const, data, mediaType: "image/png" })),
+      ],
+    }],
+    maxOutputTokens: maxTokens,
+  });
   return object as z.infer<S>;
 }

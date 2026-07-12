@@ -26,7 +26,11 @@ export async function runSharedProducerStage(
   providerOverride?: Provider,
   // [M8] 아카이브(pipeline_research.topic)에 저장할 값. 입력(topic)과 다르게 두고 싶을 때 사용.
   // 예: 모드 B research-deep는 입력이 "초안 전문"이지만 아카이브 topic엔 한 줄 주제를 넣는다.
-  archiveTopic?: string
+  archiveTopic?: string,
+  // useSearch 단계 전용 타임아웃 오버라이드. 지정 안 하면 callProvider/검색 함수의 기본값(4분)을
+  // 그대로 쓴다 — research-deep처럼 실패해도 누적 데이터로 폴백돼 4분을 다 채우는 게 순손실인
+  // 단계에서만 짧게 지정한다(호출부: render-worker/index.ts).
+  searchTimeoutMs?: number
 ): Promise<string> {
   const persona = await loadPersona(null, def.persona ?? def.id, token);
   if (!persona) {
@@ -44,6 +48,7 @@ export async function runSharedProducerStage(
   const out = stripCodeFence(await callProvider(auth.p, auth.apiKey, auth.model, persona, user, def.maxTokens ?? 8192, {
     useSearch: def.useSearch,
     onSearchSource,
+    searchTimeoutMs,
   }));
   if (def.useSearch) warnIfProse(def.id, out);
   // 실검색·출처가 있을 때만 아카이브(품질 게이트). M-1.6에서 출력이 `- 요약 | 출처: URL`

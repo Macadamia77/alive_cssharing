@@ -13,13 +13,13 @@ import {
   type ChannelMeta,
 } from "../channelFiles";
 import { type Provider } from "../aiConfig";
-import { callProvider, callProviderForObject } from "../apiClients";
-import { resolveStages } from "./loadConfig";
+import { callProvider, callProviderForObject, callProviderForObjectWithImages } from "../apiClients";
+import { resolveStages, loadPipelineConfig } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentResearch, addBadExample, addResearch, contextBudget } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray } from "./imageCards";
 import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
-import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema } from "./cardTemplateBuilder";
+import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema, imageReviewSchema } from "./cardTemplateBuilder";
 import type { CardAsset } from "./cardStorage";
 // 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
 import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
@@ -93,6 +93,37 @@ function applyPatches(draft: string, patches: TextPatch[]): { draft: string; app
     }
   }
   return { draft: result, appliedCount };
+}
+
+// ─── 기계적 규칙 사전 게이트(naver-blog 전용) ────────────────────
+// 이미지 개수·제목 글자수처럼 "셀 수 있는" 규칙까지 LLM 리뷰어가 잡게 하면 반려 왕복(20~50초 +
+// 호출 비용)을 그 이유만으로 날린다 — 실측 확인: 이미지 수량 미달로 반려 라운드가 2번 연속
+// 낭비된 사례(2026-07-12, 1차 패치가 못 고쳐서 2차에서 같은 사유로 또 반려). writer 완료 직후
+// 코드로 먼저 세어보고, 걸리면 짧은 부분 패치 1회만 시도한다 — 그래도 안 고쳐지면 조용히
+// content-review로 넘긴다(기존 백스톱 그대로 유지, 이 게이트는 순수 절약용이지 필수 관문이 아님).
+function checkMechanicalRules(draft: string): string[] | null {
+  const publishBlock = draft.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
+  const scope = publishBlock ? publishBlock[1] : draft;
+  const issues: string[] = [];
+
+  const imageCount = (scope.match(/\[IMAGE:\s*[^\]]+\]/g) ?? []).length;
+  if (imageCount < 4 || imageCount > 6) {
+    issues.push(
+      `이미지 마커([IMAGE: ...])가 ${imageCount}개입니다. 4~6개가 되도록 마커를 추가하거나 ` +
+      `제거하세요(내용이 있는 소제목 아래 배치, 비교표·수치 나열형 정보는 마커 대신 마크다운 표로).`
+    );
+  }
+
+  const title = extractDraftTitle(draft);
+  const titleLen = title.length;
+  if (title && (titleLen < 22 || titleLen > 35)) {
+    issues.push(
+      `제목("${title}")이 공백 포함 ${titleLen}자입니다. 22~35자가 되도록 수정하세요 ` +
+      `(핵심 키워드는 맨 앞 유지, 의미가 바뀌지 않게 줄이거나 보강).`
+    );
+  }
+
+  return issues.length > 0 ? issues : null;
 }
 
 // ─── 검수 결과 판정 (JSON verdict 또는 텍스트 PASS/FAIL/REJECT) ─
@@ -225,6 +256,11 @@ export async function runPipeline(
   let writerCall: { p: Provider; apiKey: string; model: string } =
     { p: provider, apiKey: baseAuth.apiKey, model: baseAuth.model }; // 재작성은 writer 모델로
   let replacedCards: string[] = []; // image 단계에서 만든 카드 HTML (플레이스홀더 → 최종 치환용)
+  // 검수 재시도(maxRetries)를 다 쓴 뒤에도 마지막 패치가 실제로 문제를 해결했는지 재검수해서
+  // 안 고쳐졌으면 여기 쌓는다 — 예전엔 마지막 라운드 패치를 재검수 없이 그냥 통과 처리해서,
+  // "발행됐는데 사실 못 고친 문제가 남아있다"를 아무도 모르는 채 넘어갔다(실측 확인된 문제).
+  // 결과 HTML 맨 앞에 주석으로 남겨 최소한 흔적은 남긴다.
+  const unresolvedReviewIssues: string[] = [];
 
   for (const stage of stages) {
     const kind = stageKind(stage.id);
@@ -274,6 +310,37 @@ export async function runPipeline(
       draft = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, meta.disableThinking ?? false));
       if (!draft.trim()) throw new Error(`[engine] ${channel} writer 단계 결과가 비어 있습니다.`);
       console.log(`[engine] ${channel} · writer 완료 (${draft.length}자)`);
+
+      if (channel === "naver-blog") {
+        const mechanicalIssues = checkMechanicalRules(draft);
+        if (mechanicalIssues) {
+          console.log(`[engine] ${channel} · writer 기계적 규칙 위반 ${mechanicalIssues.length}건 — 짧은 수정 요청: ${mechanicalIssues.join(" / ")}`);
+          const fixUser =
+            `[현재 원고]\n${draft}\n\n` +
+            `[고쳐야 할 문제 — 아래 항목만 정확히 고치는 부분 수정만 제시, 다른 내용은 절대 건드리지 마십시오]\n` +
+            mechanicalIssues.map(i => `- ${i}`).join("\n") + "\n\n" +
+            `[출력 형식 — 반드시 이 형식만, 다른 설명 금지]\n` +
+            `[{"find": "원고에 실제로 있는 문자열 그대로", "replace": "수정된 문자열"}, ...]`;
+          try {
+            const patchRaw = stripCodeFence(
+              await call(writerCall.p, writerCall.apiKey, writerCall.model, writerSystemBase, fixUser, 2048, false, true)
+            );
+            const patches = parsePatches(patchRaw);
+            if (patches && patches.length > 0) {
+              const { draft: patched, appliedCount } = applyPatches(draft, patches);
+              if (appliedCount > 0) {
+                draft = patched;
+                console.log(`[engine] ${channel} · writer 기계적 규칙 수정 패치 ${appliedCount}/${patches.length}건 적용`);
+              }
+            }
+          } catch (e) {
+            console.warn(`[engine] ${channel} · writer 기계적 규칙 수정 호출 실패 — content-review에서 다시 걸러짐: ${e instanceof Error ? e.message : e}`);
+          }
+          if (checkMechanicalRules(draft)) {
+            console.warn(`[engine] ${channel} · writer 기계적 규칙 여전히 미해결 — content-review로 넘어감(기존 백스톱)`);
+          }
+        }
+      }
 
     } else if (kind === "reviewer") {
       if (!draft.trim()) { console.warn(`[engine] ${channel}/${stage.id}: 검수할 초안 없음 → 건너뜀`); continue; }
@@ -339,7 +406,21 @@ export async function runPipeline(
         }
 
         if (rewriteCount + 1 >= maxRewrites) {
-          if (maxRewrites > 1) console.warn(`[engine] ${channel} · ${stage.id} 최대 재작성(${maxRewrites}회) 소진 — 마지막 원고로 진행`);
+          if (maxRewrites > 1) {
+            // 예전엔 여기서 바로 break해서 "마지막 라운드 패치가 실제로 문제를 고쳤는지"를 아무도
+            // 확인 안 했다(직전 라운드들은 "다음 반복의 review 호출"이 사실상 재검수 역할을 했지만,
+            // 정의상 마지막 라운드만은 그 다음 반복이 없어 재검수를 못 받았다 — 실측 확인된 문제,
+            // 2026-07-12 naver-blog 생성에서 제목 글자수·경쟁사 인용 위반이 재검수 없이 그대로
+            // 발행됨). 최소 한 번은 재검수해서, 그래도 안 고쳐졌으면 최소한 흔적이라도 남긴다.
+            const finalReview = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false, undefined, stage.thinking?.budgetTokens));
+            if (isRejected(finalReview)) {
+              const summary = finalReview.replace(/\s+/g, " ").slice(0, 200);
+              console.error(`[engine] ${channel} · ${stage.id} 최대 재작성(${maxRewrites}회) 소진 — 마지막 패치도 미해결: ${summary}`);
+              unresolvedReviewIssues.push(`${stage.id}: ${summary}`);
+            } else {
+              console.log(`[engine] ${channel} · ${stage.id} 최대 재작성(${maxRewrites}회) 후 마지막 패치로 통과 확인`);
+            }
+          }
           break;
         }
       }
@@ -383,7 +464,10 @@ export async function runPipeline(
 
       const bodyMarkerCount = imageMarkers.length - 1;
       const system = persona + stageGuides;
-      let bodySvgs: string[] = [];
+      // svg 외에 user/fallbackText도 들고 있는 이유: image-review 단계(있으면)가 REJECT한 카드를
+      // 재생성할 때 이 프롬프트를 그대로(피드백만 덧붙여) 재사용한다 — 처음부터 다시 조립할
+      // 필요 없게.
+      let bodyResults: { svg: string; user: string; fallbackText: string }[] = [];
 
       if (bodyMarkerCount > 0) {
         // 카드 1개당 호출 1개로 병렬 실행(이전엔 N개 카드를 호출 1번에 순서대로 다 쓰게 시켜서,
@@ -400,7 +484,7 @@ export async function runPipeline(
         // 그 카드가 통째로 밋밋한 대체 카드(buildFallbackCardSvg)로 떨어졌다(실측 확인, 흔한 실패
         // 경로였다). callProviderForObject(스키마 강제 구조화 출력)로 바꿔 이 파싱 실패 경로 자체를
         // 없앤다 — provider가 cardContentSchema를 만족하는 응답만 반환하도록 AI SDK가 보장한다.
-        bodySvgs = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, async (i) => {
+        bodyResults = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, async (i) => {
           // 각 카드가 담당할 구간(이전 마커 끝~이 마커 끝)을 미리 잘라 명시한다. draft 전문을
           // 그대로 다 주고 "몇 번째 카드"라고만 알려주면, 카드끼리 서로 뭘 다뤘는지 모른 채
           // 독립적으로 훑다가 같은 대목(예: 가장 눈에 띄는 통계 하나)을 중복으로 고르는 사례가
@@ -435,6 +519,16 @@ export async function runPipeline(
           const stagger = (i % CARD_CONCURRENCY) * 250;
           await new Promise<void>((resolve) => setTimeout(resolve, stagger));
 
+          // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
+          // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
+          // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어). 폴백 텍스트는
+          // 생성 실패 시에도 image-review REJECT 후 재생성에도 재사용하므로 미리 계산해 둔다.
+          const cleanSection = section
+            .replace(/<!--[\s\S]*?-->/g, " ")
+            .replace(/\[IMAGE:[^\]]*\]/g, " ")
+            .replace(/\s+/g, " ").trim();
+          const fallbackText = cleanSection.slice(0, 60) || markerDesc || extractDraftTitle(draft) || topic;
+
           // provider 오류(레이트리밋·네트워크·스키마를 재시도 후에도 못 만족)는 여전히 카드 1개
           // 단위 문제일 뿐이라 전체를 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로
           // 대체하고 나머지는 정상 진행한다. 폴백도 draft 제목 대신 그 카드의 담당 구간 텍스트를
@@ -444,23 +538,15 @@ export async function runPipeline(
             const { card } = await callProviderForObject(
               sp, sk, sm, system, user, Math.min(maxTok, 4000), cardGenerationSchema
             );
-            return buildCardSvg(card);
+            return { svg: buildCardSvg(card), user, fallbackText };
           } catch (e) {
-            // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
-            // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
-            // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어).
-            const cleanSection = section
-              .replace(/<!--[\s\S]*?-->/g, " ")
-              .replace(/\[IMAGE:[^\]]*\]/g, " ")
-              .replace(/\s+/g, " ").trim();
-            const fallbackText = cleanSection.slice(0, 60) || markerDesc || extractDraftTitle(draft) || topic;
             console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 구조화 생성 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}`);
-            return buildFallbackCardSvg(fallbackText);
+            return { svg: buildFallbackCardSvg(fallbackText), user, fallbackText };
           }
         });
       }
 
-      const finalSvgs = [thumbnailSvg, ...bodySvgs];
+      const finalSvgs = [thumbnailSvg, ...bodyResults.map(r => r.svg)];
       // finalSvgs는 imageMarkers(PUBLISH 블록 안쪽만, 위 355-359행)를 기준으로 만들어졌는데,
       // spliceImageCardsFromArray는 draft "전체"에서 다시 [IMAGE: ...] 마커를 센다 — PUBLISH
       // 블록 밖(NOTES 등)에 마커 모양 텍스트가 하나라도 더 있으면 "마커 N개 중 M개만 생성됨"으로
@@ -487,8 +573,60 @@ export async function runPipeline(
       // SVG → PNG 래스터화. 결정적으로 조립한 SVG(임의 LLM CSS 없음)라 브라우저 캡처보다
       // 실패 가능성이 낮다 — 여기서 실패하면 폴백으로 감추지 않고 그대로 실패를 전파해
       // (render-worker의 상위 catch가 task를 failed 처리) 배포 문제를 바로 드러낸다.
-      const { captureCards } = await import("./cardCapture");
+      const { captureCards, renderSvgToPng } = await import("./cardCapture");
       const captured = captureCards(finalCards).cards;
+
+      // ── 시각 검수(image-review, 채널 오버라이드로만 켜짐) ──────────
+      // 지금까지는 카드 JSON이 스키마만 만족하면 무조건 통과였다 — 실제로 렌더링된 이미지를
+      // 아무도 보지 않았다. 카피가 밋밋하거나 레이아웃 타입이 내용과 안 맞아도 잡을 방법이
+      // 없었다는 뜻이다(로컬 image-maker.md 5단계가 매번 하던 "Read로 열어서 눈으로 확인"에
+      // 해당하는 안전망이 여기엔 없었음). 카드 PNG들을 한 번에 묶어 vision 모델에 첨부해
+      // 검수하고, REJECT된 카드만 피드백을 덧붙여 최대 1회 재생성한다(로컬의 "재캡처 1회"
+      // 원칙과 동일 — 완벽함보다 상한을 두는 게 우선). 본문 카드(썸네일 제외)만 대상이다:
+      // 썸네일은 LLM이 카피를 새로 쓰지 않는 결정적 조립이라 검수 대상이 아니다.
+      if (meta.pipeline?.["image-review"]?.enabled && bodyResults.length > 0) {
+        try {
+          const reviewPersona = await loadPersona(channel, "image-reviewer", token);
+          if (!reviewPersona) throw new Error("image-reviewer.md 페르소나 파일을 찾을 수 없습니다.");
+          const reviewAuth = await resolveModelFor({ stageId: "image-review" });
+          const reviewCfg = loadPipelineConfig().stages.find(s => s.id === "image-review");
+          const bodyCaptured = captured.slice(1); // index 0 = 썸네일
+          const reviewText =
+            `아래 카드 이미지 ${bodyCaptured.length}장을 첨부 순서(0부터) 그대로 검수하세요. ` +
+            `각 이미지마다 반드시 하나의 결과를 반환하세요.`;
+          const { results } = await callProviderForObjectWithImages(
+            reviewAuth.p, reviewAuth.apiKey, reviewAuth.model,
+            reviewPersona, reviewText, bodyCaptured.map(c => c.png),
+            reviewCfg?.maxTokens ?? 4096, imageReviewSchema
+          );
+          const rejected = results.filter(r => r.verdict === "reject" && r.index >= 0 && r.index < bodyResults.length);
+          if (rejected.length > 0) {
+            console.log(`[engine] ${channel} · image-review — ${rejected.length}/${bodyCaptured.length}장 반려, 재생성 시도`);
+            await mapWithConcurrency(rejected, 3, async ({ index, issue }) => {
+              const original = bodyResults[index];
+              const revisedUser = `${original.user}\n\n[검수 피드백 — 반드시 반영해 다시 작성]\n${issue ?? "카피 품질을 개선하세요."}`;
+              let newSvg: string;
+              try {
+                const { card } = await callProviderForObject(
+                  sp, sk, sm, system, revisedUser, Math.min(maxTok, 4000), cardGenerationSchema
+                );
+                newSvg = buildCardSvg(card);
+              } catch (e) {
+                console.warn(`[engine] ${channel} · image-review 재생성 실패(카드 ${index + 1}) — 폴백 유지: ${e instanceof Error ? e.message : e}`);
+                newSvg = buildFallbackCardSvg(original.fallbackText);
+              }
+              // 재검수는 하지 않는다(1회 재생성이 최종) — captured만 갱신, finalCards는 이 시점
+              // 이후 다시 참조되지 않아 갱신 불필요.
+              const rendered = renderSvgToPng(newSvg);
+              captured[index + 1] = { svg: newSvg, png: rendered.png, heightPx: rendered.heightPx };
+            });
+          } else {
+            console.log(`[engine] ${channel} · image-review — 전부 승인`);
+          }
+        } catch (e) {
+          console.warn(`[engine] ${channel} · image-review 실패(원본 카드 그대로 진행): ${e instanceof Error ? e.message : e}`);
+        }
+      }
 
       // Supabase 업로드(SVG/PNG 다운로드 기능용) — 순수 부가 기능이라 실패해도 본문 임베딩엔
       // 영향 없다(best-effort). 실패하면 사용자는 그냥 SVG 다운로드 옵션만 못 받는다.
@@ -522,17 +660,25 @@ export async function runPipeline(
   // ── 최종 조립 (outputFormat별) ──
   const fmt = meta.outputFormat ?? "text";
   if (fmt === "html") {
+    // 검수 재시도를 다 쓰고도 안 고쳐진 문제가 있으면(위 unresolvedReviewIssues), 눈에 보이는
+    // 본문 어디에도 표시가 안 남으면 아무도 모른 채 그대로 발행된다(실측 확인된 문제) — HTML
+    // 주석은 렌더링에 영향 없이 결과물(DB의 tasks.result)에 그대로 남으므로, 최소한 "이 글은
+    // 검수를 다 통과하지 못했다"는 흔적은 남긴다. text/json 포맷 채널에는 안 붙인다 — 그쪽은
+    // writer 출력이 그대로 최종 콘텐츠라(예: json이면 파싱 가능한 값이어야 함) 주석을 못 붙인다.
+    const qualityNote = unresolvedReviewIssues.length > 0
+      ? `<!-- QUALITY_REVIEW_UNRESOLVED: ${unresolvedReviewIssues.length}건 — ${unresolvedReviewIssues.join(" | ").replace(/-->/g, "→")} -->\n`
+      : "";
     const shell = await readChannelFile(channel, "templates/blog-shell.html", token).catch(() => undefined);
     const assembled = assembleNaverBlogHtml(draft, shell);
     if (assembled === null) {
       console.warn(`[engine] ${channel}: HTML 조립 불가(마커 누락/품질 게이트 FAIL) — draft 원문 반환`);
-      return draft;
+      return qualityNote + draft;
     }
     let finalHtml = assembled;
     replacedCards.forEach((cardHtml, idx) => {
       finalHtml = finalHtml.replace(new RegExp(`<!--\\s*HTML_CARD_${idx}\\s*-->`, "g"), cardHtml);
     });
-    return finalHtml;
+    return qualityNote + finalHtml;
   }
   // json / text: writer가 이미 형식대로 출력 → 그대로 반환
   return draft;

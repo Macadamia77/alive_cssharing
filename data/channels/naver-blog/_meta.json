@@ -16,6 +16,6 @@
     "content-review": { "enabled": true, "maxRetries": 3 },
     "tone-review": { "enabled": true, "maxRetries": 3 },
     "image-gen": { "enabled": true },
-    "image-review": { "enabled": false }
+    "image-review": { "enabled": true }
   }
 }

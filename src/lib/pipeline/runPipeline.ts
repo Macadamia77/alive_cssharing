@@ -461,9 +461,27 @@ export async function runPipeline(
       }
 
       const finalSvgs = [thumbnailSvg, ...bodySvgs];
-      const spliced = spliceImageCardsFromArray(draft, finalSvgs);
-      draft = spliced.draft;
-      const finalCards = spliced.cards; // SVG 문자열 배열(이전엔 HTML 문자열이었음)
+      // finalSvgs는 imageMarkers(PUBLISH 블록 안쪽만, 위 355-359행)를 기준으로 만들어졌는데,
+      // spliceImageCardsFromArray는 draft "전체"에서 다시 [IMAGE: ...] 마커를 센다 — PUBLISH
+      // 블록 밖(NOTES 등)에 마커 모양 텍스트가 하나라도 더 있으면 "마커 N개 중 M개만 생성됨"으로
+      // 개수가 어긋나 이 단계가 실패 처리된다(실측 확인: 2026-07-12 naver-blog 생성 실패 사례).
+      // imageMarkers를 스코프한 이유(위 주석)와 똑같은 이유로 스플라이스도 PUBLISH 블록 부분
+      // 문자열에만 적용하고 나머지는 그대로 붙여, 두 마커 집계가 항상 같은 기준을 쓰게 맞춘다.
+      let draftAfterSplice: string;
+      let finalCards: string[];
+      if (publishBlock) {
+        const splicedPub = spliceImageCardsFromArray(publishBlock[0], finalSvgs);
+        draftAfterSplice =
+          draft.slice(0, publishBlock.index!) + splicedPub.draft +
+          draft.slice(publishBlock.index! + publishBlock[0].length);
+        finalCards = splicedPub.cards;
+      } else {
+        const spliced = spliceImageCardsFromArray(draft, finalSvgs);
+        draftAfterSplice = spliced.draft;
+        finalCards = spliced.cards;
+      }
+      draft = draftAfterSplice;
+      // finalCards: SVG 문자열 배열(이전엔 HTML 문자열이었음)
       console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}/${imageMarkers.length}개 생성`);
 
       // SVG → PNG 래스터화. 결정적으로 조립한 SVG(임의 LLM CSS 없음)라 브라우저 캡처보다

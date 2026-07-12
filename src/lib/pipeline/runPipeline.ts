@@ -19,7 +19,7 @@ import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentRe
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray } from "./imageCards";
 import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
-import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardContentSchema } from "./cardTemplateBuilder";
+import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema } from "./cardTemplateBuilder";
 import type { CardAsset } from "./cardStorage";
 // 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
 import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
@@ -441,10 +441,10 @@ export async function runPipeline(
           // 쓴다 — 여러 카드가 동시에 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제)
           // 최소한 서로 달라진다.
           try {
-            const content = await callProviderForObject(
-              sp, sk, sm, system, user, Math.min(maxTok, 4000), cardContentSchema
+            const { card } = await callProviderForObject(
+              sp, sk, sm, system, user, Math.min(maxTok, 4000), cardGenerationSchema
             );
-            return buildCardSvg(content);
+            return buildCardSvg(card);
           } catch (e) {
             // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
             // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은

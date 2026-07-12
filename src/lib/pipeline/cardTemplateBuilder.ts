@@ -161,13 +161,24 @@ const cardBaseShape = {
   // 출력(스키마 강제) 모드에서는 provider가 "이 선택 필드는 안 쓴다"를 필드 생략이 아니라
   // 명시적 null로 채워 보내는 경우가 흔하다(실측 확인: subtext가 선택 필드라 카드 대부분이
   // 이 값을 안 쓰는데, 그때마다 null이 와서 검증에 실패 → 매번 폴백 카드로 떨어졌다 —
-  // "폴백을 없애려던" 수정이 오히려 사실상 항상 폴백이 뜨는 상태를 만든 셈). null도 허용하도록
-  // .nullish()로 바꾼다.
-  subtext: z.string().nullish(),
+  // "폴백을 없애려던" 수정이 오히려 사실상 항상 폴백이 뜨는 상태를 만든 셈).
+  // .nullish()(=nullable+optional)가 아니라 .nullable()만 쓴다 — OpenAI 구조화 출력엔 "선택
+  // 필드" 개념 자체가 없고 모든 필드가 반드시 required에 들어가야 한다(실측 확인: .nullish()로
+  // 하면 required 배열에서 빠져서 "Missing 'subtext'" 에러). "선택"의 의미는 required는 유지한
+  // 채 타입에 null을 포함시켜(anyOf: [string, null]) 표현한다 — 모델이 안 쓸 땐 필드를 생략하는
+  // 대신 명시적으로 null을 채워 보내면 된다.
+  subtext: z.string().nullable(),
   cta: pairOfStrings,
 };
 
-export const cardContentSchema = z.discriminatedUnion("layout", [
+// z.discriminatedUnion은 JSON Schema로 변환하면 "oneOf"가 되는데, OpenAI 구조화 출력은 위치와
+// 무관하게 oneOf 자체를 아예 지원하지 않는다(실측 확인: 최상위에 두면 "In context=(),
+// 'oneOf' is not permitted.", 한 겹 감싸서 중첩시켜도 "In context=('properties','card'),
+// 'oneOf' is not permitted."로 동일하게 거부됨 — 위치 문제가 아니라 키워드 자체가 금지 목록).
+// 반면 일반 z.union은 "anyOf"로 변환되고 이건 허용된다. 런타임 검증 관점에서는 discriminatedUnion
+// (판별 필드로 바로 해당 분기를 찾음)이든 union(각 분기를 순서대로 시도)이든 최종적으로 걸러내는
+// 값은 동일해서 안전하게 바꿀 수 있다.
+export const cardContentSchema = z.union([
   z.object({ ...cardBaseShape, layout: z.literal("summary"), body: z.string() }),
   z.object({
     ...cardBaseShape, layout: z.literal("numbered"),
@@ -190,6 +201,12 @@ export const cardContentSchema = z.discriminatedUnion("layout", [
 ]);
 
 export type CardContent = z.infer<typeof cardContentSchema>;
+
+// generateObject에 넘길 실제 요청 스키마는 cardContentSchema를 그대로 쓰지 않고 한 겹 감싼다 —
+// OpenAI 구조화 출력은 최상위 스키마가 반드시 단일 object여야 한다(anyOf/oneOf 등 유니언이
+// 최상위에 오는 것 자체를 허용하지 않음). 필드 하나(`card`)로 감싸면 최상위는 object가 되고
+// union은 그 밑(중첩 위치)으로 내려가 정상 동작한다. 호출부는 결과에서 `.card`만 꺼내 쓴다.
+export const cardGenerationSchema = z.object({ card: cardContentSchema });
 
 // ─── 콘텐츠 영역 렌더러 (5종) — 각자 자기 높이를 반환한다(코드가 결정 → 편차 문제 구조적 해소) ──
 interface Rendered { svg: string; height: number; }
@@ -432,6 +449,7 @@ export function buildFallbackCardSvg(headline: string): string {
     layout: "summary",
     contextLabel: "CS쉐어링",
     headline: [headline.slice(0, 16), ""],
+    subtext: null,
     cta: ["자세히 알아보기", "CS쉐어링과 상담하기"],
     body: headline,
   });

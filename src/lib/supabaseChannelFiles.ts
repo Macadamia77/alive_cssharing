@@ -42,6 +42,22 @@ export async function sbListPaths(channel: string): Promise<string[]> {
   return (data ?? []).map((r) => r.path as string);
 }
 
+/** 채널의 모든 파일(path→content/is_binary)을 한 번의 쿼리로 읽는다.
+ *  가이드·페르소나 로딩처럼 한 채널의 파일을 여러 개 순차로 읽던 호출부(readChannelFile 반복)를
+ *  이 단일 조회 결과 캐시로 대체해 요청당 Supabase 왕복 횟수를 줄이는 데 쓴다. */
+export async function sbReadAllFiles(channel: string): Promise<Map<string, SbFile>> {
+  const { data, error } = await supabase
+    .from("channel_files")
+    .select("path, content, is_binary")
+    .eq("channel", channel);
+  if (error) throw new Error(`[sbReadAllFiles] ${channel}: ${error.message}`);
+  const map = new Map<string, SbFile>();
+  for (const row of data ?? []) {
+    map.set(row.path as string, { content: row.content ?? "", isBinary: row.is_binary ?? false });
+  }
+  return map;
+}
+
 /** 파일 업서트(있으면 갱신, 없으면 삽입). */
 export async function sbWriteFile(
   channel: string,

@@ -4,7 +4,7 @@ import path from "path";
 import { type ChannelKey, CHANNELS } from "./channels";
 import { githubRead, githubReadBase64, githubListDir } from "./githubStorage";
 import {
-  sbConfigured, sbReadFile, sbListPaths, sbWriteFile, sbDeleteFile, sbDeletePrefix,
+  sbConfigured, sbReadAllFiles, sbWriteFile, sbDeleteFile, sbDeletePrefix, type SbFile,
 } from "./supabaseChannelFiles";
 
 import { existsSync } from "fs";
@@ -14,6 +14,27 @@ if (!existsSync(path.join(rootDir, "data")) && existsSync(path.join(rootDir, "..
   rootDir = path.join(rootDir, "..");
 }
 const CHANNEL_DIR = path.join(rootDir, "data", "channels");
+
+// ─── Supabase 채널 파일 인메모리 캐시 ───────────────────────────────
+// loadAllGuides/loadPersona가 한 채널(혹은 _shared)의 가이드·페르소나 파일을 파일당 1건씩
+// 순차 조회하던 것을(생성 1회당 15~25 왕복) 채널당 단 1회의 전체 조회로 묶는다.
+// 쓰기(write/delete) 시 해당 채널 캐시를 즉시 비워, "웹에서 편집하면 재배포 없이 다음
+// 생성부터 반영"이라는 기존 실시간성 요구사항은 그대로 유지한다.
+const channelFileCache = new Map<string, Promise<Map<string, SbFile>>>();
+
+function getChannelFilesCached(channel: string): Promise<Map<string, SbFile>> {
+  let cached = channelFileCache.get(channel);
+  if (!cached) {
+    cached = sbReadAllFiles(channel);
+    channelFileCache.set(channel, cached);
+    cached.catch(() => channelFileCache.delete(channel));
+  }
+  return cached;
+}
+
+function invalidateChannelFilesCache(channel: string): void {
+  channelFileCache.delete(channel);
+}
 
 export interface ChannelMeta {
   label: string;
@@ -88,7 +109,8 @@ export async function getChannelMeta(channel: ChannelKey, token?: string): Promi
   // 1순위: Supabase (실시간 단일 소스). 실패/미설정 시 GitHub → 로컬 번들로 폴백.
   if (sbConfigured()) {
     try {
-      const f = await sbReadFile(channel, "_meta.json");
+      const files = await getChannelFilesCached(channel);
+      const f = files.get("_meta.json");
       if (f) {
         const meta = JSON.parse(f.content.replace(/^﻿/, "")) as ChannelMeta;
         if (meta.include && meta.include.length > 0) return meta;
@@ -117,7 +139,8 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
   // 1순위: Supabase 파일 목록으로 트리 구성
   if (sbConfigured()) {
     try {
-      const paths = await sbListPaths(channel);
+      const files = await getChannelFilesCached(channel);
+      const paths = [...files.keys()];
       if (paths.length > 0) return buildTreeFromPaths(paths, meta.include);
     } catch (e) {
       console.warn(`[getChannelFileTree] ${channel} Supabase 조회 실패, GitHub로 폴백:`, e);
@@ -180,7 +203,8 @@ export async function readChannelFile(channel: ChannelKey, filePath: string, tok
   const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
   if (sbConfigured()) {
     try {
-      const f = await sbReadFile(channel, safe);
+      const files = await getChannelFilesCached(channel);
+      const f = files.get(safe);
       if (f) {
         if (!f.isBinary) return f.content;
         // 텍스트 파일인데 is_binary=true(base64)로 잘못 저장된 구 데이터 → 디코드해 복구
@@ -205,7 +229,8 @@ export async function readChannelFileBase64(channel: ChannelKey, filePath: strin
   const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
   if (sbConfigured()) {
     try {
-      const f = await sbReadFile(channel, safe);
+      const files = await getChannelFilesCached(channel);
+      const f = files.get(safe);
       if (f) return f.isBinary ? f.content : Buffer.from(f.content, "utf-8").toString("base64");
     } catch (e) {
       console.warn(`[readChannelFileBase64] ${channel}/${filePath} Supabase 읽기 실패, GitHub로 폴백:`, e);
@@ -244,6 +269,7 @@ export async function writeChannelFile(
   // 쓰기 1순위: Supabase (실시간 반영). 미설정(로컬 dev) 시에만 로컬 파일에 쓴다.
   if (sbConfigured()) {
     await sbWriteFile(channel, safe, decoded, storeAsBinary);
+    invalidateChannelFilesCache(channel);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -259,6 +285,7 @@ export async function deleteChannelFile(channel: ChannelKey, filePath: string, t
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
   if (sbConfigured()) {
     await sbDeleteFile(channel, safe);
+    invalidateChannelFilesCache(channel);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
@@ -287,6 +314,7 @@ export async function deleteChannelFolder(channel: ChannelKey, folderPath: strin
   if (sbConfigured()) {
     // 접두사(폴더) 아래 전체 삭제
     await sbDeletePrefix(channel, safe.endsWith("/") ? safe : `${safe}/`);
+    invalidateChannelFilesCache(channel);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe.replace(/\//g, path.sep));
@@ -296,6 +324,7 @@ export async function deleteChannelFolder(channel: ChannelKey, folderPath: strin
 export async function updateChannelMeta(channel: ChannelKey, meta: ChannelMeta, token?: string): Promise<void> {
   if (sbConfigured()) {
     await sbWriteFile(channel, "_meta.json", JSON.stringify(meta, null, 2), false);
+    invalidateChannelFilesCache(channel);
     return;
   }
   const metaPath = path.join(CHANNEL_DIR, channel, "_meta.json");
@@ -317,7 +346,8 @@ export async function readSharedAgentFile(fileRel: string, token?: string): Prom
   const safe = fileRel.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
   if (sbConfigured()) {
     try {
-      const f = await sbReadFile(SHARED_AGENTS_CHANNEL, safe);
+      const files = await getChannelFilesCached(SHARED_AGENTS_CHANNEL);
+      const f = files.get(safe);
       if (f) {
         if (!f.isBinary) return f.content;
         if (isTextFile(safe.split("/").pop() ?? "")) return Buffer.from(f.content, "base64").toString("utf-8");
@@ -340,6 +370,7 @@ export async function writeSharedAgentFile(fileRel: string, content: string): Pr
   const safe = path.normalize(fileRel).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
   if (sbConfigured()) {
     await sbWriteFile(SHARED_AGENTS_CHANNEL, safe, content, false);
+    invalidateChannelFilesCache(SHARED_AGENTS_CHANNEL);
     return;
   }
   const full = path.join(AGENTS_DIR, safe);
@@ -368,7 +399,8 @@ export async function readSharedDataFile(dataRelPath: string, token?: string): P
   const safe = dataRelPath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
   if (sbConfigured()) {
     try {
-      const f = await sbReadFile(SHARED_AGENTS_CHANNEL, safe);
+      const files = await getChannelFilesCached(SHARED_AGENTS_CHANNEL);
+      const f = files.get(safe);
       if (f && !f.isBinary) return f.content;
     } catch (e) {
       console.warn(`[readSharedDataFile] ${safe} Supabase 읽기 실패, 로컬로 폴백:`, e);
@@ -388,6 +420,7 @@ export async function writeSharedDataFile(dataRelPath: string, content: string):
   const safe = path.normalize(dataRelPath).replace(/^(\.\.[/\\])+/, "").replace(/\\/g, "/");
   if (sbConfigured()) {
     await sbWriteFile(SHARED_AGENTS_CHANNEL, safe, content, false);
+    invalidateChannelFilesCache(SHARED_AGENTS_CHANNEL);
     return;
   }
   const full = path.join(rootDir, "data", safe);
@@ -421,7 +454,7 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
   // 1순위: Supabase 파일 목록 (실시간). 시스템 파일(_·.)·CLAUDE.md 제외, 텍스트 파일만.
   if (sbConfigured()) {
     try {
-      const paths = await sbListPaths(channel);
+      const paths = [...(await getChannelFilesCached(channel)).keys()];
       const files = paths.filter(p => {
         const name = p.split("/").pop() ?? "";
         return isTextFile(name)

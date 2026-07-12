@@ -7,24 +7,46 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { z } from "zod";
 import type { Provider } from "./aiConfig";
 
+// 검색이 아닌 일반 생성 호출(브레인스토밍·리뷰어 등)은 그동안 timeout이 전혀 없었다 — 검색
+// 호출(SEARCH_TIMEOUT_MS)만 2026-07-11경 타임아웃이 들어갔고, 일반 생성은 provider가 느려지거나
+// 응답이 멈추면 상한 없이 계속 기다렸다. 브레인스토밍이 25분을 넘겨 클라이언트 폴링 타임아웃에
+// 걸린 실제 사례(2026-07-12)의 원인 중 하나로 확인됨 — brainstorm 단계 호출 1건이 무기한 걸릴 수
+// 있었고, 그 위에 JSON 파싱 실패 시 재시도까지 겹치면 쉽게 20분을 넘는다. AbortController로
+// 상한을 두되, 지정 안 하면(기존 호출부는 전부 undefined) 동작이 그대로라 회귀는 없다.
+async function withTimeout<T>(timeoutMs: number | undefined, run: (signal: AbortSignal | undefined) => Promise<T>): Promise<T> {
+  if (!timeoutMs) return run(undefined);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await run(controller.signal);
+  } catch (e) {
+    if (controller.signal.aborted) throw new Error(`요청이 ${Math.round(timeoutMs / 1000)}초 안에 끝나지 않아 중단했습니다.`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function callClaude(
   apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192,
   // 판단·논리 무거운 단계에서만 네이티브 extended thinking을 켠다. reasoning은 결과의 별도
   // 필드로 반환되고 text에는 최종 답만 담기므로, 다운스트림 PASS/FAIL·JSON 파싱을 깨뜨리지 않는다.
-  thinking?: { budgetTokens: number }
+  thinking?: { budgetTokens: number },
+  timeoutMs?: number
 ): Promise<string> {
   const anthropic = createAnthropic({ apiKey });
   // extended thinking은 thinking 예산이 max_tokens 안에 포함되므로, 최종 답변용 여유를 더한다.
   const maxOut = thinking ? Math.max(maxTokens, thinking.budgetTokens + 4000) : maxTokens;
-  const { text, finishReason } = await generateText({
+  const { text, finishReason } = await withTimeout(timeoutMs, (abortSignal) => generateText({
     model: anthropic(model),
     system: systemPrompt,
     prompt: userMessage,
     maxOutputTokens: maxOut,
+    abortSignal,
     ...(thinking
       ? { providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: thinking.budgetTokens } } } }
       : {}),
-  });
+  }));
   if (finishReason === "length") {
     console.warn(`[apiClients] callClaude: 최대 토큰(${maxOut}) 도달 — 응답이 잘렸습니다.`);
   }
@@ -113,33 +135,36 @@ export async function callClaudeWithNativeSearch(
 }
 
 export async function callOpenAI(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string
+  apiKey: string, model: string, systemPrompt: string, userMessage: string, timeoutMs?: number
 ): Promise<string> {
   const openai = createOpenAI({ apiKey });
-  const { text } = await generateText({
+  const { text } = await withTimeout(timeoutMs, (abortSignal) => generateText({
     model: openai(model),
     system: systemPrompt,
     prompt: userMessage,
-  });
+    abortSignal,
+  }));
   if (!text) throw new Error("OpenAI API 응답이 비어 있습니다.");
   return text;
 }
 
 export async function callGemini(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192, disableThinking = false
+  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192,
+  disableThinking = false, timeoutMs?: number
 ): Promise<string> {
   const google = createGoogleGenerativeAI({ apiKey });
   const providerOptions =
     disableThinking && model.includes("2.5-flash")
       ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
       : undefined;
-  const { text, finishReason } = await generateText({
+  const { text, finishReason } = await withTimeout(timeoutMs, (abortSignal) => generateText({
     model: google(model),
     system: systemPrompt,
     prompt: userMessage,
     maxOutputTokens: maxTokens,
     providerOptions,
-  });
+    abortSignal,
+  }));
   if (finishReason === "length") {
     console.warn(`[apiClients] callGemini: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
   }
@@ -213,19 +238,22 @@ export async function callProvider(
     onSearchSource?: (n: number) => void;
     // config-driven: 단계에 thinking 예산이 설정된 경우에만 Claude 네이티브 thinking 활성화.
     thinkingBudget?: number;
+    // 검색 단계 전용이 아닌 일반 생성 호출에 상한을 두고 싶을 때만 지정(기본은 무제한 — 기존
+    // 동작 유지). useSearch=true면 검색 전용 함수 자체의 4분 타임아웃이 이미 적용되므로 무시된다.
+    timeoutMs?: number;
   }
 ): Promise<string> {
   if (p === "gemini") {
     return opts?.useSearch
       ? callGeminiWithSearch(apiKey, model, system, user, opts?.disableThinking)
-      : callGemini(apiKey, model, system, user, maxTokens, opts?.disableThinking);
+      : callGemini(apiKey, model, system, user, maxTokens, opts?.disableThinking, opts?.timeoutMs);
   }
   if (p === "claude") {
     return opts?.useSearch
       ? callClaudeWithNativeSearch(apiKey, model, system, user, maxTokens, opts?.onSearchSource)
-      : callClaude(apiKey, model, system, user, maxTokens, opts?.thinkingBudget ? { budgetTokens: opts.thinkingBudget } : undefined);
+      : callClaude(apiKey, model, system, user, maxTokens, opts?.thinkingBudget ? { budgetTokens: opts.thinkingBudget } : undefined, opts?.timeoutMs);
   }
-  if (p === "openai") return callOpenAI(apiKey, model, system, user);
+  if (p === "openai") return callOpenAI(apiKey, model, system, user, opts?.timeoutMs);
   return "";
 }
 

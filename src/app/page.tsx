@@ -70,6 +70,13 @@ const POLL_INTERVAL_MS = 2500;
 // results에 저장하므로, 여기 타임아웃은 순수히 "화면에 언제까지 기다릴지"만 결정한다.)
 const POLL_TIMEOUT_MS = 25 * 60 * 1000;
 const POLL_TIMEOUT_MIN = POLL_TIMEOUT_MS / 60000;
+// 브레인스토밍(research+research-voice+brainstorm)은 채널별 전체 생성(검수 재시도 포함)보다
+// 훨씬 가벼운 "판단형" 단계만 돈다 — 워커 쪽 개별 호출에 6분 상한(PLANNING_CALL_TIMEOUT_MS,
+// render-worker/index.ts)을 걸고 워치독도 10분(PLANNING_STALE_TIMEOUT_MS)으로 따로 당겨뒀으니,
+// 프론트도 25분짜리 generate 타임아웃을 그대로 쓰지 않고 그 워치독보다 살짝 긴 값으로 맞춘다.
+// 정상 케이스는 보통 수 분 안에 끝나고, 이 값은 (생성과 마찬가지로) 순수 백스톱이다.
+const BRAINSTORM_POLL_TIMEOUT_MS = 12 * 60 * 1000;
+const BRAINSTORM_POLL_TIMEOUT_MIN = BRAINSTORM_POLL_TIMEOUT_MS / 60000;
 
 const emptyResults = () =>
   Object.fromEntries(CHANNELS.map(c => [c, { status: "idle" }])) as Record<ChannelKey, ChannelResult>;
@@ -281,9 +288,9 @@ export default function HomePage() {
     clearPoll();
     const started = Date.now();
     pollRef.current = setInterval(async () => {
-      if (Date.now() - started > POLL_TIMEOUT_MS) {
+      if (Date.now() - started > BRAINSTORM_POLL_TIMEOUT_MS) {
         clearPoll(); setBsLoading(false);
-        setBsError(`브레인스토밍이 너무 오래 걸려 중단했습니다(${POLL_TIMEOUT_MIN}분 초과). 잠시 후 다시 시도해주세요.`);
+        setBsError(`브레인스토밍이 너무 오래 걸려 중단했습니다(${BRAINSTORM_POLL_TIMEOUT_MIN}분 초과). 잠시 후 다시 시도해주세요.`);
         return;
       }
       try {

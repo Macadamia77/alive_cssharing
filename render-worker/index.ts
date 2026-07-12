@@ -84,6 +84,13 @@ async function archiveRunResultsIfSettled(runId: string): Promise<void> {
   else console.log(`[Worker] run ${runId} 결과 아카이브 완료 (채널 ${Object.keys(channelsMap).length}개) — 프론트 접속 여부와 무관하게 저장됨`);
 }
 
+// research/research-voice(검색 단계)는 4분 타임아웃이 있지만, brainstorm·skeleton처럼 검색을
+// 안 쓰는 "판단형" 생성 호출은 그동안 상한이 전혀 없었다 — provider가 느려지면 무기한 대기했다.
+// 브레인스토밍이 25분을 넘겨 클라이언트 폴링 타임아웃에 걸린 실제 사례(2026-07-12)의 원인 —
+// JSON 파싱 실패 시 재시도(최대 2회)까지 겹치면 단일 호출 지연이 쉽게 배로 불어난다. 6분이면
+// 최대 토큰(16384) + thinking 예산을 다 채우는 극단적 경우도 커버하면서 무한 대기는 막는다.
+const PLANNING_CALL_TIMEOUT_MS = 6 * 60 * 1000;
+
 // ── M5: 브레인스토밍 작업(job_type='brainstorm') ──────────────────
 // 채널이 아직 없는 시점(주제 단계)에서 research+research-voice를 병렬 실행하고,
 // 그 산출물 + 누적 리서치/우수작 요약/피드백을 근거로 brainstorm 페르소나가 주제 후보
@@ -197,6 +204,7 @@ async function processBrainstormJob(task: any) {
         : `${baseUser}\n\n[이전 응답이 유효한 JSON이 아니었습니다. 다른 텍스트 없이 지정된 JSON 형식만 다시 출력하세요.]`;
       lastRaw = stripCodeFence(await callProvider(bAuth.p, bAuth.apiKey, bAuth.model, brainstormPersona, user, brainstormDef.maxTokens ?? 8000, {
         thinkingBudget: brainstormDef.thinking?.budgetTokens,
+        timeoutMs: PLANNING_CALL_TIMEOUT_MS,
       }));
       const m = lastRaw.match(/\{[\s\S]*\}/);
       if (m) {
@@ -417,6 +425,7 @@ async function processFinalizeJob(task: any) {
         `위 자료를 바탕으로 이 단계의 역할을 수행해 결과를 직접 출력하세요.`;
       skeletonOut = stripCodeFence(await callProvider(skAuth.p, skAuth.apiKey, skAuth.model, skeletonPersona, skeletonUser, skeletonDef.maxTokens ?? 6000, {
         thinkingBudget: skeletonDef.thinking?.budgetTokens,
+        timeoutMs: PLANNING_CALL_TIMEOUT_MS,
       }));
     }
 
@@ -456,9 +465,18 @@ async function processFinalizeJob(task: any) {
 // 약 20분 소요). 프론트 폴링 타임아웃(25분, src/app/page.tsx POLL_TIMEOUT_MS)보다는 짧게 유지해
 // 하드 크래시 시 프론트가 자기 타임아웃 전에 명확한 실패 사유를 받을 수 있게 한다.
 const STALE_TIMEOUT_MS = 20 * 60 * 1000;
+// brainstorm/finalize는 채널 전체 생성(검수 재시도 포함)보다 훨씬 가벼운 "판단형" 단계만 돈다 —
+// PLANNING_CALL_TIMEOUT_MS로 개별 호출에 이미 6분 상한을 걸어뒀으니, 정상 케이스는 몇 분이면
+// 끝나고 최악의 경우(검색 재시도 + 생성 재시도 겹침)도 20분 워치독 안에서 끝난다. generate와
+// 같은 20분을 기다렸다가 실패 처리하면 사용자가 훨씬 가벼운 단계에서 불필요하게 오래 기다리므로,
+// 이 job_type만 워치독을 절반으로 당긴다.
+const PLANNING_STALE_TIMEOUT_MS = 10 * 60 * 1000;
 const TERMINAL_STATUSES = ["pending", "completed", "failed"];
 
 async function reapStaleTasks() {
+  // 두 워치독 중 더 긴 쪽(STALE_TIMEOUT_MS) 기준으로 후보를 넉넉히 가져온 뒤, job_type별로
+  // 실제 적용할 임계값과 비교해 그 미만인 행은 건너뛴다 — 쿼리 자체를 job_type별로 나누지 않고
+  // 한 번에 훑는다.
   const cutoff = new Date(Date.now() - STALE_TIMEOUT_MS).toISOString();
   const { data: staleTasks, error } = await supabase
     .from("tasks")
@@ -473,7 +491,10 @@ async function reapStaleTasks() {
   if (!staleTasks || staleTasks.length === 0) return;
 
   for (const t of staleTasks) {
-    const minutesStuck = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+    const elapsedMs = Date.now() - new Date(t.created_at).getTime();
+    const threshold = (t.job_type === "brainstorm" || t.job_type === "finalize") ? PLANNING_STALE_TIMEOUT_MS : STALE_TIMEOUT_MS;
+    if (elapsedMs < threshold) continue;
+    const minutesStuck = Math.round(elapsedMs / 60000);
     console.warn(`[Worker] stale 작업 감지 → 자동 실패 처리 (ID: ${t.id}, 마지막 상태: "${t.status}", ${minutesStuck}분 경과)`);
     await supabase
       .from("tasks")

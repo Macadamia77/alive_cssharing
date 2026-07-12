@@ -1,9 +1,10 @@
 // provider별로 갈라졌던 fetch 호출을 AI SDK(generateText)로 통합.
 // 기본 호출(Claude/OpenAI/Gemini)은 아래 3함수로, 웹검색은 하단의 전용 함수(스트리밍/툴)로 유지.
-import { generateText } from "ai";
+import { generateText, generateObject } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import type { z } from "zod";
 import type { Provider } from "./aiConfig";
 
 export async function callClaude(
@@ -226,4 +227,30 @@ export async function callProvider(
   }
   if (p === "openai") return callOpenAI(apiKey, model, system, user);
   return "";
+}
+
+/**
+ * generateObject 기반 구조화 출력 호출. 텍스트로 "JSON만 출력해" 라고 프롬프트로만 지시하고
+ * JSON.parse로 되받던 방식(카드 생성에서 쓰던 예전 방식) 대신, provider가 스키마를 만족하는
+ * 응답만 반환하도록 강제한다(Claude/OpenAI는 tool-calling, Gemini는 네이티브 JSON 스키마 모드로
+ * AI SDK가 내부적으로 처리) — 코드펜스 덧씌우기·잡담 섞임·필드 누락 같은 파싱 실패 경로 자체가
+ * 없어진다. 스키마를 못 만족하면(재시도 후에도) NoObjectGeneratedError를 던지므로 호출자가
+ * 명시적으로 처리한다.
+ */
+export async function callProviderForObject<T>(
+  p: Provider, apiKey: string, model: string,
+  system: string, user: string, maxTokens: number, schema: z.ZodType<T>
+): Promise<T> {
+  const languageModel =
+    p === "gemini" ? createGoogleGenerativeAI({ apiKey })(model) :
+    p === "claude" ? createAnthropic({ apiKey })(model) :
+    createOpenAI({ apiKey })(model);
+  const { object } = await generateObject({
+    model: languageModel,
+    schema,
+    system,
+    prompt: user,
+    maxOutputTokens: maxTokens,
+  });
+  return object;
 }

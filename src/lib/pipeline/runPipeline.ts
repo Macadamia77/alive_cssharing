@@ -13,13 +13,13 @@ import {
   type ChannelMeta,
 } from "../channelFiles";
 import { type Provider } from "../aiConfig";
-import { callProvider } from "../apiClients";
+import { callProvider, callProviderForObject } from "../apiClients";
 import { resolveStages } from "./loadConfig";
 import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentResearch, addBadExample, addResearch, contextBudget } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
-import { spliceImageCardsFromArray, extractCards } from "./imageCards";
+import { spliceImageCardsFromArray } from "./imageCards";
 import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
-import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, type CardContent } from "./cardTemplateBuilder";
+import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardContentSchema } from "./cardTemplateBuilder";
 import type { CardAsset } from "./cardStorage";
 // 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
 import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
@@ -395,7 +395,12 @@ export async function runPipeline(
         const CARD_CONCURRENCY = 3;
         const bodyMarkers = imageMarkers.slice(1); // 인덱스 0(썸네일) 제외 — 본문 카드에 대응하는 마커들
         const cardIndexes = Array.from({ length: bodyMarkerCount }, (_, i) => i);
-        const cardRaws = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, (i) => {
+        // 예전엔 카드 콘텐츠를 자유 텍스트로 받아 <!-- CARD_START/END --> 마커를 정규식으로 찾고
+        // JSON.parse로 되받았다 — 모델이 코드펜스를 덧씌우거나 잡담을 곁들이거나 필드를 빠뜨리면
+        // 그 카드가 통째로 밋밋한 대체 카드(buildFallbackCardSvg)로 떨어졌다(실측 확인, 흔한 실패
+        // 경로였다). callProviderForObject(스키마 강제 구조화 출력)로 바꿔 이 파싱 실패 경로 자체를
+        // 없앤다 — provider가 cardContentSchema를 만족하는 응답만 반환하도록 AI SDK가 보장한다.
+        bodySvgs = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, async (i) => {
           // 각 카드가 담당할 구간(이전 마커 끝~이 마커 끝)을 미리 잘라 명시한다. draft 전문을
           // 그대로 다 주고 "몇 번째 카드"라고만 알려주면, 카드끼리 서로 뭘 다뤘는지 모른 채
           // 독립적으로 훑다가 같은 대목(예: 가장 눈에 띄는 통계 하나)을 중복으로 고르는 사례가
@@ -421,51 +426,35 @@ export async function runPipeline(
             `[담당 구간]\n${section}\n\n` +
             `그 카드 1개의 콘텐츠만 작성하세요.\n\n` +
             `[작성 규칙]\n` +
-            `- 본문의 나머지 텍스트는 절대로 출력하지 마십시오.\n` +
-            `- 오직 이 카드 1개의 JSON 객체 하나만 작성하십시오.\n` +
-            `- JSON 객체는 반드시 \`<!-- CARD_START -->\` 와 \`<!-- CARD_END -->\` 마커로 감싸고, 다른 텍스트 없이 JSON만 그 안에 쓰십시오.\n` +
+            `- 담당 구간 밖의 내용(다른 소제목 등)은 절대 참고하지 마십시오.\n` +
             `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.`;
           // 동시에 3개가 정확히 같은 타이밍에 발사되면 provider가 그 순간만 유독 부하를 크게
           // 느껴 한꺼번에 이상 응답을 내는 사례가 실측 확인됐다(첫 웨이브 카드 3개가 전부 동일한
           // 대체 카드로 떨어짐) — 정확한 서버 측 원인은 알 수 없지만, 시작 시점을 살짝 흩뿌리는
           // 것만으로 값싸게 완화할 수 있어 넣는다(워커 슬롯당 최대 250ms, 속도엔 영향 거의 없음).
           const stagger = (i % CARD_CONCURRENCY) * 250;
-          return new Promise<void>((resolve) => setTimeout(resolve, stagger))
-            .then(() => call(sp, sk, sm, system, user, Math.min(maxTok, 4000), false, true))
-            .then((raw) => ({ raw, section, markerDesc }));
-        });
-        // JSON 파싱 실패(또는 블록 자체를 못 찾음)는 카드 1개 단위 문제일 뿐이라 전체를
-        // 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로 대체하고 나머지는 정상 진행한다.
-        // 폴백도 draft 제목 대신 그 카드의 담당 구간 텍스트를 쓴다 — 여러 카드가 동시에
-        // 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제) 최소한 서로 달라진다.
-        // Promise.all은 입력 배열 순서를 보존하므로 cardRaws[i]가 곧 (i+1)번째 카드다.
-        bodySvgs = cardRaws.map(({ raw, section, markerDesc }, i) => {
-          // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
-          // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
-          // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어).
-          const cleanSection = section
-            .replace(/<!--[\s\S]*?-->/g, " ")
-            .replace(/\[IMAGE:[^\]]*\]/g, " ")
-            .replace(/\s+/g, " ").trim();
-          // 구간 텍스트가 비거나 너무 짧아도(짧은 리스트 항목 뒤에 마커가 바로 붙는 경우 등),
-          // [IMAGE: 설명] 안의 설명 문구는 writer가 카드마다 항상 다르게 쓰므로 최후 보루로 쓴다
-          // — 실측 확인된 "여러 카드가 동시에 실패하면 전부 똑같은 대체 카드가 뜨는" 문제의
-          // 직접적인 재발 방지책(구간이 비어도 최소한 카드별로 다른 문구가 뜨게 됨).
-          const fallbackText = cleanSection.slice(0, 60) || markerDesc || extractDraftTitle(draft) || topic;
-          const rawBlock = extractCards(stripCodeFence(raw))[0];
-          if (!rawBlock) {
-            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 응답에서 JSON 블록을 못 찾음 — 대체 카드로 진행. 원본 응답(앞 300자): ${raw.slice(0, 300)}`);
-            return buildFallbackCardSvg(fallbackText);
-          }
-          // 카드 1개만 요청하면 모델이 CARD_START/END "안쪽"에서 또 ```json 코드펜스로 감싸는
-          // 빈도가 높아진다(실측). 위 stripCodeFence는 응답 전체가 통째로 펜스에 싸인 경우만
-          // 벗겨내므로, 마커 안쪽 펜스는 블록을 추출한 뒤 한 번 더 벗겨야 한다.
-          const block = stripCodeFence(rawBlock);
+          await new Promise<void>((resolve) => setTimeout(resolve, stagger));
+
+          // provider 오류(레이트리밋·네트워크·스키마를 재시도 후에도 못 만족)는 여전히 카드 1개
+          // 단위 문제일 뿐이라 전체를 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로
+          // 대체하고 나머지는 정상 진행한다. 폴백도 draft 제목 대신 그 카드의 담당 구간 텍스트를
+          // 쓴다 — 여러 카드가 동시에 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제)
+          // 최소한 서로 달라진다.
           try {
-            const content = JSON.parse(block) as CardContent;
+            const content = await callProviderForObject(
+              sp, sk, sm, system, user, Math.min(maxTok, 4000), cardContentSchema
+            );
             return buildCardSvg(content);
           } catch (e) {
-            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} JSON 파싱 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}. 원본 블록(앞 300자): ${block.slice(0, 300)}`);
+            // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
+            // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
+            // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어).
+            const cleanSection = section
+              .replace(/<!--[\s\S]*?-->/g, " ")
+              .replace(/\[IMAGE:[^\]]*\]/g, " ")
+              .replace(/\s+/g, " ").trim();
+            const fallbackText = cleanSection.slice(0, 60) || markerDesc || extractDraftTitle(draft) || topic;
+            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 구조화 생성 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}`);
             return buildFallbackCardSvg(fallbackText);
           }
         });

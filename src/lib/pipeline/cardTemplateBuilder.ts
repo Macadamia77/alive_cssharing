@@ -11,6 +11,8 @@
 // 색상·규격 값은 이전 guide/04-image-guide.md 2-1·2-2절 HTML/CSS 템플릿 수치를 그대로 이식했다
 // — 이 파일이 이제 그 수치들의 단일 소스다(가이드 문서는 값이 아니라 필드/글자수 규칙만 설명).
 
+import { z } from "zod";
+
 // ─── 디자인 토큰 (guide 2-1절 고정값 이식) ─────────────────────────
 const CARD_WIDTH = 800;
 const PAD_X = 44;
@@ -41,27 +43,55 @@ function escapeXml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+// 예전 HTML/CSS 시절엔 브라우저가 실제 글리프 폭으로 줄바꿈했지만, resvg로 옮기며 문자 "개수"만
+// 세는 근사치로 대체됐었다 — 한글은 라틴 문자보다 훨씬 넓어(Pretendard 기준 한글은 거의 정사각형,
+// 라틴/숫자는 그 절반 정도) 한글·영문·숫자가 섞인 실제 카피(예: "VOC 18%p", "CS쉐어링 AI")에서
+// 줄이 너무 일찍 끊기거나(여백 낭비) 상자 밖으로 삐져나오는 문제가 실측 확인됐다. 폭 기반 계산으로
+// 바꿔 예전 브라우저 줄바꿈 결과에 가깝게 맞춘다.
+const WIDE_CHAR_RATIO = 1.0;    // 한글 음절·자모·CJK 한자·전각 기호 — 정사각형에 가까운 고정폭
+const NARROW_CHAR_RATIO = 0.58; // 라틴 문자·숫자·반각 기호 — Pretendard 평균 실측 비율
+
+function isWideChar(code: number): boolean {
+  return (
+    (code >= 0x1100 && code <= 0x11ff) || // 한글 자모
+    (code >= 0x3130 && code <= 0x318f) || // 한글 호환 자모
+    (code >= 0xac00 && code <= 0xd7a3) ||  // 한글 음절
+    (code >= 0x3000 && code <= 0x303f) ||  // CJK 기호·구두점
+    (code >= 0x4e00 && code <= 0x9fff) ||  // CJK 통합 한자
+    (code >= 0xff00 && code <= 0xffef)     // 전각 형태
+  );
+}
+
+function textWidth(s: string, fontSize: number): number {
+  let w = 0;
+  for (const ch of s) w += (isWideChar(ch.codePointAt(0) ?? 0) ? WIDE_CHAR_RATIO : NARROW_CHAR_RATIO) * fontSize;
+  return w;
+}
+
 /**
  * 어절(공백) 단위 그리디 줄바꿈 — Korean word-break:keep-all과 동일하게 단어 중간을 안 끊는다.
+ * 글자 "개수"가 아니라 실제 픽셀 폭(textWidth)으로 판단해 예전 브라우저 줄바꿈에 가깝게 맞춘다.
  * 한 어절이 그 자체로 한계를 넘으면(긴 영단어 등) 그 어절만 강제로 문자 단위로 자른다.
  * maxLines를 넘기면 마지막 줄 끝에 "…"를 붙여 자른다 — SVG는 CSS overflow가 없어 방어적으로 필요.
  */
-function wrapText(text: string, maxCharsPerLine: number, maxLines: number): string[] {
+function wrapText(text: string, maxWidthPx: number, fontSize: number, maxLines: number): string[] {
   const words = text.trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let cur = "";
   for (const w of words) {
     const candidate = cur ? `${cur} ${w}` : w;
-    if (candidate.length <= maxCharsPerLine) {
+    if (textWidth(candidate, fontSize) <= maxWidthPx) {
       cur = candidate;
       continue;
     }
     if (cur) lines.push(cur);
-    if (w.length > maxCharsPerLine) {
+    if (textWidth(w, fontSize) > maxWidthPx) {
       let rest = w;
-      while (rest.length > maxCharsPerLine) {
-        lines.push(rest.slice(0, maxCharsPerLine));
-        rest = rest.slice(maxCharsPerLine);
+      while (textWidth(rest, fontSize) > maxWidthPx && rest.length > 1) {
+        let cut = 1;
+        while (cut < rest.length && textWidth(rest.slice(0, cut + 1), fontSize) <= maxWidthPx) cut++;
+        lines.push(rest.slice(0, cut));
+        rest = rest.slice(cut);
       }
       cur = rest;
     } else {
@@ -72,10 +102,9 @@ function wrapText(text: string, maxCharsPerLine: number, maxLines: number): stri
 
   if (lines.length > maxLines) {
     const kept = lines.slice(0, maxLines);
-    const last = kept[maxLines - 1];
-    kept[maxLines - 1] = last.length > maxCharsPerLine - 1
-      ? `${last.slice(0, maxCharsPerLine - 1)}…`
-      : `${last}…`;
+    let last = kept[maxLines - 1];
+    while (last.length > 1 && textWidth(`${last}…`, fontSize) > maxWidthPx) last = last.slice(0, -1);
+    kept[maxLines - 1] = `${last}…`;
     return kept;
   }
   return lines;
@@ -121,20 +150,70 @@ export type CardContent =
   | (CardBase & { layout: "badges"; tags: string[]; gridItems: [{ title: string; desc: string }, { title: string; desc: string }] })
   | (CardBase & { layout: "table"; columns: [string, string]; rows: { label: string; values: [string, string] }[] });
 
+// ─── CardContent와 1:1로 맞춘 zod 스키마 — AI SDK의 generateObject가 이 스키마로 구조화
+// 출력을 강제한다. 예전엔 "JSON 하나만, CARD_START/END로 감싸서" 같은 프롬프트 지시에만
+// 의존했는데, 모델이 코드펜스를 덧씌우거나 문장을 곁들이거나 필드를 빠뜨리면 JSON.parse가
+// 깨지고 그 카드가 통째로 밋밋한 대체 카드(buildFallbackCardSvg)로 떨어졌다(실측 확인). 스키마
+// 강제 모드는 provider가 자체적으로 스키마를 만족하는 응답만 반환하도록 보장해 이 실패 경로
+// 자체를 없앤다.
+const cardBaseShape = {
+  contextLabel: z.string(),
+  headline: z.tuple([z.string(), z.string()]),
+  subtext: z.string().optional(),
+  cta: z.tuple([z.string(), z.string()]),
+};
+
+export const cardContentSchema = z.discriminatedUnion("layout", [
+  z.object({ ...cardBaseShape, layout: z.literal("summary"), body: z.string() }),
+  z.object({
+    ...cardBaseShape, layout: z.literal("numbered"),
+    items: z.array(z.object({ title: z.string(), desc: z.string() })).min(3).max(5),
+  }),
+  z.object({
+    ...cardBaseShape, layout: z.literal("chat"),
+    bubbles: z.tuple([z.string(), z.string()]), conclusion: z.string(),
+  }),
+  z.object({
+    ...cardBaseShape, layout: z.literal("badges"),
+    tags: z.array(z.string()).min(2).max(4),
+    gridItems: z.tuple([
+      z.object({ title: z.string(), desc: z.string() }),
+      z.object({ title: z.string(), desc: z.string() }),
+    ]),
+  }),
+  z.object({
+    ...cardBaseShape, layout: z.literal("table"),
+    columns: z.tuple([z.string(), z.string()]),
+    rows: z.array(z.object({ label: z.string(), values: z.tuple([z.string(), z.string()]) })).min(2).max(3),
+  }),
+]);
+
 // ─── 콘텐츠 영역 렌더러 (5종) — 각자 자기 높이를 반환한다(코드가 결정 → 편차 문제 구조적 해소) ──
 interface Rendered { svg: string; height: number; }
+
+// 원본 CSS의 border-radius:16px 16px 16px 4px(말풍선 왼쪽 아래만 뾰족)를 그대로 재현한다.
+// SVG <rect>는 모서리별 반지름을 따로 줄 수 없어, 이전엔 둥근 사각형 위에 삼각형을 겹쳐 흉내
+// 냈는데 모서리 밖으로 삼각형이 튀어나와 스티커를 붙인 듯 부자연스러워 보였다 — 모서리 4개를
+// 각자 다른 반지름으로 그리는 단일 path로 바꿔 원본처럼 매끄러운 말풍선 꼬리를 만든다.
+function speechBubblePath(x: number, y: number, w: number, h: number, r: number, tailR: number): string {
+  return (
+    `M ${x + r} ${y} ` +
+    `H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w} ${y + r} ` +
+    `V ${y + h - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} ` +
+    `H ${x + tailR} A ${tailR} ${tailR} 0 0 1 ${x} ${y + h - tailR} ` +
+    `V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`
+  );
+}
 
 function renderChat(c: Extract<CardContent, { layout: "chat" }>, y0: number): Rendered {
   let y = y0;
   const parts: string[] = [];
   const bubbleMaxW = Math.round(CONTENT_WIDTH * 0.75);
+  const bubblePadX = 16; // 원본 CSS padding:12px 16px 좌우값
   for (const bubble of c.bubbles) {
-    const lines = wrapText(bubble, 26, 2);
+    const lines = wrapText(bubble, bubbleMaxW - bubblePadX * 2, 14, 2);
     const bh = 24 + lines.length * 20 + 8; // padding-top+bottom(≈24) + 줄높이 20px + 여유
-    parts.push(
-      `<rect x="0" y="${y}" width="${bubbleMaxW}" height="${bh}" rx="16" ry="16" fill="#f0f0f0"/>` +
-      `<path d="M0 ${y + bh - 4} L0 ${y + bh} L4 ${y + bh - 4} Z" fill="#f0f0f0"/>`
-    );
+    parts.push(`<path d="${speechBubblePath(0, y, bubbleMaxW, bh, 16, 4)}" fill="#f0f0f0"/>`);
     lines.forEach((ln, i) => {
       parts.push(textLine(16, y + 26 + i * 20, `"${ln}"`, { size: 14, color: "#333" }));
     });
@@ -143,7 +222,7 @@ function renderChat(c: Extract<CardContent, { layout: "chat" }>, y0: number): Re
   y += 6;
   parts.push(textLine(CONTENT_WIDTH / 2, y + 18, "»", { size: 22, color: NAVY, anchor: "middle" }));
   y += 34;
-  const conclLines = wrapText(c.conclusion, 30, 2);
+  const conclLines = wrapText(c.conclusion, CONTENT_WIDTH - 16 * 2, 14, 2); // 원본 CSS padding:14px 16px
   const conclH = 28 + conclLines.length * 20;
   parts.push(`<rect x="0" y="${y}" width="${CONTENT_WIDTH}" height="${conclH}" rx="8" fill="#eef1f5"/>`);
   conclLines.forEach((ln, i) => {
@@ -161,7 +240,7 @@ function renderNumbered(c: Extract<CardContent, { layout: "numbered" }>, y0: num
     if (i > 0) parts.push(`<line x1="0" y1="${y}" x2="${CONTENT_WIDTH}" y2="${y}" stroke="#c9d2dc" stroke-width="1"/>`);
     const padTop = 18;
     const num = String(i + 1).padStart(2, "0");
-    const descLines = wrapText(item.desc, 28, 2);
+    const descLines = wrapText(item.desc, CONTENT_WIDTH - textX, 14, 2);
     parts.push(
       `<text x="0" y="${y + padTop + 32}" font-family="${FONT_FAMILY}" font-size="40" font-weight="700" ` +
       `fill="${NAVY}" fill-opacity="0.18">${escapeXml(num)}</text>`
@@ -183,7 +262,7 @@ function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number)
   const tagY = y;
   for (const tagRaw of c.tags) {
     const tag = clamp(tagRaw, 10);
-    const w = 26 + tag.length * 13; // 대략적인 폭 추정(패딩 13px 좌우 + 글자당 13px)
+    const w = Math.round(textWidth(tag, 13)) + 26; // 원본 CSS padding:0 13px(좌우) + 실측 글자 폭
     parts.push(
       `<rect x="${tx}" y="${tagY}" width="${w}" height="26" rx="13" fill="#eef1f5" ` +
       `stroke="${NAVY}" stroke-opacity="0.18"/>`
@@ -200,7 +279,7 @@ function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number)
     const bx = i * (colW + gap);
     parts.push(`<rect x="${bx}" y="${y}" width="${colW}" height="${boxH}" rx="8" fill="#f7f9fc"/>`);
     parts.push(textLine(bx + 14, y + 26, clamp(item.title, 12), { size: 13, weight: 700, color: NAVY }));
-    const descLines = wrapText(item.desc, 16, 2);
+    const descLines = wrapText(item.desc, colW - 14 * 2, 12, 2); // 원본 CSS padding:14px
     descLines.forEach((ln, li) => {
       parts.push(textLine(bx + 14, y + 46 + li * 16, ln, { size: 12, color: "#555" }));
     });
@@ -237,7 +316,7 @@ function renderTable(c: Extract<CardContent, { layout: "table" }>, y0: number): 
 }
 
 function renderSummary(c: Extract<CardContent, { layout: "summary" }>, y0: number): Rendered {
-  const lines = wrapText(c.body, 40, 3);
+  const lines = wrapText(c.body, CONTENT_WIDTH - 20 * 2, 15, 3); // 원본 CSS padding:16px 20px
   const padY = 16;
   const h = padY * 2 + lines.length * 24;
   const parts = [
@@ -305,14 +384,31 @@ export function buildCardSvg(content: CardContent): string {
     `<svg width="${CARD_WIDTH}" height="${cardHeight}" viewBox="0 0 ${CARD_WIDTH} ${cardHeight}" ` +
     `xmlns="http://www.w3.org/2000/svg">` +
     `<defs>` +
-    `<linearGradient id="bgGrad" x1="0.15" y1="0" x2="0.85" y2="1">` +
+    // 원본 CSS는 background:linear-gradient(175deg, ...) — 거의 수직(위→아래)에 아주 살짝만
+    // 기운 각도였는데, 이식 과정에서 (0.15,0)→(0.85,1)의 뚜렷한 대각선으로 바뀌어 있었다.
+    // 175deg에 가깝게 거의 수직으로 되돌린다.
+    `<linearGradient id="bgGrad" x1="0.5" y1="0" x2="0.42" y2="1">` +
     `<stop offset="0%" stop-color="${BG_FROM}"/><stop offset="100%" stop-color="${BG_TO}"/>` +
     `</linearGradient>` +
-    `<linearGradient id="ctaGrad" x1="0.2" y1="0" x2="0.8" y2="1">` +
+    // CTA 원본은 linear-gradient(160deg, ...) — bgGrad보다는 기울었지만 여전히 수직이 우세한
+    // 각도다. 기존 (0.2,0)→(0.8,1)은 그보다 더 강한 대각선이라 완만하게 좁혔다.
+    `<linearGradient id="ctaGrad" x1="0.32" y1="0" x2="0.68" y2="1">` +
     `<stop offset="0%" stop-color="${CTA_FROM}"/><stop offset="100%" stop-color="${CTA_TO}"/>` +
     `</linearGradient>` +
-    `<filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">` +
-    `<feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#14202e" flood-opacity="0.14"/>` +
+    // 원본 CSS box-shadow:0 1px 2px rgba(20,32,46,.06), 0 20px 48px rgba(20,32,46,.11) —
+    // 붙는 그림자(밀착)와 뜨는 그림자(넓게 퍼짐) 2겹이 합쳐져 입체감을 만들었다. 단일
+    // feDropShadow 1개로는 이 2겹 구조를 못 살려 밋밋해 보였던 것 — feGaussianBlur+feOffset+
+    // feColorMatrix를 겹 수만큼 만들어 feMerge로 합성해 원본과 동일한 2겹 그림자를 재현한다.
+    `<filter id="cardShadow" x="-20%" y="-30%" width="140%" height="170%">` +
+    `<feGaussianBlur in="SourceAlpha" stdDeviation="1" result="blur1"/>` +
+    `<feOffset in="blur1" dx="0" dy="1" result="off1"/>` +
+    `<feColorMatrix in="off1" type="matrix" values="0 0 0 0 0.078 0 0 0 0 0.125 0 0 0 0 0.180 0 0 0 0.06 0" result="shadow1"/>` +
+    `<feGaussianBlur in="SourceAlpha" stdDeviation="12" result="blur2"/>` +
+    `<feOffset in="blur2" dx="0" dy="20" result="off2"/>` +
+    `<feColorMatrix in="off2" type="matrix" values="0 0 0 0 0.078 0 0 0 0 0.125 0 0 0 0 0.180 0 0 0 0.11 0" result="shadow2"/>` +
+    `<feMerge>` +
+    `<feMergeNode in="shadow2"/><feMergeNode in="shadow1"/><feMergeNode in="SourceGraphic"/>` +
+    `</feMerge>` +
     `</filter>` +
     `</defs>` +
     `<rect x="0" y="0" width="${CARD_WIDTH}" height="${cardHeight}" rx="18" fill="url(#bgGrad)" filter="url(#cardShadow)"/>` +
@@ -356,7 +452,7 @@ function phoneIcon(cx: number, cy: number, badgeR: number): string {
 // 항상 유효한 SVG를 반환해야 호출부가 마커 인덱스 정렬을 안 깨고(빈 문자열을 걸러내지 않고)
 // 그대로 스플라이스할 수 있다.
 export function buildThumbnailSvg(title: string, subtitleRaw: string, mascotDataUri: string | null): string {
-  const titleLines = wrapText(title, 15, 2);
+  const titleLines = wrapText(title, THUMBNAIL_SIZE - 120, 36, 2);
   const subtitle = clamp(subtitleRaw, 26);
   const badgeW = Math.min(600, 60 + subtitle.length * 17);
 

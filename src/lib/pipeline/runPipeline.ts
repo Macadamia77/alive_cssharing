@@ -101,6 +101,55 @@ function applyPatches(draft: string, patches: TextPatch[]): { draft: string; app
 // 낭비된 사례(2026-07-12, 1차 패치가 못 고쳐서 2차에서 같은 사유로 또 반려). writer 완료 직후
 // 코드로 먼저 세어보고, 걸리면 짧은 부분 패치 1회만 시도한다 — 그래도 안 고쳐지면 조용히
 // content-review로 넘긴다(기존 백스톱 그대로 유지, 이 게이트는 순수 절약용이지 필수 관문이 아님).
+// ── 절대 금지 문구(정확한 문자열 매칭 항목) 사전 스캔 ─────────────
+// 출처: guide/03-quality-check.md Step 2(블로거 톤·격언체·광고 표현) + agents/tone-reviewer.md
+// 판정기준 1~4(금칙어·기계적 종결어미·감정 과잉·괄호 병기) — "판단이 아니라 문자열 매칭"인
+// 항목만 포함했다(5~9는 문맥 판단이 필요해 tone-review LLM에 그대로 남긴다).
+// 실측 사례(2026-07-12 배포): "함정" 1건이 tone-review 3라운드 내내 다른 위치에서 재등장해
+// 결국 미해결로 발행됐다 — 부분 패치가 한 번에 한 곳만 고치다 보니 전체 등장 횟수를 놓쳤기
+// 때문. 여기서 문구별 등장 횟수까지 세어 한 번에 알려주면 패치가 전부를 잡을 확률이 높아진다.
+const FORBIDDEN_PHRASES: string[] = [
+  // tone-reviewer.md 판정기준 1: 금칙어
+  "혁신적인", "놀라운", "획기적인", "패러다임", "기적", "소중한", "선사", "선물합니다",
+  "최첨단", "꿰뚫다", "절대", "완전히", "완벽하게", "탁월한", "압도적", "극대화",
+  "드라마틱", "게임체인저", "판도를 바꾸", "함정", "즉시", "실체",
+  // tone-reviewer.md 판정기준 2: 기계적 종결어미
+  "해보세요", "해 보세요", "잊지 마세요", "기억하세요", "주목하세요", "함께하세요",
+  "만나보세요", "놓치지 마세요",
+  // tone-reviewer.md 판정기준 3 + guide 03 "블로거 톤" (중복 제거해 합침)
+  "힘드시죠", "지치셨죠", "속상하", "고민이 많으실", "걱정되시", "안녕하세요", "여러분",
+  "우와", "대박", "짜잔", "독자분들", "저는", "제가", "알아보겠습니다", "함께 살펴보시죠",
+  "도움이 되셨길", "이웃추가", "공감과 댓글",
+  // guide 03 "격언체" 고정 문구
+  "숫자는 정직하다", "결과는 같았다", "그게 진짜 비용이다", "원인은 단절이다",
+  // guide 03 "광고 표현"
+  "무료 진단", "무료 체험", "100% 만족", "강력 추천", "지금 바로 클릭",
+];
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function checkForbiddenPhrases(scope: string): string[] {
+  const hits: string[] = [];
+  for (const phrase of FORBIDDEN_PHRASES) {
+    // 앞쪽에 한글 음절이 이어붙지 않은 경우만 매칭 — "제가"가 "문제가"(문제+가) 안에, "기적"이
+    // "전기적"·"유기적" 안에 우연히 낀 경우를 잡아내지 않기 위함(실측 오탐 발견). 한국어는
+    // 조사가 뒤에 바로 붙으므로(예: "함정을") 뒤쪽은 제한하지 않는다 — 앞쪽만 막아도 목적 달성.
+    const re = new RegExp(`(?<![가-힣])${escapeRegExp(phrase)}`, "g");
+    const count = (scope.match(re) ?? []).length;
+    if (count > 0) hits.push(`"${phrase}" — ${count}회 등장(전부 다른 표현으로 교체)`);
+  }
+  // tone-reviewer.md 판정기준 4: 용어 뒤 영문 괄호 병기(예: AX(AI transformation))
+  const parenMatches = scope.match(/[A-Za-z]+\s*\([A-Za-z\s]+\)/g) ?? [];
+  if (parenMatches.length > 0) {
+    hits.push(
+      `용어 뒤 영문 괄호 병기 ${parenMatches.length}건(예: "${parenMatches[0]}") — 괄호 설명을 제거하고 원어만 남기세요.`
+    );
+  }
+  return hits;
+}
+
 function checkMechanicalRules(draft: string): string[] | null {
   const publishBlock = draft.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
   const scope = publishBlock ? publishBlock[1] : draft;
@@ -122,6 +171,8 @@ function checkMechanicalRules(draft: string): string[] | null {
       `(핵심 키워드는 맨 앞 유지, 의미가 바뀌지 않게 줄이거나 보강).`
     );
   }
+
+  issues.push(...checkForbiddenPhrases(scope));
 
   return issues.length > 0 ? issues : null;
 }
@@ -312,12 +363,18 @@ export async function runPipeline(
       console.log(`[engine] ${channel} · writer 완료 (${draft.length}자)`);
 
       if (channel === "naver-blog") {
-        const mechanicalIssues = checkMechanicalRules(draft);
-        if (mechanicalIssues) {
-          console.log(`[engine] ${channel} · writer 기계적 규칙 위반 ${mechanicalIssues.length}건 — 짧은 수정 요청: ${mechanicalIssues.join(" / ")}`);
+        // 금칙 문구는 등장 위치가 여러 곳일 수 있어(실측: "함정" 재발 사례), 패치 1회로 안 끝나면
+        // 최대 2회까지 재검사→재패치를 반복한다. 그래도 안 지워지면 기존처럼 content-review로
+        // 넘어가는 백스톱은 그대로 유지(발행 자체를 막지 않음).
+        const MAX_MECHANICAL_FIX_ATTEMPTS = 2;
+        for (let attempt = 1; attempt <= MAX_MECHANICAL_FIX_ATTEMPTS; attempt++) {
+          const mechanicalIssues = checkMechanicalRules(draft);
+          if (!mechanicalIssues) break;
+          console.log(`[engine] ${channel} · writer 기계적 규칙 위반 ${mechanicalIssues.length}건(시도 ${attempt}/${MAX_MECHANICAL_FIX_ATTEMPTS}) — 짧은 수정 요청: ${mechanicalIssues.join(" / ")}`);
           const fixUser =
             `[현재 원고]\n${draft}\n\n` +
-            `[고쳐야 할 문제 — 아래 항목만 정확히 고치는 부분 수정만 제시, 다른 내용은 절대 건드리지 마십시오]\n` +
+            `[고쳐야 할 문제 — 아래 항목만 정확히 고치는 부분 수정만 제시, 다른 내용은 절대 건드리지 마십시오. ` +
+            `등장 횟수가 2회 이상인 항목은 해당하는 모든 위치를 빠짐없이 각각 패치로 제시하십시오]\n` +
             mechanicalIssues.map(i => `- ${i}`).join("\n") + "\n\n" +
             `[출력 형식 — 반드시 이 형식만, 다른 설명 금지]\n` +
             `[{"find": "원고에 실제로 있는 문자열 그대로", "replace": "수정된 문자열"}, ...]`;
@@ -330,15 +387,16 @@ export async function runPipeline(
               const { draft: patched, appliedCount } = applyPatches(draft, patches);
               if (appliedCount > 0) {
                 draft = patched;
-                console.log(`[engine] ${channel} · writer 기계적 규칙 수정 패치 ${appliedCount}/${patches.length}건 적용`);
+                console.log(`[engine] ${channel} · writer 기계적 규칙 수정 패치 ${appliedCount}/${patches.length}건 적용(시도 ${attempt}/${MAX_MECHANICAL_FIX_ATTEMPTS})`);
               }
             }
           } catch (e) {
-            console.warn(`[engine] ${channel} · writer 기계적 규칙 수정 호출 실패 — content-review에서 다시 걸러짐: ${e instanceof Error ? e.message : e}`);
+            console.warn(`[engine] ${channel} · writer 기계적 규칙 수정 호출 실패(시도 ${attempt}/${MAX_MECHANICAL_FIX_ATTEMPTS}): ${e instanceof Error ? e.message : e}`);
+            break;
           }
-          if (checkMechanicalRules(draft)) {
-            console.warn(`[engine] ${channel} · writer 기계적 규칙 여전히 미해결 — content-review로 넘어감(기존 백스톱)`);
-          }
+        }
+        if (checkMechanicalRules(draft)) {
+          console.warn(`[engine] ${channel} · writer 기계적 규칙 여전히 미해결 — content-review에서 다시 걸러짐(기존 백스톱)`);
         }
       }
 

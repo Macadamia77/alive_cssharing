@@ -292,8 +292,18 @@ export async function runPipeline(
     contextParts.push(`[누적 피드백 — 아래 지적을 반드시 반영]\n${feedback.map((f, i) => `${i + 1}. ${f}`).join("\n")}`);
     console.log(`[engine] ${channel}: 누적 피드백 ${feedback.length}개 주입`);
   }
+  // 저장 시점(pipelineMemory.addExample)에 이미지 데이터를 걷어내지만, 그 전에 저장된 옛 데이터나
+  // 다른 경로로 들어온 비정상적으로 큰 항목까지 방어하기 위해 주입 시점에도 상한을 둔다(2중 안전장치).
+  // 실측 사고: 우수작 1건이 701KB로 저장돼 있어 재주입 시 writer 프롬프트가 129만 토큰까지 불어나
+  // Claude 컨텍스트 한도(100만 토큰)를 넘겨 생성이 실패했다. 8000자면 이 채널 목표 분량(3,500~5,000자)의
+  // 완성된 글 하나를 온전히 담고도 여유가 있다.
+  const EXAMPLE_INJECT_CAP = 8000;
   const exampleBlock = exampleTexts.length
-    ? `[우수 참고작 — 이 톤·구조·품질을 따르되 내용은 주제에 맞게 새로 작성]\n${exampleTexts.map((e, i) => `─ 참고작 ${i + 1} ─\n${e}`).join("\n\n")}`
+    ? `[우수 참고작 — 이 톤·구조·품질을 따르되 내용은 주제에 맞게 새로 작성]\n${exampleTexts.map((e, i) => {
+        const truncated = e.length > EXAMPLE_INJECT_CAP;
+        if (truncated) console.warn(`[engine] ${channel}: 우수 참고작 ${i + 1}번이 ${e.length}자라 ${EXAMPLE_INJECT_CAP}자로 잘라 주입(비정상적으로 큰 저장 데이터로 추정)`);
+        return `─ 참고작 ${i + 1} ─\n${e.slice(0, EXAMPLE_INJECT_CAP)}${truncated ? "\n[...이하 생략]" : ""}`;
+      }).join("\n\n")}`
     : "";
   if (exampleTexts.length) console.log(`[engine] ${channel}: 우수 참고작 ${exampleTexts.length}개 주입`);
 

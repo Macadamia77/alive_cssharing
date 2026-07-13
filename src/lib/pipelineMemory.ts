@@ -196,14 +196,24 @@ async function extractExampleSummary(
   } catch { return null; }
 }
 
+// naver-blog 결과물은 카드 이미지가 base64 데이터 URI로 <img> 태그 안에 통째로 박혀 있다. "우수
+// 참고작"의 목적은 톤·구조 참고(이미지 데이터는 전혀 안 씀)인데, 이미지 데이터가 건당 수백 KB~
+// 수 MB를 차지해 저장을 부풀리고, 이후 생성마다 그대로 재주입되면서 프롬프트를 함께 부풀린다.
+// 실측 사고(2026-07-13): 저장된 우수작 2건(각 701KB)이 재주입되며 writer 프롬프트가 129만
+// 토큰까지 불어나 Claude 컨텍스트 한도(100만 토큰)를 넘겨 생성 자체가 실패했다. 저장 전에 제거한다.
+function stripEmbeddedImages(content: string): string {
+  return content.replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, "data:image/png;base64,[생략]");
+}
+
 export async function addExample(
   channel: ChannelKey, content: string, note?: string,
   // auth가 있으면 저장 시점에 요약을 함께 뽑아 summary_json에 넣는다(원문은 항상 그대로 보존).
   auth?: { provider: Provider; apiKey: string; model: string }
 ): Promise<void> {
-  const row: Record<string, unknown> = { channel, content, note: note ?? null };
+  const cleaned = stripEmbeddedImages(content);
+  const row: Record<string, unknown> = { channel, content: cleaned, note: note ?? null };
   if (auth) {
-    const summary = await extractExampleSummary(content, auth);
+    const summary = await extractExampleSummary(cleaned, auth);
     if (summary) row.summary_json = summary; // 실패 시 필드 자체를 생략 → 원문 저장은 무조건 성공
   }
   const { error } = await supabase.from("pipeline_examples").insert(row);

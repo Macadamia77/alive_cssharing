@@ -409,22 +409,36 @@ export async function runPipeline(
       // 부분 패치로 전환해 응답 길이를 줄인다 — 다른 채널은 재시도가 1회뿐이라(위 주석 참고)
       // 기존 전체 재작성 방식을 그대로 둔다(동작 영향 없음).
       const usePatchRewrite = channel === "naver-blog";
+      // 직전 라운드 지적사항 — 다음 라운드 검수 프롬프트에 "실제로 해소됐는지 최우선 확인"으로 넘겨준다.
+      // 매 라운드가 백지에서 다시 훑다 보니 새로 발견한 문제에 집중하느라, 다른 라운드의 패치가 실수로
+      // 되살린 과거 문제의 재발을 놓치는 경향이 실측 확인됐다(2026-07-13, 괄호 병기가 1라운드에 고쳐졌다가
+      // 3라운드에 재발). maxRewrites=1인 채널은 review()가 한 번만 불려서 이 변수가 실질적으로 안 쓰인다
+      // (동작 영향 없음).
+      let previousReviewReason: string | null = null;
       for (let rewriteCount = 0; ; rewriteCount++) {
         // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
-        const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false, undefined, stage.thinking?.budgetTokens));
+        const reviewUser = previousReviewReason
+          ? `[직전 라운드 지적사항 — 아래 문제가 실제로 해소됐는지 최우선으로 확인하고, 다른 문제도 계속 점검하십시오]\n${previousReviewReason}\n\n[검수 대상]\n${draft}`
+          : `[검수 대상]\n${draft}`;
+        const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, reviewUser, maxTok, false, false, undefined, stage.thinking?.budgetTokens));
         if (!isRejected(review)) {
           console.log(rewriteCount > 0
             ? `[engine] ${channel} · ${stage.id} 재작성 ${rewriteCount}회 후 통과`
             : `[engine] ${channel} · ${stage.id} 통과`);
           break;
         }
+        previousReviewReason = review.replace(/\s+/g, " ").slice(0, 500);
         if (statusCallback) await statusCallback(`${stage.id} 반영 재작성`);
         console.log(`[engine] ${channel} · ${stage.id} 반려(${rewriteCount + 1}/${maxRewrites}차) → 재작성 | 사유: ${review.replace(/\s+/g, " ").slice(0, 300)}`);
         // 기각 사례 자동 저장(회피 학습용) — 초안 통째가 아니라 "검수 피드백(사유+문제 문장)"만 저장. fire-and-forget
         void addBadExample(channel, review.replace(/\s+/g, " ").slice(0, 700), stage.id);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
+        // 마지막 라운드는 부분 패치 대신 전체 재작성으로 폴백(naver-blog 한정) — 재시도 횟수는 그대로 두고
+        // 마지막 기회의 해결 확률만 높인다. 2라운드 연속 패치로도 해결 안 됐다면 부분 패치 자체의 한계일
+        // 가능성이 높다(실측: 2026-07-13 content-review 3/3 반려 후 미해결 발행 사례).
+        const isLastRound = rewriteCount + 1 >= maxRewrites;
 
-        if (usePatchRewrite) {
+        if (usePatchRewrite && !isLastRound) {
           const patchUser =
             `[주제]\n${topic}\n\n` +
             `[현재 원고]\n${draft}\n\n` +
@@ -437,20 +451,58 @@ export async function runPipeline(
             `[{"find": "원고에 실제로 있는 문장 그대로", "replace": "수정된 문장"}, ...]`;
           // 재작성은 writer 모델로 (검수기 모델이 아니라). 패치는 출력이 짧으므로 사고모드를 끄고
           // 토큰 예산도 작게 잡아 속도를 최대화한다.
-          const patchRaw = stripCodeFence(
+          let patchRaw = stripCodeFence(
             await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, patchUser, 4096, false, true)
           );
-          const patches = parsePatches(patchRaw);
+          let patches = parsePatches(patchRaw);
+          // 파싱 실패 시 같은 라운드 안에서 1회 즉시 재시도 — 예전엔 여기서 그냥 포기하고 다음 반려
+          // 사이클로 넘어가 라운드 하나를 통째로 날렸다(실측 확인, 2026-07-13 content-review 1라운드).
+          if (!patches) {
+            const retryUser = `${patchUser}\n\n[이전 응답이 유효한 JSON 배열이 아니었습니다. 다른 설명 없이 지정된 JSON 배열만 다시 출력하세요.]`;
+            try {
+              patchRaw = stripCodeFence(
+                await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, retryUser, 4096, false, true)
+              );
+              patches = parsePatches(patchRaw);
+            } catch { /* 재시도도 실패 — 아래서 그대로 처리 */ }
+          }
           if (patches && patches.length > 0) {
             const { draft: patched, appliedCount } = applyPatches(draft, patches);
             if (appliedCount > 0) {
               draft = patched;
               console.log(`[engine] ${channel} · ${stage.id} 부분 패치 ${appliedCount}/${patches.length}건 적용`);
+              // 기계적 회귀 스캔 — 방금 패치가 금칙어·괄호병기 등 다른 규칙을 실수로 되살렸는지 즉시
+              // 확인한다. 다음 라운드의 비싼 LLM 리뷰를 기다리지 않고 그 자리에서 싼 패치로 고친다.
+              const regressed = checkMechanicalRules(draft);
+              if (regressed) {
+                console.log(`[engine] ${channel} · ${stage.id} 패치 후 기계적 규칙 회귀 ${regressed.length}건 감지 — 즉시 재패치: ${regressed.join(" / ")}`);
+                const fixUser =
+                  `[현재 원고]\n${draft}\n\n` +
+                  `[고쳐야 할 문제 — 아래 항목만 정확히 고치는 부분 수정만 제시, 다른 내용은 절대 건드리지 마십시오]\n` +
+                  regressed.map(i => `- ${i}`).join("\n") + "\n\n" +
+                  `[출력 형식 — 반드시 이 형식만, 다른 설명 금지]\n` +
+                  `[{"find": "원고에 실제로 있는 문자열 그대로", "replace": "수정된 문자열"}, ...]`;
+                try {
+                  const fixRaw = stripCodeFence(
+                    await call(writerCall.p, writerCall.apiKey, writerCall.model, rewriteSystem, fixUser, 2048, false, true)
+                  );
+                  const fixPatches = parsePatches(fixRaw);
+                  if (fixPatches && fixPatches.length > 0) {
+                    const { draft: refixed, appliedCount: fixApplied } = applyPatches(draft, fixPatches);
+                    if (fixApplied > 0) {
+                      draft = refixed;
+                      console.log(`[engine] ${channel} · ${stage.id} 회귀 재패치 ${fixApplied}/${fixPatches.length}건 적용`);
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`[engine] ${channel} · ${stage.id} 회귀 재패치 실패: ${e instanceof Error ? e.message : e}`);
+                }
+              }
             } else {
               console.warn(`[engine] ${channel} · ${stage.id} 패치 ${patches.length}건 모두 원고에서 못 찾음 — 원고 변경 없이 진행`);
             }
           } else {
-            console.warn(`[engine] ${channel} · ${stage.id} 패치 응답 파싱 실패 — 원고 변경 없이 진행`);
+            console.warn(`[engine] ${channel} · ${stage.id} 패치 응답 파싱 실패(재시도 포함) — 원고 변경 없이 진행`);
           }
         } else {
           const rewriteUser =
@@ -463,7 +515,7 @@ export async function runPipeline(
           if (revised.trim()) draft = revised;
         }
 
-        if (rewriteCount + 1 >= maxRewrites) {
+        if (isLastRound) {
           if (maxRewrites > 1) {
             // 예전엔 여기서 바로 break해서 "마지막 라운드 패치가 실제로 문제를 고쳤는지"를 아무도
             // 확인 안 했다(직전 라운드들은 "다음 반복의 review 호출"이 사실상 재검수 역할을 했지만,

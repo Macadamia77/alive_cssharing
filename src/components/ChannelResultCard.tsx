@@ -299,7 +299,11 @@ export default function ChannelResultCard({ channel, status, content, stage, car
               <>
                 <div
                   className="text-sm text-slate-700 leading-relaxed font-[inherit]"
-                  style={{ whiteSpace: "pre-wrap" }}
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    height: expanded ? undefined : "420px",
+                    overflowY: expanded ? undefined : "auto",
+                  }}
                   dangerouslySetInnerHTML={{ __html: expanded ? content : preview }}
                 />
                 {hasMore && (

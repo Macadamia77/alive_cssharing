@@ -29,6 +29,7 @@ stages: [skeleton, writer, content-review]
 - steps_vertical item.title은 최대 10자, item.body는 반드시 25자 이내로 작성한다 — 박스가 1줄만 표시하도록 고정되어 있어서, 넘으면 2줄로 밀려서 아래가 잘린다. 넘칠 것 같으면 문장을 줄이지 말고 처음부터 더 짧고 구체적인 표현으로 다시 쓴다.
 - 비교형 박스 item.title은 최대 8자, item.body는 최대 20자 내외로 작성한다.
 - 문구가 길어질 경우 문장을 자르지 말고 처음부터 더 짧게 다시 작성한다.
+- 각 요소별 글자수 제한을 지켰더라도, 한 카드 안에 title+subtitle+item 전체 텍스트가 많으면(예: item을 4개까지 꽉 채우거나 문장을 여러 개 붙여 쓰는 경우) 여전히 빽빽하고 혼란스러워 보인다. 카드 하나는 한눈에 훑어 이해되는 정보량만 담고, item 개수·문장 수 자체를 줄이는 것도 글자수 조정과 함께 검토한다.
 - steps_vertical은 실제 순서, 단계, 진행 흐름이 있을 때만 사용한다.
 - 하나의 카드뉴스 안에서 같은 layout_type은 최대 2회까지만 사용한다.
 - 병렬 사례·조건·확인 항목은 steps_vertical 대신 stacked_boxes 또는 keyword_boxes를 우선 사용한다.

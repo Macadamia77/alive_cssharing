@@ -58,6 +58,12 @@ var FIGMA_THEMES = {
   summer4: { first: "summer4_first", cta: "summer4_CTA" },
   summer5: { first: "summer5_first", cta: "summer5_CTA" },
   week2:   { first: "week2_first",   cta: "week2_CTA"   },
+  week3:   { first: "week3_first",   cta: "week3_CTA"   },
+};
+
+// 테마별로 결과물을 넣을 페이지 이름. 지정 없으면 기본 "결과물" 페이지를 사용한다.
+var THEME_OUTPUT_PAGES = {
+  week3: "7월 3주차",
 };
 
 function applyThemeToCards(cards, theme) {
@@ -143,7 +149,7 @@ figma.ui.onmessage = async function (msg) {
       message: "Figma 카드 프레임을 생성하는 중입니다..."
     });
 
-    var createdFrames = await createCards(cards);
+    var createdFrames = await createCards(cards, msg.theme || "default");
 
     if (!createdFrames || createdFrames.length === 0) {
       throw new Error("카드 데이터는 있었지만 Figma 프레임 생성에 실패했습니다.");
@@ -172,10 +178,11 @@ figma.ui.onmessage = async function (msg) {
   }
 };
 
-async function createCards(cards) {
+async function createCards(cards, theme) {
   var createdFrames = [];
   var gap = 80;
   var batchKey = getDateTimeKey();
+  var outputPageName = THEME_OUTPUT_PAGES[theme] || "결과물";
 
   // "Instagram post - first" 템플릿이 있는 페이지를 자동으로 찾음 (어느 페이지에서 실행해도 동작)
   var templatePage = figma.currentPage;
@@ -183,7 +190,7 @@ async function createCards(cards) {
 
   for (var pi = 0; pi < figma.root.children.length; pi++) {
     var p = figma.root.children[pi];
-    if (p.name === "결과물") {
+    if (p.name === outputPageName) {
       outputPage = p;
     }
     // 템플릿 페이지: "Instagram post - first" FRAME이 있는 페이지
@@ -562,7 +569,7 @@ async function renderCompareBlocks(container, items, frame) {
   var maxItems = Math.min(items.length, 2);
   var boxWidth = container.width;
   var slotHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
-  var headerHeight = 46;
+  var headerHeight = 68;
   var headerGap = 10;
   // 콘텐츠가 짧아도 박스가 슬롯 전체를 억지로 채우지 않도록, slotHeight는
   // "최대 높이"로만 쓰고 실제 박스 높이는 createTextBlock이 콘텐츠에 맞게 줄인다.
@@ -573,8 +580,11 @@ async function renderCompareBlocks(container, items, frame) {
     var item = items[i] || {};
     var isBad = item.tone === "bad";
     var isGood = item.tone === "good";
+    var hasTone = isBad || isGood;
     var headerColor = isBad ? "#F04452" : isGood ? "#00AEEF" : COMPARE_FALLBACK_COLOR[i % 2];
-    var headerLabel = isBad ? "✕" : isGood ? "○" : COMPARE_FALLBACK_LABEL[i % 2];
+    // tone(good/bad)이 없는 역할분담형 비교(예: 상담사 vs CX빌더)는 의미없는 A/B 대신
+    // item의 실제 라벨(title)을 헤더에 그대로 보여준다.
+    var headerLabel = isBad ? "✕" : isGood ? "○" : (item.title || COMPARE_FALLBACK_LABEL[i % 2]);
 
     var header = figma.createFrame();
     header.name = "generated_compare_header";
@@ -589,7 +599,7 @@ async function renderCompareBlocks(container, items, frame) {
     headerText.name = "generated_compare_header_label";
     await applyFont(headerText, getFontFromLayer(frame, "title"));
     headerText.characters = headerLabel;
-    headerText.fontSize = STYLE.numberFontSize;
+    headerText.fontSize = 48;
     headerText.fills = [{ type: "SOLID", color: hexToRgb("#FFFFFF") }];
     headerText.textAlignHorizontal = "CENTER";
     headerText.textAlignVertical = "CENTER";
@@ -598,9 +608,13 @@ async function renderCompareBlocks(container, items, frame) {
     headerText.y = 0;
     header.appendChild(headerText);
 
+    // 헤더에 이미 item.title을 라벨로 썼다면, 박스 안에서는 본문(body)만 보여줘서
+    // 제목이 두 번 나오지 않게 한다.
+    var boxItem = (!hasTone && item.title) ? Object.assign({}, item, { title: "" }) : item;
+
     var boxY = cursorY + headerHeight + headerGap;
     var boxHeight = await createTextBlock(
-      container, item,
+      container, boxItem,
       0, boxY,
       boxWidth, maxBoxHeight,
       "compare_2col", frame
@@ -828,6 +842,12 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   var textLeft = 24 + barOffset;
   var topPadding = isFlow ? 20 : 22;
   var bodyTop = isFlow ? 86 : 84;
+
+  // compare_2col에서 제목을 헤더 라벨로 이미 썼다면(item.title 없음), 본문을
+  // 제목 자리부터 바로 시작해서 빈 상단 여백이 남지 않게 한다.
+  if (layoutType === "compare_2col" && !item.title) {
+    bodyTop = topPadding;
+  }
 
   if (isKeywordTile) {
     // 제목은 색 밴드 위(세로 가운데 근처), 설명은 밴드 아래 흰 영역에 배치한다.

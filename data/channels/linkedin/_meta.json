@@ -9,5 +9,6 @@
     "guide/03-content-rules.md"
   ],
   "engine": "pipeline",
+  "useComposition": true,
   "outputFormat": "text"
 }

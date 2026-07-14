@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "blocks": [
+    {
+      "type": "review-loop",
+      "generateAgent": "writer",
+      "guides": [
+        "guide/00-tone.md",
+        "guide/01-examples.md",
+        "guide/02-personas.md",
+        "guide/04-structure.md",
+        "guide/03-content-rules.md"
+      ],
+      "reviewers": [
+        { "agent": "reviewer", "guides": ["guide/02-personas.md", "guide/04-structure.md", "guide/03-content-rules.md"] },
+        { "agent": "tone-reviewer", "guides": [] }
+      ],
+      "maxRetries": 1,
+      "rewriteMode": "full"
+    }
+  ]
+}

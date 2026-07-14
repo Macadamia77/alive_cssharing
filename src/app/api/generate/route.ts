@@ -11,6 +11,7 @@ import {
   runAgentPipeline as agentRunPipeline,
 } from "@/lib/agentRunner";
 import { hasAgentPipeline, buildSystemPrompt } from "@/lib/channelFiles";
+import { buildGenerateTaskRow } from "@/lib/pipeline/generateTasks";
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -69,6 +70,7 @@ export async function POST(req: NextRequest) {
       reimproveChannels,
       improveDirection,
       researchMode,
+      researchTopicFilter,
       contextBudget,
     } = (await req.json()) as {
       topic?: string;
@@ -85,6 +87,8 @@ export async function POST(req: NextRequest) {
       reimproveChannels?: string[];
       improveDirection?: string;
       researchMode?: "reuse" | "accumulated" | "fresh";
+      // "누적 데이터도 참고" 선택 시, topic 유사도로 걸러 가져올지(true, 기본) A/B 토글.
+      researchTopicFilter?: boolean;
       contextBudget?: string;
     };
 
@@ -122,6 +126,7 @@ export async function POST(req: NextRequest) {
         improve_direction: improveDirection?.trim() || null,
         reimprove_channels: reChannels,
         reimprove_research_mode: mode,
+        reimprove_topic_filter: researchTopicFilter ?? true,
       }).eq("id", runId);
       if (upErr) throw new Error(`재개선 상태 저장 실패: ${upErr.message}`);
 
@@ -141,15 +146,16 @@ export async function POST(req: NextRequest) {
         // reuse/accumulated: 기존 저장 리서치 재사용 → generate task 직접 생성(선택 채널만)
         const isImprove = !!run.improve_mode;
         const topicForTasks = (run.selected_topic || (isImprove ? (run.user_draft || "").slice(0, 60) : "")) || "";
-        const rows = reChannels.map((channel) => ({
+        const rows = reChannels.map((channel) => buildGenerateTaskRow({
           channel, topic: topicForTasks,
-          draft: isImprove ? (run.user_draft || "") : "",
-          status: "pending",
-          provider: activeProvider, api_key: activeApiKey, model: activeModel, github_token: token,
-          improve_direction: improveDirection?.trim() || null,
-          use_accumulated: mode === "accumulated",
-          context_budget: run.context_budget || null,
-          job_type: "generate", run_id: runId,
+          isImproveMode: isImprove,
+          userDraft: run.user_draft,
+          provider: activeProvider, apiKey: activeApiKey, model: activeModel, githubToken: token,
+          improveDirection: improveDirection?.trim() || null,
+          useAccumulated: mode === "accumulated",
+          accumulatedTopicFilter: researchTopicFilter ?? true,
+          contextBudget: run.context_budget,
+          runId: runId,
         }));
         const { error: gErr } = await supabase.from("tasks").insert(rows);
         if (gErr) throw new Error(`재개선 generate 등록 실패: ${gErr.message}`);

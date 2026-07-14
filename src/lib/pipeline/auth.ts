@@ -35,7 +35,7 @@ export function createAuthResolver(
   };
 
   const resolveModelFor = async (opts: {
-    model?: string; modelId?: string; useSearch?: boolean; stageId?: string;
+    model?: string; modelId?: string; modelIdByProvider?: Record<string, string>; useSearch?: boolean; stageId?: string;
   }): Promise<StageAuth> => {
     let requested = (opts.model as Provider) || baseProvider;
     let forcedModel = opts.modelId;
@@ -53,7 +53,15 @@ export function createAuthResolver(
       }
     }
     const a = await resolveAuth(requested);
-    if (a) return { p: requested, apiKey: a.apiKey, model: forcedModel || a.model };
+    if (a) {
+      let finalModel = forcedModel || a.model;
+      // 실제로 쓰일 모델(브라우저 선택 반영 후)이 opus 티어일 때만 다운그레이드한다 — 이미
+      // sonnet/haiku 등 그보다 가벼운 모델이 선택돼 있으면 그대로 두고 더 낮추지 않는다.
+      // opus가 sonnet보다 상위인 유일한 티어라 "opus면 낮추고, 아니면 안 건드림"이 맞다.
+      const downgrade = opts.modelIdByProvider?.[requested];
+      if (downgrade && /opus/i.test(finalModel)) finalModel = downgrade;
+      return { p: requested, apiKey: a.apiKey, model: finalModel };
+    }
     throw new Error(
       `이 단계는 '${requested}' 모델로 설정됐지만 워커에 ${requested.toUpperCase()}_API_KEY가 없습니다. ` +
       `Railway(및 Vercel) 환경변수에 ${requested.toUpperCase()}_API_KEY를 추가하거나, ` +

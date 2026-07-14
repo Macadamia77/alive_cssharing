@@ -5,6 +5,7 @@ import {
   Loader2, CheckCircle, AlertCircle, Zap, Search, Users, ChevronDown, ChevronRight, Layers, Database, Trash2,
 } from "lucide-react";
 import { type ChannelKey } from "@/lib/channels";
+import CompositionBuilder from "./CompositionBuilder";
 
 // ─── 타입 (API 응답) ────────────────────────────────────────
 interface StageDef {
@@ -31,6 +32,7 @@ interface Meta {
   model?: string;
   modelId?: string;
   pipeline?: Record<string, StageOverride>;
+  useComposition?: boolean; // true면 composition.json(조립표)이 단계를 정의(아래 단계 토글 무시)
 }
 interface GuideInfo { path: string; stages: string[]; }
 
@@ -135,6 +137,7 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   };
 
   const engineOn = meta?.engine === "pipeline";
+  const compositionOn = meta?.useComposition === true;
 
   const effectiveEnabled = (s: StageDef): boolean =>
     meta?.pipeline?.[s.id]?.enabled ?? s.enabled ?? true;
@@ -166,6 +169,11 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   };
 
   const toggleEngine = () => save({ engine: engineOn ? "legacy" : "pipeline" }, "engine");
+  const toggleComposition = () => {
+    const next = !compositionOn;
+    setMeta(m => m ? { ...m, useComposition: next } : m);
+    void save({ useComposition: next }, "composition");
+  };
 
   const toggleStage = (s: StageDef) => {
     if (s.id === "writer") return;
@@ -231,6 +239,28 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
             </p>
           ) : (
             <>
+              {/* composition(조립표) 토글 — 켜면 composition.json이 단계를 정의(아래 단계 토글·순서 무시) */}
+              <div className={`mb-3 rounded-xl border px-3 py-2.5 flex items-center gap-3 ${compositionOn ? "border-blue-200 bg-blue-50/60" : "border-slate-100 bg-slate-50/40"}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-slate-700">composition(조립표) 사용</p>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    {compositionOn
+                      ? "composition.json이 단계·순서·조각을 정의합니다. 아래 단계 토글은 무시됩니다."
+                      : "켜면 이 채널의 composition.json으로 단계를 구성합니다(파일이 없으면 기존 방식 유지)."}
+                  </p>
+                </div>
+                {saving === "composition" && <Loader2 className="w-3 h-3 animate-spin text-blue-500 shrink-0" />}
+                <span
+                  role="switch" aria-checked={compositionOn}
+                  onClick={toggleComposition}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer ${compositionOn ? "bg-blue-600" : "bg-slate-300"}`}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${compositionOn ? "translate-x-6" : "translate-x-1"}`} />
+                </span>
+              </div>
+
+              {/* composition이 켜져 있으면 시각적 조립표 편집기 노출 */}
+              {compositionOn && <CompositionBuilder channel={channel} />}
+
               {/* 채널 기본 모델 (모든 단계의 기본값 — 단계별 오버라이드가 우선) */}
               <div className="mb-3 rounded-xl border border-slate-100 bg-slate-50/40 px-3 py-2.5 flex items-center gap-2 text-xs flex-wrap">
                 <span className="text-[10px] text-slate-500 font-medium">채널 기본 모델</span>

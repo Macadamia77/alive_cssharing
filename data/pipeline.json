@@ -1,13 +1,14 @@
 {
   "stages": [
-    { "id": "research",       "scope": "shared",  "persona": "researcher",       "maxTokens": 16384,  "useSearch": true, "enabled": false },
-    { "id": "research-voice", "scope": "shared",  "persona": "researcher-voice", "maxTokens": 16384,  "useSearch": true, "enabled": false },
-    { "id": "brainstorm",     "scope": "shared",  "persona": "brainstormer",     "maxTokens": 16384,  "skipIf": "draftProvided", "enabled": false, "thinking": { "budgetTokens": 3000 } },
-    { "id": "research-deep",  "scope": "shared",  "persona": "researcher-deep",  "maxTokens": 16384,  "useSearch": true, "enabled": false },
+    { "id": "research",       "scope": "shared",  "persona": "researcher",       "maxTokens": 16384,  "useSearch": true, "enabled": false, "modelIdByProvider": { "claude": "claude-sonnet-5" } },
+    { "id": "research-voice", "scope": "shared",  "persona": "researcher-voice", "maxTokens": 16384,  "useSearch": true, "enabled": false, "modelIdByProvider": { "claude": "claude-sonnet-5" } },
+    { "id": "brainstorm",     "scope": "shared",  "persona": "brainstormer",     "maxTokens": 24000,  "skipIf": "draftProvided", "enabled": false, "thinking": { "budgetTokens": 3000 } },
+    { "id": "research-deep",  "scope": "shared",  "persona": "researcher-deep",  "maxTokens": 16384,  "useSearch": true, "enabled": false, "modelIdByProvider": { "claude": "claude-sonnet-5" } },
     { "id": "skeleton",       "scope": "shared",  "persona": "skeleton",         "maxTokens": 10000, "enabled": false, "thinking": { "budgetTokens": 3000 } },
     { "id": "writer",         "scope": "channel", "persona": "writer",           "maxTokens": 24000 },
     { "id": "content-review", "scope": "channel", "persona": "reviewer",         "roles": ["fact-check", "seo-check"], "maxTokens": 6000, "thinking": { "budgetTokens": 1500 } },
     { "id": "tone-review",    "scope": "channel", "persona": "tone-reviewer",    "roles": ["tone-check"], "maxTokens": 6000, "thinking": { "budgetTokens": 1500 } },
-    { "id": "image-gen",      "scope": "channel", "persona": "image-maker",      "maxTokens": 12000, "enabled": false }
+    { "id": "image-gen",      "scope": "channel", "persona": "image-maker",      "maxTokens": 12000, "enabled": false },
+    { "id": "image-review",   "scope": "channel", "persona": "image-reviewer",   "maxTokens": 4096,  "enabled": false }
   ]
 }

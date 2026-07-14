@@ -6,6 +6,7 @@ import {
   Check, Loader2, RefreshCw, ArrowLeft, LayoutList, Lightbulb, PenLine,
 } from "lucide-react";
 import ChannelResultCard, { type ChannelKey } from "@/components/ChannelResultCard";
+import TraceViewer from "@/components/TraceViewer";
 import { CHANNELS, CHANNEL_LABELS, CHANNEL_COLORS } from "@/lib/channels";
 import type { CardAsset } from "@/lib/pipeline/cardStorage";
 import Navbar from "@/components/Navbar";
@@ -38,7 +39,7 @@ interface Candidate {
   overlap_check?: string;
   outline?: string;
 }
-interface ChannelResult { status: ChannelStatus; content?: string; stage?: string; cardAssets?: CardAsset[]; }
+interface ChannelResult { status: ChannelStatus; content?: string; stage?: string; taskId?: string; cardAssets?: CardAsset[]; }
 
 const EXAMPLE_TOPICS = [
   "CS 아웃소싱으로 비용 절감하는 방법",
@@ -193,8 +194,15 @@ export default function HomePage() {
   // 채널 선택 단계
   const [selectedChannels, setSelectedChannels] = useState<ChannelKey[]>([]);
 
-  // 모드 A: 1차 리서치(research/voice) 생략 — 누적 데이터만으로 브레인스토밍
-  const [skipInitialResearch, setSkipInitialResearch] = useState(false);
+  // 모드 A: research/research-voice/research-deep 3종을 독립적으로 켜고 끌 수 있는 토글
+  // (코스트 대비 품질 기여도 A/B 테스트 목적). 직관 일치용으로 "실행(enable)" 기준 — 켜짐(파랑)=실행,
+  // 꺼짐(회색)=생략. 기본값 true=실행(기존 skip=false=실행과 동일 동작). API로 보낼 땐 skip으로 반전.
+  const [runResearch, setRunResearch] = useState(true);
+  const [runResearchVoice, setRunResearchVoice] = useState(true);
+  const [runResearchDeep, setRunResearchDeep] = useState(true);
+  const [runSkeleton, setRunSkeleton] = useState(true);
+  // 누적 리서치를 topic 유사도로 걸러 가져올지(기본) 최신순 그대로 가져올지 A/B 토글.
+  const [topicFilterAccumulated, setTopicFilterAccumulated] = useState(true);
   // [M8 ④] 컨텍스트 참조 예산 — 카테고리별 개별 제어
   const [ctxBudget, setCtxBudget] = useState<CtxBudget>(DEFAULT_BUDGET);
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -206,6 +214,8 @@ export default function HomePage() {
   // 재개선(결과 화면)
   const [improveDir, setImproveDir] = useState("");
   const [researchMode, setResearchMode] = useState<"reuse" | "accumulated" | "fresh">("reuse");
+  // "누적 데이터도 참고" 선택 시, topic 유사도로 걸러 가져올지(기본) 최신순 그대로 가져올지 A/B 토글.
+  const [accTopicFilter, setAccTopicFilter] = useState(true);
   const [reimproveSel, setReimproveSel] = useState<ChannelKey[]>([]);
 
   // 생성/결과 단계
@@ -214,6 +224,13 @@ export default function HomePage() {
   const [finalizeStage, setFinalizeStage] = useState<string>("");
   const [results, setResults] = useState<Record<ChannelKey, ChannelResult>>(emptyResults());
   const [resultChannels, setResultChannels] = useState<ChannelKey[]>([]);
+
+  // "이 생성의 근거 보기" — skeleton/심화 리서치 산출물을 lazy 1회 조회(폴링 아님)해 접이식 표시
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [reasoningLoading, setReasoningLoading] = useState(false);
+  const [reasoningData, setReasoningData] = useState<{ skeleton: string; deep: string } | null>(null);
+  const [reasoningError, setReasoningError] = useState(false); // 조회 실패("생략됨"과 구분)
+  const [traceOpen, setTraceOpen] = useState(false); // 생성 과정 트레이스 뷰어 접이식
 
   const resultsRef = useRef<HTMLDivElement>(null);
   const generatingRef = useRef(false);
@@ -323,7 +340,12 @@ export default function HomePage() {
       const res = await fetch("/api/brainstorm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim(), provider: selectedProvider, skipInitialResearch, contextBudget: JSON.stringify(ctxBudget) }),
+        body: JSON.stringify({
+          topic: topic.trim(), provider: selectedProvider,
+          // UI는 "실행" 기준(run) → API 계약은 skip 기준이라 경계에서 반전
+          skipResearch: !runResearch, skipResearchVoice: !runResearchVoice, skipResearchDeep: !runResearchDeep, skipSkeleton: !runSkeleton, topicFilterAccumulated,
+          contextBudget: JSON.stringify(ctxBudget),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "브레인스토밍 시작 실패");
@@ -333,7 +355,7 @@ export default function HomePage() {
       setBsError(e instanceof Error ? e.message : "브레인스토밍 시작에 실패했습니다.");
       setBsLoading(false);
     }
-  }, [topic, bsLoading, selectedProvider, skipInitialResearch, ctxBudget, pollBrainstorm]);
+  }, [topic, bsLoading, selectedProvider, runResearch, runResearchVoice, runResearchDeep, runSkeleton, topicFilterAccumulated, ctxBudget, pollBrainstorm]);
 
   // ── Step 3: 채널 생성 + finalize/결과 폴링 ──────────────────
   const pollResults = useCallback((id: string, targeted: ChannelKey[]) => {
@@ -375,11 +397,11 @@ export default function HomePage() {
           const n = { ...prev };
           for (const t of data.tasks) {
             if (t.status === "completed") {
-              n[t.channel] = { status: "done", content: t.result, cardAssets: t.cardAssets };
+              n[t.channel] = { status: "done", content: t.result, taskId: t.taskId, cardAssets: t.cardAssets };
             } else if (t.status === "failed") {
-              n[t.channel] = { status: "error" };
+              n[t.channel] = { status: "error", taskId: t.taskId };
             } else {
-              n[t.channel] = { status: "loading", stage: t.status };
+              n[t.channel] = { status: "loading", stage: t.status, taskId: t.taskId };
             }
           }
           return n;
@@ -487,6 +509,8 @@ export default function HomePage() {
     if (generatingRef.current || generating || !runId || reimproveSel.length === 0) return;
     generatingRef.current = true;
     setGenerating(true); setGenError(null); setFinalizeStage("");
+    // fresh 재개선은 워커가 skeleton_content/research_deep_content를 덮어쓰므로 캐시를 비워 재조회 유도.
+    setReasoningOpen(false); setReasoningData(null); setReasoningError(false);
     setResults(prev => { const n = { ...prev }; for (const ch of reimproveSel) n[ch] = { status: "loading", stage: "pending" }; return n; });
     setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     try {
@@ -495,7 +519,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reimprove: true, runId, channels: reimproveSel,
-          improveDirection: improveDir.trim(), researchMode, provider: selectedProvider,
+          improveDirection: improveDir.trim(), researchMode, researchTopicFilter: accTopicFilter, provider: selectedProvider,
         }),
       });
       const data = await res.json();
@@ -505,17 +529,37 @@ export default function HomePage() {
       setGenError(e instanceof Error ? e.message : "재개선 요청에 실패했습니다.");
       setGenerating(false); generatingRef.current = false;
     }
-  }, [generating, runId, reimproveSel, improveDir, researchMode, resultChannels, selectedProvider, pollResults]);
+  }, [generating, runId, reimproveSel, improveDir, researchMode, accTopicFilter, resultChannels, selectedProvider, pollResults]);
+
+  // 근거(심화 리서치·뼈대) 접이식 토글 — 처음 펼칠 때만 1회 조회(이후 캐시된 state 재사용).
+  const toggleReasoning = useCallback(async () => {
+    const next = !reasoningOpen;
+    setReasoningOpen(next);
+    if (!next || reasoningData || !runId) return; // 접거나, 이미 받았거나, runId 없으면 조회 안 함
+    setReasoningLoading(true); setReasoningError(false);
+    try {
+      const res = await fetch(`/api/brainstorm?runId=${runId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "조회 실패");
+      // 조회 성공 시에만 캐시 → 실패면 reasoningData는 null로 남아 다음 열람에 재시도됨.
+      setReasoningData({ skeleton: data.skeleton_content ?? "", deep: data.research_deep_content ?? "" });
+    } catch { setReasoningError(true); } // 조회 실패("생략됨"과 구분해 표시) — 생성 결과엔 영향 없음
+    finally { setReasoningLoading(false); }
+  }, [reasoningOpen, reasoningData, runId]);
 
   const clearSession = () => ["csai_topic", "csai_runId", "csai_candidates"].forEach(k => sessionStorage.removeItem(k));
   const resetAll = () => {
     clearPoll(); clearSession();
     setPhase("input"); setTopic(""); setRunId(null); setCandidates([]);
     setSelectedIdx(null); setPageOffset(0); setSelectedChannels([]);
-    setUserDraft(""); setDoResearch(true); setSkipInitialResearch(false); setCtxBudget(DEFAULT_BUDGET);
-    setImproveDir(""); setResearchMode("reuse"); setReimproveSel([]);
+    setUserDraft(""); setDoResearch(true);
+    setRunResearch(true); setRunResearchVoice(true); setRunResearchDeep(true); setRunSkeleton(true);
+    setTopicFilterAccumulated(true);
+    setCtxBudget(DEFAULT_BUDGET);
+    setImproveDir(""); setResearchMode("reuse"); setAccTopicFilter(true); setReimproveSel([]);
     setBsError(null); setGenError(null); setFinalizeStage(""); setResultChannels([]);
     setResults(emptyResults());
+    setReasoningOpen(false); setReasoningData(null); setReasoningError(false);
   };
 
   const pageCands = candidates.slice(pageOffset, pageOffset + PAGE_SIZE);
@@ -670,19 +714,37 @@ export default function HomePage() {
                     ))}
                   </div>
 
-                  {/* [M8 #3] 1차 리서치 생략 토글 */}
-                  <button
-                    onClick={() => setSkipInitialResearch(v => !v)}
-                    disabled={bsLoading}
-                    className="mb-4 w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 cursor-pointer disabled:opacity-60">
-                    <span className="text-left">
-                      <span className="text-sm font-medium text-slate-700 block">1차 웹 리서치 생략 (누적 데이터만)</span>
-                      <span className="text-[11px] text-slate-400">켜면 새 웹서치 없이 그동안 쌓인 리서치·우수작만으로 후보 발산(빠름·저비용). 누적이 없으면 근거가 약할 수 있음.</span>
-                    </span>
-                    <span className={`shrink-0 w-10 h-6 rounded-full transition-colors relative ${skipInitialResearch ? "bg-blue-600" : "bg-slate-300"}`}>
-                      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${skipInitialResearch ? "left-[1.125rem]" : "left-0.5"}`} />
-                    </span>
-                  </button>
+                  {/* research/research-voice/research-deep 3종 독립 토글 — 켜짐(파랑)=실행, 꺼짐(회색)=생략 */}
+                  <div className="mb-4 rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+                    {[
+                      { n: "①", label: "research (공신력 통계·업계 동향)", desc: "끄면 이 리서치 생략(누적 데이터로 일부 보완될 수 있음).", v: runResearch, set: setRunResearch },
+                      { n: "②", label: "research-voice (현장 경험담)", desc: "끄면 실무자 목소리 리서치 생략.", v: runResearchVoice, set: setRunResearchVoice },
+                      { n: "③", label: "research-deep (주제 확정 후 심화 리서치)", desc: "끄면 후보 선택 후 심화 검색 없이 진행.", v: runResearchDeep, set: setRunResearchDeep },
+                      { n: "④", label: "skeleton (콘텐츠 뼈대 설계)", desc: "끄면 뼈대 설계 없이 리서치 결과만으로 각 채널이 바로 작성.", v: runSkeleton, set: setRunSkeleton },
+                    ].map(({ n, label, desc, v, set }) => (
+                      <button key={n} onClick={() => set(x => !x)} disabled={bsLoading}
+                        className="w-full flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer disabled:opacity-60 first:rounded-t-xl last:rounded-b-xl">
+                        <span className="text-left flex items-start gap-2">
+                          <span className="text-xs text-slate-400 font-mono pt-0.5">{n}</span>
+                          <span>
+                            <span className="text-sm font-medium text-slate-700 block">{v ? "실행" : "생략"} — {label}</span>
+                            <span className="text-[11px] text-slate-400">{desc}</span>
+                          </span>
+                        </span>
+                        <span className={`shrink-0 w-10 h-6 rounded-full transition-colors relative ${v ? "bg-blue-600" : "bg-slate-300"}`}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${v ? "left-[1.125rem]" : "left-0.5"}`} />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 누적 리서치(위 3종 중 끈 게 있을 때 보완되는 배경자료)를 topic 유사도로 걸러올지 A/B 토글 */}
+                  <label className="flex items-center gap-2 mb-4 text-[11px] text-slate-500 cursor-pointer select-none">
+                    <input type="checkbox" checked={topicFilterAccumulated} onChange={e => setTopicFilterAccumulated(e.target.checked)}
+                      disabled={bsLoading}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                    누적 리서치 참고 시 주제 유사도로 필터링(끄면 관련성 무관 최신순)
+                  </label>
 
                   {bsError && (
                     <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
@@ -926,7 +988,7 @@ export default function HomePage() {
                     {resultChannels.length}개 채널 생성 완료
                   </span>
                   <div className="flex gap-2">
-                    <button onClick={() => { clearPoll(); setPhase("candidates"); setGenError(null); setResultChannels([]); setResults(emptyResults()); }}
+                    <button onClick={() => { clearPoll(); setPhase("candidates"); setGenError(null); setResultChannels([]); setResults(emptyResults()); setReasoningOpen(false); setReasoningData(null); setReasoningError(false); }}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50 cursor-pointer">
                       <ArrowLeft className="w-3.5 h-3.5" />후보로 돌아가기
                     </button>
@@ -968,6 +1030,15 @@ export default function HomePage() {
                     ))}
                   </div>
 
+                  {/* 누적 데이터 참고 시에만 의미 있는 topic 유사도 필터 토글 — A/B 비교용 */}
+                  {researchMode === "accumulated" && (
+                    <label className="flex items-center gap-2 mt-2 text-[11px] text-slate-500 cursor-pointer select-none">
+                      <input type="checkbox" checked={accTopicFilter} onChange={e => setAccTopicFilter(e.target.checked)}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      주제 유사도로 필터링(끄면 관련성 무관 최신순)
+                    </label>
+                  )}
+
                   {/* 재개선할 채널 */}
                   <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mt-4 mb-1.5">다시 개선할 채널</p>
                   <div className="flex flex-wrap gap-1.5 mb-3">
@@ -993,6 +1064,59 @@ export default function HomePage() {
               {genError && (
                 <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3 max-w-2xl mx-auto">
                   <AlertCircle className="w-4 h-4 shrink-0" />{genError}
+                </div>
+              )}
+
+              {/* 이 생성의 근거(심화 리서치·뼈대) — allDone 시점에만 노출(그 전엔 skeleton 미저장 가능) */}
+              {allDone && runId && (
+                <div className="max-w-2xl mx-auto mb-6">
+                  <button onClick={() => void toggleReasoning()}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">
+                    <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span className="font-medium">이 생성의 근거 보기 (심화 리서치 · 뼈대)</span>
+                    <ChevronRight className={`w-4 h-4 ml-auto transition-transform ${reasoningOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {reasoningOpen && (
+                    <div className="mt-2 glass-card rounded-2xl p-5 space-y-4">
+                      {reasoningLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" />불러오는 중...</div>
+                      ) : reasoningError ? (
+                        <div className="flex items-center gap-2 text-sm text-red-600"><AlertCircle className="w-4 h-4 shrink-0" />근거를 불러오지 못했어요. 패널을 닫았다 다시 열면 재시도합니다.</div>
+                      ) : (
+                        <>
+                          <section>
+                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">콘텐츠 뼈대 (skeleton)</p>
+                            {reasoningData?.skeleton?.trim()
+                              ? <pre className="whitespace-pre-wrap break-words text-xs text-slate-700 leading-relaxed font-sans m-0">{reasoningData.skeleton}</pre>
+                              : <p className="text-xs text-slate-400">뼈대 설계를 생략했거나 결과가 없습니다.</p>}
+                          </section>
+                          <section className="pt-3 border-t border-slate-100">
+                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">심화 리서치 (research-deep)</p>
+                            {reasoningData?.deep?.trim()
+                              ? <pre className="whitespace-pre-wrap break-words text-xs text-slate-700 leading-relaxed font-sans m-0">{reasoningData.deep}</pre>
+                              : <p className="text-xs text-slate-400">심화 리서치를 생략했거나 결과가 없습니다.</p>}
+                          </section>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 생성 과정 트레이스 — 채널별 단계·persona·가이드·프롬프트 실시간 검수(접이식) */}
+              {resultChannels.length > 0 && (
+                <div className="max-w-3xl mx-auto mb-6">
+                  <button onClick={() => setTraceOpen(o => !o)}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">
+                    <LayoutList className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span className="font-medium">생성 과정 상세 보기 (채널별 단계·persona·가이드·프롬프트)</span>
+                    <ChevronRight className={`w-4 h-4 ml-auto transition-transform ${traceOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {traceOpen && (
+                    <div className="mt-2">
+                      <TraceViewer channels={resultChannels.map(ch => ({ channel: ch, taskId: results[ch]?.taskId }))} runId={runId} generating={generating} />
+                    </div>
+                  )}
                 </div>
               )}
 

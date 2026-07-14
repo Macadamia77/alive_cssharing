@@ -9,6 +9,7 @@ import { loadPipelineConfig } from "../src/lib/pipeline/loadConfig";
 import { createAuthResolver } from "../src/lib/pipeline/auth";
 import { runSharedProducerStage } from "../src/lib/pipeline/producerStage";
 import { loadPersona, stripCodeFence } from "../src/lib/pipeline/promptAssembly";
+import { buildGenerateTaskRow } from "../src/lib/pipeline/generateTasks";
 import { callProvider } from "../src/lib/apiClients";
 import {
   getRecentResearch, getRecentExampleSummariesAny, getRecentFeedbackAny, contextBudget,
@@ -117,6 +118,16 @@ function mockCandidates(topic: string) {
   }));
 }
 
+// [관측] shared 단계(research/brainstorm/deep/skeleton) 트레이스 — run_id 키, 채널 무관.
+// seq는 단계 고정값(브레인스토밍/finalize 두 잡에 나눠 기록돼도 순서 보장). fire-and-forget(생성 무영향).
+function traceShared(runId: string, seq: number, stage: string, persona: string, output: string, extra: Record<string, unknown> = {}) {
+  void supabase.from("pipeline_traces").insert({
+    task_id: null, run_id: runId, channel: null,
+    seq, stage, kind: "producer", phase: "output",
+    data: { persona, output, chars: output.length, ...extra },
+  }).then(null, () => {});
+}
+
 async function processBrainstormJob(task: any) {
   const runId = task.run_id as string;
   const { data: run, error: runFetchErr } = await supabase
@@ -158,25 +169,27 @@ async function processBrainstormJob(task: any) {
     // [결정 #10] 리서치 전용 provider가 지정돼 있으면 research/research-voice에만 강제 적용
     // (brainstorm 자체 호출은 useSearch가 아니라 base provider 그대로 — 아래서 별도 처리 안 함).
     const researchProviderOverride = run.research_provider || undefined;
-    // [M8 #3] 1차 리서치(research/research-voice) 생략 옵션 — 켜면 신규 웹서치 없이 누적 데이터만으로
-    // 브레인스토밍. 새 검색 비용·시간 절약(누적 데이터가 쌓였을 때 유용).
-    const skipInitial = !!run.skip_initial_research;
+    // research/research-voice를 독립적으로 켜고 끌 수 있다(코스트 대비 품질 기여도 A/B 테스트용 —
+    // 예전엔 skip_initial_research 하나로 묶여있었음). 끈 단계는 새 웹서치 없이 누적 데이터로만 보완.
+    const skipResearch = !!run.skip_research;
+    const skipResearchVoice = !!run.skip_research_voice;
     const bud = contextBudget(run.context_budget); // [M8 ④] 참조 예산(주입 건수·길이)
     const [researchOut, voiceOut, recentResearch, recentSummaries, recentFeedback] = await Promise.all([
-      (!skipInitial && researchDef)
+      (!skipResearch && researchDef)
         ? runSharedProducerStage(researchDef, topic, resolveModelFor, token, runId, (n) => void statusCallback(`소스 ${n}개 검색 중`), researchProviderOverride)
         : Promise.resolve(""),
-      (!skipInitial && voiceDef)
+      (!skipResearchVoice && voiceDef)
         ? runSharedProducerStage(voiceDef, topic, resolveModelFor, token, runId, (n) => void statusCallback(`소스 ${n}개 검색 중`), researchProviderOverride)
         : Promise.resolve(""),
-      getRecentResearch(bud.research, bud.researchDays).catch(() => []),
+      getRecentResearch(bud.research, bud.researchDays, topic, run.topic_filter_accumulated ?? true).catch(() => []),
       getRecentExampleSummariesAny(bud.examples).catch(() => []),
       getRecentFeedbackAny(bud.feedback).catch(() => []),
     ]);
-    if (skipInitial && recentResearch.length === 0) {
-      console.warn(`[Worker] brainstorm run ${runId}: 1차 리서치 생략인데 누적 리서치가 없음 — 근거 없이 진행(후보 품질↓ 가능)`);
+    if (skipResearch && skipResearchVoice && recentResearch.length === 0) {
+      console.warn(`[Worker] brainstorm run ${runId}: research/research-voice 둘 다 생략인데 누적 리서치도 없음 — 근거 없이 진행(후보 품질↓ 가능)`);
     }
-    console.log(`[Worker] brainstorm run ${runId}: research ${researchOut.length}자 / research-voice ${voiceOut.length}자${skipInitial ? " (1차 생략, 누적만)" : ""}`);
+    const skipLabel = [skipResearch && "research", skipResearchVoice && "research-voice"].filter(Boolean).join("+");
+    console.log(`[Worker] brainstorm run ${runId}: research ${researchOut.length}자 / research-voice ${voiceOut.length}자${skipLabel ? ` (${skipLabel} 생략)` : ""}`);
 
     const contextParts = [
       researchOut && `[research 산출물]\n${researchOut}`,
@@ -196,12 +209,13 @@ async function processBrainstormJob(task: any) {
     const brainstormPersona = await loadPersona(null, brainstormDef.persona ?? brainstormDef.id, token);
     if (!brainstormPersona) throw new Error("brainstormer.md 페르소나 파일을 찾을 수 없습니다.");
     const bAuth = await resolveModelFor({ model: brainstormDef.model, modelId: brainstormDef.modelId, stageId: "brainstorm" });
+    console.log(`[Worker] brainstorm run ${runId} — 모델 ${bAuth.p}/${bAuth.model}`);
     const baseUser =
       `[주제]\n${topic}\n\n` +
       (contextParts ? `${contextParts}\n\n` : "") +
       `위 자료를 바탕으로 절차대로 후보를 발산·정리해 출력 형식 그대로 JSON만 출력하세요.`;
 
-    // 대형 구조화 출력(≈9개 후보) 파싱 실패 시 1회 repair 재시도.
+    // 대형 구조화 출력(6개 후보, brainstormer.md 기준) 파싱 실패 시 1회 repair 재시도.
     let candidates: unknown[] | null = null;
     let lastRaw = "";
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -231,6 +245,9 @@ async function processBrainstormJob(task: any) {
     if (updateErr) throw new Error(`brainstorm_runs 업데이트 실패: ${updateErr.message}`);
 
     console.log(`[Worker] brainstorm run ${runId} 완료 — 후보 ${candidates.length}개`);
+    if (researchOut) traceShared(runId, 0, "research", "researcher", researchOut);
+    if (voiceOut) traceShared(runId, 1, "research-voice", "researcher-voice", voiceOut);
+    traceShared(runId, 2, "brainstorm", "brainstormer", lastRaw, { candidates: candidates.length });
   } catch (e: any) {
     // tasks뿐 아니라 brainstorm_runs 자체도 실패로 기록 — 안 그러면 프론트 폴링이 'pending'에서
     // 영원히 멈춘다(M2에서 만든 status/error 컬럼을 실제로 쓴다).
@@ -261,21 +278,21 @@ async function insertGenerateTasksForRun(run: any, task: any, selectedTopic: str
   // 이전엔 모드 B에서 초안 앞부분(slice)을 주제로 보여줘 사용자가 "결과 카드 제목"과 실제 리서치·
   // 스켈레톤이 쓴 주제가 달라 헷갈릴 수 있었다. selected_topic이 비었을 때만(mock 등) 초안 앞부분으로 폴백.
   const topicForTasks = selectedTopic || (isImproveMode ? (run.user_draft || "").slice(0, 60) : "") || task.topic || "";
-  const rows = channels.map((channel) => ({
+  const rows = channels.map((channel) => buildGenerateTaskRow({
     channel,
     topic: topicForTasks,
-    draft: isImproveMode ? (run.user_draft || "") : "",
-    status: "pending",
+    isImproveMode,
+    userDraft: run.user_draft,
     provider: task.provider,
-    api_key: task.api_key,
-    github_token: task.github_token,
+    apiKey: task.api_key,
     model: task.model || null,
+    githubToken: task.github_token,
     // [M8 재개선] 방향·누적참조를 채널 task에 실어 writer가 반영
-    improve_direction: run.improve_direction || null,
-    use_accumulated: run.reimprove_research_mode === "accumulated",
-    context_budget: run.context_budget || null, // [M8 ④] 참조 예산 승계
-    job_type: "generate",
-    run_id: run.id,
+    improveDirection: run.improve_direction,
+    useAccumulated: run.reimprove_research_mode === "accumulated",
+    accumulatedTopicFilter: run.reimprove_topic_filter ?? true,
+    contextBudget: run.context_budget, // [M8 ④] 참조 예산 승계
+    runId: run.id,
   }));
   // 워커-레벨 idempotency: 삽입 전 이 run의 기존 generate task를 제거한다(중복 방어).
   // [M8 재개선] 단, "지금 (재)생성하는 채널"만 지운다 — 재개선 안 한 다른 채널 결과는 보존.
@@ -378,8 +395,8 @@ async function processFinalizeJob(task: any) {
     const skeletonDef = stageMap.get("skeleton");
     if (!skeletonDef) throw new Error("pipeline.json에 'skeleton' 단계 정의가 없습니다.");
 
-    // 모드A는 항상 research-deep, 모드B는 doResearch 토글(기본 true)을 따른다.
-    const shouldResearch = isImproveMode ? (run.do_research ?? true) : true;
+    // 모드A는 skip_research_deep 토글(기본 false=실행), 모드B는 do_research 토글(기본 true)을 따른다.
+    const shouldResearch = isImproveMode ? (run.do_research ?? true) : !run.skip_research_deep;
     const researchProviderOverride = run.research_provider || undefined;
 
     // [작업 4] 체크포인트①: 비싼 단계(추출·research-deep) 시작 전. 이미 재생성돼 내 task가 지워졌으면 중단.
@@ -417,12 +434,14 @@ async function processFinalizeJob(task: any) {
 
     // [M8] 모드 B는 skeleton(구조 재설계)을 건너뛴다 — "충실한 개선"은 원문 구조 보존이 목적이라
     // 새 뼈대가 오히려 방해. 모드 A만 skeleton으로 채널 무관 구조를 설계한다.
+    // + 사용자가 skip_skeleton 토글을 켜면 모드 A에서도 건너뜀(기본 false=실행이라 미설정 시 기존 동작).
     let skeletonOut = "";
-    if (!isImproveMode) {
+    if (!isImproveMode && !run.skip_skeleton) {
       await statusCallback("skeleton");
       const skeletonPersona = await loadPersona(null, skeletonDef.persona ?? skeletonDef.id, token);
       if (!skeletonPersona) throw new Error("skeleton.md 페르소나 파일을 찾을 수 없습니다.");
       const skAuth = await resolveModelFor({ model: skeletonDef.model, modelId: skeletonDef.modelId, stageId: "skeleton" });
+      console.log(`[Worker] finalize run ${runId} — skeleton 모델 ${skAuth.p}/${skAuth.model}`);
       const contextParts = [
         buildSelectedBriefBlock(run), // [결정 #12] 선정 후보의 각도·핵심주장·개요를 skeleton에 승계(모드 A)
         run.research_content?.research ? `[research 산출물]\n${run.research_content.research}` : "",
@@ -449,6 +468,8 @@ async function processFinalizeJob(task: any) {
       status: "finalized",
     }).eq("id", runId);
     if (updateErr) throw new Error(`brainstorm_runs 업데이트 실패: ${updateErr.message}`);
+    if (deepOut) traceShared(runId, 3, "research-deep", "researcher-deep", deepOut);
+    if (skeletonOut) traceShared(runId, 4, "skeleton", "skeleton", skeletonOut);
 
     const n = await insertGenerateTasksForRun(run, task, selectedTopic);
     console.log(`[Worker] finalize run ${runId} 완료 — 채널 ${n}개 generate task 등록`);
@@ -599,14 +620,24 @@ async function processTask(task: any) {
         task.draft || "",
         token,
         task.provider || "mock",
-        statusCallback,
-        task.api_key || undefined,
-        onCardAssets,
-        sharedContext,
-        task.model || undefined,
-        task.improve_direction || undefined,
-        !!task.use_accumulated,
-        task.context_budget || undefined
+        {
+          statusCallback,
+          apiKeyOverride: task.api_key || undefined,
+          onCardAssets,
+          sharedContext,
+          modelOverride: task.model || undefined,
+          improveDirection: task.improve_direction || undefined,
+          includeAccumulated: !!task.use_accumulated,
+          contextBudgetName: task.context_budget || undefined,
+          accumulatedTopicFilter: task.accumulated_topic_filter ?? true,
+          // [관측] 각 단계 트레이스를 fire-and-forget로 저장 — 생성 로직은 이 쓰기를 절대 기다리지 않는다.
+          onTrace: (ev) => {
+            void supabase.from("pipeline_traces").insert({
+              task_id: task.id, run_id: task.run_id ?? null, channel: task.channel,
+              seq: ev.seq, stage: ev.stage, kind: ev.kind ?? null, phase: ev.phase, data: ev.data,
+            }).then(null, () => {}); // 실패해도 무시(생성 영향 0)
+          },
+        }
       );
       // runPipeline.ts(공용 엔진)은 건드리지 않고, 인스타그램일 때만 결과물에
       // 기존 JSON 구조 자동검수(카드 수·items 개수·해시태그 보정 등)를 덧씌운다.

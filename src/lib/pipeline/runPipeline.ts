@@ -15,7 +15,7 @@ import {
 import { type Provider } from "../aiConfig";
 import { callProvider, callProviderForObject, callProviderForObjectWithImages } from "../apiClients";
 import { resolveStages, loadPipelineConfig } from "./loadConfig";
-import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentResearch, addBadExample, addResearch, contextBudget } from "../pipelineMemory";
+import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentResearch, addBadExample, addResearch, contextBudget, type ResearchRow } from "../pipelineMemory";
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray } from "./imageCards";
 import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
@@ -29,7 +29,8 @@ import { createAuthResolver } from "./auth";
 // 실제로 호출하지 않는 Vercel(Next.js API route) 쪽에서도 모듈 로드 시점에 번들링/로딩이
 // 실패한다 — 이 파일이 render-worker와 Next.js API route 양쪽에서 import되기 때문에, 아래
 // image 단계 안에서만 동적 import(await import)로 지연 로드한다.
-import type { ResolvedStage } from "./types";
+import type { ResolvedStage, Composition, TraceEvent } from "./types";
+import { validateComposition } from "./composition";
 
 // ─── 단계 종류 추론 (config의 id로부터 엔진 동작 결정) ──────────
 type StageKind = "producer" | "writer" | "reviewer" | "image";
@@ -38,6 +39,15 @@ function stageKind(id: string): StageKind {
   if (id.includes("image")) return "image";
   if (id.includes("review")) return "reviewer";
   return "producer"; // research / brainstorm / research-deep / skeleton 등
+}
+
+// [검수용] DEBUG_PROMPTS=1(Railway 환경변수)일 때만 프롬프트·산출물을 통째로 로그에 덤프한다.
+// 평소(플래그 없음)엔 완전히 조용. 이미 만들어진 문자열을 읽어 출력만 하므로 LLM 입력·출력·
+// 콘텐츠 품질·생성 시간에 전혀 영향 없다(퓨샷/기각/피드백이 실제 프롬프트에 들어갔는지 눈으로 확인용).
+const DEBUG_PROMPTS = process.env.DEBUG_PROMPTS === "1";
+function debugDump(label: string, text: string): void {
+  if (!DEBUG_PROMPTS) return;
+  console.log(`\n===== [DEBUG ▸ ${label}] (${text.length}자) =====\n${text}\n===== [/DEBUG ▸ ${label}] =====\n`);
 }
 
 // ─── 동시성 상한을 둔 병렬 map ──────────────────────────────────
@@ -264,33 +274,67 @@ function isRejected(reviewOutput: string): boolean {
   return /\bREJECT\b|반려/i.test(s) && !/\bAPPROVED\b|승인/i.test(s);
 }
 
+export interface RunPipelineOptions {
+  statusCallback?: (status: string) => Promise<void>;
+  apiKeyOverride?: string;
+  // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
+  // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
+  onCardAssets?: (assets: CardAsset[]) => void;
+  // [M6] run_id로 finalize된 브레인스토밍 결과(리서치+심화+스켈레톤)를 여러 채널이 공유할 때
+  // 채널별 runPipeline 호출마다 이 문자열을 그대로 주입한다. contextParts 최우선에 push되어
+  // 이 채널의 자체 producer 단계보다 먼저 writer/producer에게 전달된다.
+  sharedContext?: string;
+  // 브라우저에서 고른 모델(활성 provider용) — 워커가 env/기본값 대신 이 모델로 강제한다.
+  // pipeline.json에 단계별 modelId가 명시된 경우엔 그게 우선(auth.ts에서 처리).
+  modelOverride?: string;
+  // [M8 재개선] 사용자가 준 개선 방향 — writer에 주입. includeAccumulated면 누적 리서치도 참고.
+  improveDirection?: string;
+  includeAccumulated?: boolean;
+  // [M8 ④] 컨텍스트 참조 예산('light'|'normal'|'heavy') — 누적 주입 건수·길이 조절.
+  contextBudgetName?: string;
+  // 재개선 "누적 데이터도 참고" 시, topic 유사도(pg_trgm)로 걸러서 가져올지(true, 기본) 아니면
+  // 예전처럼 최신순으로 가져올지(false) — 둘의 결과물 품질을 A/B 비교하기 위한 토글.
+  accumulatedTopicFilter?: boolean;
+  // [관측] 각 단계 진행을 기록하는 콜백(엔진 실제 변수·프롬프트를 그대로 전달). 워커가 이걸 받아
+  // Supabase에 fire-and-forget로 저장 → 웹에서 채널별로 검수. 없으면 아무 것도 안 함(오버헤드 0).
+  onTrace?: (ev: TraceEvent) => void;
+}
+
+// 필수 인자(channel/topic/userDraft/token/provider) 5개만 위치 인자로 남기고, 나머지는 전부
+// opts 객체로 받는다 — 예전엔 옵션이 늘 때마다 끝에 위치 인자를 추가해서 순서 실수 위험이
+// 계속 커졌다(추가 전 14개). 옵션은 이름으로 지정하므로 순서 걱정 없이 늘려도 안전하다.
 export async function runPipeline(
   channel: ChannelKey,
   topic: string,
   userDraft: string,
   token: string | undefined,
   provider: Provider,
-  statusCallback?: (status: string) => Promise<void>,
-  apiKeyOverride?: string,
-  // 이미지 카드가 실제 PNG로 캡처·업로드되면 호출자에게 전달(기존 반환 타입은 유지 — 다른 호출부에
-  // 영향 없음). 콜백이 없으면 업로드 자체를 시도하지 않는다(예: 로컬 dev fallback 경로).
-  onCardAssets?: (assets: CardAsset[]) => void,
-  // [M6] run_id로 finalize된 브레인스토밍 결과(리서치+심화+스켈레톤)를 여러 채널이 공유할 때
-  // 채널별 runPipeline 호출마다 이 문자열을 그대로 주입한다. contextParts 최우선에 push되어
-  // 이 채널의 자체 producer 단계보다 먼저 writer/producer에게 전달된다.
-  sharedContext?: string,
-  // 브라우저에서 고른 모델(활성 provider용) — 워커가 env/기본값 대신 이 모델로 강제한다.
-  // pipeline.json에 단계별 modelId가 명시된 경우엔 그게 우선(auth.ts에서 처리).
-  modelOverride?: string,
-  // [M8 재개선] 사용자가 준 개선 방향 — writer에 주입. includeAccumulated면 누적 리서치도 참고.
-  improveDirection?: string,
-  includeAccumulated?: boolean,
-  // [M8 ④] 컨텍스트 참조 예산('light'|'normal'|'heavy') — 누적 주입 건수·길이 조절.
-  contextBudgetName?: string
+  opts: RunPipelineOptions = {}
 ): Promise<string> {
+  const {
+    statusCallback, apiKeyOverride, onCardAssets, sharedContext,
+    modelOverride, improveDirection, includeAccumulated,
+    contextBudgetName, accumulatedTopicFilter, onTrace,
+  } = opts;
   const meta: ChannelMeta = await getChannelMeta(channel, token);
   const draftProvided = !!(userDraft && userDraft.trim());
-  const stages = resolveStages(channel, meta, { draftProvided });
+  // 관측 트레이스 emit — onTrace 없으면 완전 no-op(오버헤드 0). seq로 UI 정렬.
+  let traceSeq = 0;
+  const trace = (ev: Omit<TraceEvent, "seq">) => { onTrace?.({ seq: traceSeq++, ...ev }); };
+  // composition.json(조립표)이 있으면 그걸로 단계를 구성한다. 없거나 파싱 실패면 pipeline.json으로 폴백.
+  // _meta.useComposition이 켜진 채널만 조회 — 미사용 채널의 불필요한 파일 조회(GitHub 404 등)를 피함.
+  let composition: Composition | null = null;
+  if (meta.useComposition) try {
+    const raw = await readChannelFile(channel, "composition.json", token);
+    if (raw?.trim()) {
+      const parsed = JSON.parse(raw) as Composition;
+      const errs = validateComposition(parsed);
+      if (errs.length) console.warn(`[engine] ${channel}: composition.json 검증 경고 — ${errs.join(" / ")}`);
+      composition = parsed;
+      console.log(`[engine] ${channel}: composition.json 사용(블록 ${parsed.blocks?.length ?? 0}개)`);
+    }
+  } catch { /* composition.json 없음/파싱실패 → pipeline.json 폴백 */ }
+  const stages = resolveStages(channel, meta, { draftProvided }, composition);
   const bud = contextBudget(contextBudgetName);
 
   console.log(`[engine] ${channel}: 활성 단계 ${stages.length}개 → ${stages.map(s => s.id).join(", ")}`);
@@ -313,7 +357,7 @@ export async function runPipeline(
 
   // 단계의 provider/model 해석. 명시 지정한 provider 키가 워커에 없으면 명확한 에러(조용한 폴백 금지).
   const resolveStageModel = (s: ResolvedStage) =>
-    resolveModelFor({ model: s.model, modelId: s.modelId, useSearch: s.useSearch, stageId: s.id });
+    resolveModelFor({ model: s.model, modelId: s.modelId, modelIdByProvider: s.modelIdByProvider, useSearch: s.useSearch, stageId: s.id });
 
   // ── LLM 호출 헬퍼 (provider·model을 인자로 받음) — apiClients.callProvider에 위임 ──
   const call = (
@@ -347,21 +391,20 @@ export async function runPipeline(
   if (improveDirection && improveDirection.trim()) {
     contextParts.push(`[사용자 개선 방향 — 최우선 반영]\n${improveDirection.trim()}`);
   }
-  // [M8 재개선 ②] 전체 누적 리서치도 참고(관련도 아닌 최신순 — 참고용 보조).
-  if (includeAccumulated) {
-    const acc = await getRecentResearch(bud.research, bud.researchDays).catch(() => []);
-    if (acc.length) {
-      contextParts.push(`[누적 리서치 참고]\n${acc.map(r => `- (${r.stage}) ${r.content.slice(0, bud.cap)}`).join("\n")}`);
-    }
-  }
 
-  // 동적 컨텍스트(Phase 4): 누적 피드백(전 단계) + 우수작 퓨샷(writer 전용)
-  // 서로 무관한 조회 3개라 순차 대기 대신 병렬 실행(brainstorm 경로와 동일 패턴).
-  const [feedback, exampleTexts, badExamples] = await Promise.all([
+  // 동적 컨텍스트(Phase 4): 누적 리서치(재개선 옵션) + 누적 피드백(전 단계) + 우수작 퓨샷(writer 전용) + 기각 사례.
+  // 넷 다 서로 결과에 의존하지 않는 독립 Supabase 조회라 순차 대기 대신 병렬 실행(brainstorm 경로와 동일 패턴).
+  const [acc, feedback, exampleTexts, badExamples] = await Promise.all([
+    includeAccumulated
+      ? getRecentResearch(bud.research, bud.researchDays, topic, accumulatedTopicFilter ?? true).catch(() => [] as ResearchRow[])
+      : Promise.resolve([] as ResearchRow[]),
     getRecentFeedback(channel, bud.feedback).catch(() => []),
     getRecentExamples(channel, bud.examples).catch(() => []),
     getRecentBadExamples(channel, bud.bad).catch(() => []),
   ]);
+  if (acc.length) {
+    contextParts.push(`[누적 리서치 참고]\n${acc.map(r => `- (${r.stage}) ${r.content.slice(0, bud.cap)}`).join("\n")}`);
+  }
   if (feedback.length) {
     contextParts.push(`[누적 피드백 — 아래 지적을 반드시 반영]\n${feedback.map((f, i) => `${i + 1}. ${f}`).join("\n")}`);
     console.log(`[engine] ${channel}: 누적 피드백 ${feedback.length}개 주입`);
@@ -386,6 +429,13 @@ export async function runPipeline(
     : "";
   if (badExamples.length) console.log(`[engine] ${channel}: 기각 사례 ${badExamples.length}개 주입(회피용)`);
 
+  // 참고자료가 writer에게 실제로 전달됐는지 검수용 — 엔진이 방금 조회한 실제 개수/플래그.
+  trace({ phase: "context", stage: "context", data: {
+    feedback: feedback.length, examples: exampleTexts.length, bad: badExamples.length,
+    accumulated: acc.length, sharedContext: !!sharedContext, draftProvided,
+    stages: stages.map(s => s.id),
+  } });
+
   let draft = "";
   let writerSystemBase = ""; // 검수 반려 시 재작성에 재사용
   let writerCall: { p: Provider; apiKey: string; model: string } =
@@ -398,7 +448,9 @@ export async function runPipeline(
   const unresolvedReviewIssues: string[] = [];
 
   for (const stage of stages) {
-    const kind = stageKind(stage.id);
+    // composition이 명시한 kind 우선, 없으면 id로 추론(pipeline.json 폴백 경로). 명시 kind는
+    // "image-review"가 image로 오분류되던 문자열 추론 버그도 원천 차단한다.
+    const kind = stage.kind ?? stageKind(stage.id);
     const persona = await loadPersona(channel, stage.persona ?? stage.id, token);
     if (!persona) {
       console.warn(`[engine] ${channel}/${stage.id}: 페르소나 '${stage.persona ?? stage.id}' 파일 없음 → 단계 건너뜀`);
@@ -410,6 +462,11 @@ export async function runPipeline(
     const { p: sp, apiKey: sk, model: sm } = await resolveStageModel(stage);
     if (statusCallback) await statusCallback(stage.id);
     console.log(`[engine] ${channel} · ${stage.id}(${kind}) — 모델 ${sp}/${sm} · 조각 ${selected.length}개${selected.length ? " [" + selected.map(g => g.path).join(", ") + "]" : ""}`);
+    // 이 단계가 실제로 어떤 persona·model·가이드(순서 그대로)로 도는지 — 엔진 실제 변수 기록.
+    trace({ phase: "stage", stage: stage.id, kind, data: {
+      persona: stage.persona ?? stage.id, provider: sp, model: sm,
+      guides: selected.map(g => g.path),
+    } });
 
     if (kind === "producer") {
       const system = persona + stageGuides;
@@ -419,18 +476,19 @@ export async function runPipeline(
         `위 정보를 바탕으로 이 단계의 역할을 수행해 결과를 직접 출력하세요.`;
       const out = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, stage.useSearch, stage.disableThinking,
         (n) => { if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`); }, stage.thinking?.budgetTokens));
+      debugDump(`${channel}/${stage.id} 산출물`, out);
       if (out.trim()) {
         contextParts.push(`[${stage.id} 산출물]\n${out}`);
         // 웹서치 단계 산출물은 자료실용으로 아카이브(자동 저장) — fire-and-forget.
         // 품질 게이트: 실제 검색으로 출처가 붙은 결과만 저장한다(apiClients가 성공 시
-        // 본문 끝에 "[출처]" 섹션을 덧붙임). 출처가 없으면 근거 없는 응답이므로
-        // "리서치"로 저장하지 않는다 — 예전엔 검색 실패 폴백 산출물까지 무조건 저장했음.
+        // 본문 끝에 "[출처]" 섹션을 덧붙임). 출처가 없으면 근거 없는 응답이므로 저장 안 함.
         if (stage.useSearch) {
           if (out.includes("[출처]")) void addResearch(channel, stage.id, topic, out);
           else console.warn(`[engine] ${channel} · ${stage.id}: 출처 없는 리서치 산출물 → 아카이브 건너뜀`);
         }
       }
       console.log(`[engine] ${channel} · ${stage.id} 완료 (${out.length}자)`);
+      trace({ phase: "output", stage: stage.id, kind, data: { prompt: user, output: out } });
 
     } else if (kind === "writer") {
       const system = persona + stageGuides;
@@ -442,9 +500,11 @@ export async function runPipeline(
         (exampleBlock ? `${exampleBlock}\n\n` : "") +
         (badBlock ? `${badBlock}\n\n` : "") +
         `위 자료와 시스템 프롬프트의 가이드 규칙을 철저히 적용해 ${channel} 채널 콘텐츠를 완성하세요.`;
+      debugDump(`${channel}/writer 최종 프롬프트(user) — 퓨샷·기각·피드백 주입 확인용`, user);
       draft = stripCodeFence(await call(sp, sk, sm, system, user, maxTok, false, meta.disableThinking ?? false));
       if (!draft.trim()) throw new Error(`[engine] ${channel} writer 단계 결과가 비어 있습니다.`);
       console.log(`[engine] ${channel} · writer 완료 (${draft.length}자)`);
+      trace({ phase: "output", stage: stage.id, kind, data: { prompt: user, output: draft } });
 
       if (channel === "naver-blog") {
         // 금칙 문구는 등장 위치가 여러 곳일 수 있어(실측: "함정" 재발 사례), 패치 1회로 안 끝나면
@@ -490,21 +550,28 @@ export async function runPipeline(
       // maxRetries > 1인 채널(예: naver-blog)만 "재작성 → 같은 검수기로 재검수"를 반복한다.
       const maxRewrites = Math.max(1, stage.maxRetries ?? 1);
       // naver-blog는 재시도가 최대 3회×2단계라 매번 전체 재작성이면 25분 넘게 걸릴 수 있다(실측).
-      // 부분 패치로 전환해 응답 길이를 줄인다 — 다른 채널은 재시도가 1회뿐이라(위 주석 참고)
-      // 기존 전체 재작성 방식을 그대로 둔다(동작 영향 없음).
-      const usePatchRewrite = channel === "naver-blog";
+      // 부분 패치로 전환해 응답 길이를 줄인다 — 다른 채널은 재시도가 1회뿐이라 기존 전체 재작성 유지.
+      // composition이 rewriteMode를 지정하면 그걸, 아니면 채널 기본(naver=patch, 그 외 full).
+      const usePatchRewrite = (stage.rewriteMode ?? (channel === "naver-blog" ? "patch" : "full")) === "patch";
       // 직전 라운드 지적사항 — 다음 라운드 검수 프롬프트에 "실제로 해소됐는지 최우선 확인"으로 넘겨준다.
-      // 매 라운드가 백지에서 다시 훑다 보니 새로 발견한 문제에 집중하느라, 다른 라운드의 패치가 실수로
-      // 되살린 과거 문제의 재발을 놓치는 경향이 실측 확인됐다(2026-07-13, 괄호 병기가 1라운드에 고쳐졌다가
-      // 3라운드에 재발). maxRewrites=1인 채널은 review()가 한 번만 불려서 이 변수가 실질적으로 안 쓰인다
-      // (동작 영향 없음).
+      // 매 라운드가 백지에서 다시 훑다 보니 다른 라운드의 패치가 되살린 과거 문제의 재발을 놓치는
+      // 경향이 실측 확인됐다(2026-07-13). maxRewrites=1인 채널은 review()가 한 번만 불려 실질 무영향.
       let previousReviewReason: string | null = null;
       for (let rewriteCount = 0; ; rewriteCount++) {
         // 검수기도 자기에게 할당된 조각(예: tone-review ← 금지어 사전)을 받는다.
-        const reviewUser = previousReviewReason
+        // composition이 injectContext를 세운 리뷰어(내용 검수)만 참고 자료(리서치)를 함께 받아 본문 인용을
+        // 대조한다. pipeline.json/legacy 리뷰어는 injectContext=undefined → 기존 프롬프트 그대로(팀원 무영향).
+        const injectBlock = (stage.injectContext && contextParts.length)
+          ? `[참고 자료 — 이 글이 근거로 삼은 리서치. 본문의 구체 인용(인물·기관·매체·연도·수치)은 반드시 여기서 대조]\n${contextParts.join("\n\n---\n\n")}\n\n`
+          : "";
+        const reviewUser = injectBlock + (previousReviewReason
           ? `[직전 라운드 지적사항 — 아래 문제가 실제로 해소됐는지 최우선으로 확인하고, 다른 문제도 계속 점검하십시오]\n${previousReviewReason}\n\n[검수 대상]\n${draft}`
-          : `[검수 대상]\n${draft}`;
+          : `[검수 대상]\n${draft}`);
         const review = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, reviewUser, maxTok, false, false, undefined, stage.thinking?.budgetTokens));
+        debugDump(`${channel}/${stage.id} 검수 판정 전문(${rewriteCount + 1}차)`, review);
+        // prompt(reviewUser)도 저장 → 트레이스 "상세"에서 리뷰어가 실제로 [참고 자료](리서치)를 받았는지
+        // 눈으로 확인 가능(writer/producer가 prompt를 저장하는 것과 동일 패턴, 관측 전용·생성 영향 없음).
+        trace({ phase: "verdict", stage: stage.id, kind, data: { attempt: rewriteCount + 1, prompt: reviewUser, output: review, rejected: isRejected(review) } });
         if (!isRejected(review)) {
           console.log(rewriteCount > 0
             ? `[engine] ${channel} · ${stage.id} 재작성 ${rewriteCount}회 후 통과`
@@ -517,9 +584,8 @@ export async function runPipeline(
         // 기각 사례 자동 저장(회피 학습용) — 초안 통째가 아니라 "검수 피드백(사유+문제 문장)"만 저장. fire-and-forget
         void addBadExample(channel, review.replace(/\s+/g, " ").slice(0, 700), stage.id);
         const rewriteSystem = writerSystemBase || ((await loadPersona(channel, "writer", token)) ?? "");
-        // 마지막 라운드는 부분 패치 대신 전체 재작성으로 폴백(naver-blog 한정) — 재시도 횟수는 그대로 두고
-        // 마지막 기회의 해결 확률만 높인다. 2라운드 연속 패치로도 해결 안 됐다면 부분 패치 자체의 한계일
-        // 가능성이 높다(실측: 2026-07-13 content-review 3/3 반려 후 미해결 발행 사례).
+        // 마지막 라운드는 부분 패치 대신 전체 재작성으로 폴백(patch 모드 한정) — 마지막 기회의 해결
+        // 확률을 높인다(실측: 2026-07-13 content-review 3/3 반려 후 미해결 발행 사례).
         const isLastRound = rewriteCount + 1 >= maxRewrites;
 
         if (usePatchRewrite && !isLastRound) {
@@ -601,11 +667,9 @@ export async function runPipeline(
 
         if (isLastRound) {
           if (maxRewrites > 1) {
-            // 예전엔 여기서 바로 break해서 "마지막 라운드 패치가 실제로 문제를 고쳤는지"를 아무도
-            // 확인 안 했다(직전 라운드들은 "다음 반복의 review 호출"이 사실상 재검수 역할을 했지만,
-            // 정의상 마지막 라운드만은 그 다음 반복이 없어 재검수를 못 받았다 — 실측 확인된 문제,
-            // 2026-07-12 naver-blog 생성에서 제목 글자수·경쟁사 인용 위반이 재검수 없이 그대로
-            // 발행됨). 최소 한 번은 재검수해서, 그래도 안 고쳐졌으면 최소한 흔적이라도 남긴다.
+            // 정의상 마지막 라운드만은 그 다음 반복이 없어 재검수를 못 받았다(실측 확인된 문제,
+            // 2026-07-12 naver-blog 제목 글자수·경쟁사 인용 위반이 재검수 없이 그대로 발행됨).
+            // 최소 한 번은 재검수해서, 그래도 안 고쳐졌으면 최소한 흔적이라도 남긴다.
             const finalReview = stripCodeFence(await call(sp, sk, sm, persona + stageGuides, `[검수 대상]\n${draft}`, maxTok, false, false, undefined, stage.thinking?.budgetTokens));
             if (isRejected(finalReview)) {
               const summary = finalReview.replace(/\s+/g, " ").slice(0, 200);
@@ -622,11 +686,9 @@ export async function runPipeline(
     } else if (kind === "image") {
       const allImageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
       // naver-blog(html) 최종 조립은 <!-- PUBLISH:START/END --> 블록 안쪽만 채택하고 나머지는
-      // 버린다(assembleNaverBlogHtml). 그런데 여기서 마커를 draft 전체에서 세면, PUBLISH 블록
-      // 밖(NOTES 등)에 우연히 섞인 마커까지 카드로 만들어버려 "카드는 8장 만들었는데 실제 글엔
-      // 6장만 들어감" 같은 개수 불일치가 실측 확인됐다 — cardAssets 개수와 본문 <figure> 개수가
-      // 어긋나면 SVG 다운로드 버튼이 숨겨지고 PNG도 저화질 폴백으로 떨어진다. PUBLISH 블록이
-      // 있으면 그 범위 안의 마커만, 없으면(다른 채널·형식) 기존대로 draft 전체를 그대로 쓴다.
+      // 버린다(assembleNaverBlogHtml). 마커를 draft 전체에서 세면 PUBLISH 블록 밖(NOTES 등)에
+      // 우연히 섞인 마커까지 카드로 만들어 개수 불일치가 난다 — PUBLISH 블록이 있으면 그 안의
+      // 마커만, 없으면(다른 채널·형식) 기존대로 draft 전체를 그대로 쓴다.
       const publishBlock = draft.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
       const imageMarkers = publishBlock
         ? allImageMarkers.filter(m =>
@@ -637,10 +699,8 @@ export async function runPipeline(
         continue;
       }
 
-      // 대표 썸네일(마커 인덱스 0)은 LLM이 손으로 그리지 않는다 — 매번 색상·레이아웃·마커
-      // 문법이 조금씩 달라지며 같은 계열 버그가 반복 재발했기 때문. cardTemplateBuilder.ts의
-      // buildThumbnailSvg()가 제목·부제·마스코트 세 값만으로 결정적으로 SVG를 조립한다
-      // (디자인 값 자체가 그 함수 안에 있다 — 이전처럼 별도 템플릿 파일을 읽지 않는다).
+      // 대표 썸네일(마커 인덱스 0)은 LLM이 손으로 그리지 않는다 — buildThumbnailSvg()가 제목·부제·
+      // 마스코트 세 값만으로 결정적으로 SVG를 조립한다(디자인 값 자체가 그 함수 안에 있다).
       let mascotDataUri: string | null = null;
       try {
         const mascotB64 = await readChannelFileBase64(channel, "assets/mascot.png", token);
@@ -659,41 +719,25 @@ export async function runPipeline(
       const bodyMarkerCount = imageMarkers.length - 1;
       const system = persona + stageGuides;
       // svg 외에 user/fallbackText도 들고 있는 이유: image-review 단계(있으면)가 REJECT한 카드를
-      // 재생성할 때 이 프롬프트를 그대로(피드백만 덧붙여) 재사용한다 — 처음부터 다시 조립할
-      // 필요 없게.
+      // 재생성할 때 이 프롬프트를 그대로(피드백만 덧붙여) 재사용한다.
       let bodyResults: { svg: string; user: string; fallbackText: string }[] = [];
 
       if (bodyMarkerCount > 0) {
-        // 카드 1개당 호출 1개로 병렬 실행(이전엔 N개 카드를 호출 1번에 순서대로 다 쓰게 시켜서,
-        // 응답이 잘리면 뒤쪽 카드가 통째로 사라져 ImageCardCountMismatchError로 단계 전체가
-        // 실패했다 — 카드별로 나누면 그 카드 슬롯만 buildFallbackCardSvg로 채워 개수가 항상
-        // 마커 수와 일치하고, 응답도 병렬이라 더 빠르다).
-        // 채널 하나 안에서의 카드 동시 호출 상한. 채널 자체가 이미 최대 5개까지 동시에 돌 수
-        // 있으므로(위 주석 참고) 이 값 × 5가 provider에 실제로 튀는 최악의 동시 요청 수가 된다.
+        // 카드 1개당 호출 1개로 병렬 실행 — 카드별로 나누면 그 카드 슬롯만 buildFallbackCardSvg로
+        // 채워 개수가 항상 마커 수와 일치하고, 응답도 병렬이라 더 빠르다.
         const CARD_CONCURRENCY = 3;
         const bodyMarkers = imageMarkers.slice(1); // 인덱스 0(썸네일) 제외 — 본문 카드에 대응하는 마커들
         const cardIndexes = Array.from({ length: bodyMarkerCount }, (_, i) => i);
-        // 예전엔 카드 콘텐츠를 자유 텍스트로 받아 <!-- CARD_START/END --> 마커를 정규식으로 찾고
-        // JSON.parse로 되받았다 — 모델이 코드펜스를 덧씌우거나 잡담을 곁들이거나 필드를 빠뜨리면
-        // 그 카드가 통째로 밋밋한 대체 카드(buildFallbackCardSvg)로 떨어졌다(실측 확인, 흔한 실패
-        // 경로였다). callProviderForObject(스키마 강제 구조화 출력)로 바꿔 이 파싱 실패 경로 자체를
-        // 없앤다 — provider가 cardContentSchema를 만족하는 응답만 반환하도록 AI SDK가 보장한다.
+        // callProviderForObject(스키마 강제 구조화 출력)로 파싱 실패 경로 자체를 없앤다 —
+        // provider가 cardGenerationSchema를 만족하는 응답만 반환하도록 AI SDK가 보장한다.
         bodyResults = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, async (i) => {
-          // 각 카드가 담당할 구간(이전 마커 끝~이 마커 끝)을 미리 잘라 명시한다. draft 전문을
-          // 그대로 다 주고 "몇 번째 카드"라고만 알려주면, 카드끼리 서로 뭘 다뤘는지 모른 채
-          // 독립적으로 훑다가 같은 대목(예: 가장 눈에 띄는 통계 하나)을 중복으로 고르는 사례가
-          // 실측 확인됐다 — 담당 구간을 명시하면 이 문제가 구조적으로 없어진다. draft 전문도
-          // 함께 줘서 문맥 이해(품질)는 그대로 유지한다.
           const marker = bodyMarkers[i];
-          // 첫 번째 본문 카드(i=0)의 "이전 마커"는 썸네일 마커(imageMarkers[0])다 — bodyMarkers[-1]로
-          // undefined를 만들어 draft 맨 앞(0)으로 폴백하면 <!-- PUBLISH:START --> 같은 조립용
-          // 내부 마커·NOTES 블록까지 구간에 섞여 들어간다(실측 확인: 카드에 원본 마커 텍스트가
-          // 그대로 노출되는 버그로 이어짐). 항상 "바로 앞 마커" 기준으로 잘라야 안전하다.
+          // 항상 "바로 앞 마커" 기준으로 잘라야 안전하다(첫 본문 카드의 앞 마커는 썸네일 마커).
           const prevMarker = i === 0 ? imageMarkers[0] : bodyMarkers[i - 1];
           const sectionStart = prevMarker.index! + prevMarker[0].length;
           const sectionEnd = marker.index! + marker[0].length;
           const section = draft.slice(sectionStart, sectionEnd).trim();
-          const markerDesc = marker[1]?.trim() ?? ""; // "[IMAGE: 설명]"의 설명 — writer가 카드마다 다르게 쓰므로 항상 카드별로 구분되는 텍스트다.
+          const markerDesc = marker[1]?.trim() ?? "";
 
           const user =
             `[주제]\n${topic}\n\n` +
@@ -706,28 +750,17 @@ export async function runPipeline(
             `[작성 규칙]\n` +
             `- 담당 구간 밖의 내용(다른 소제목 등)은 절대 참고하지 마십시오.\n` +
             `- 레이아웃 타입 선택과 필드별 글자수 제한은 함께 제공되는 이미지 가이드를 그대로 따르십시오.`;
-          // 동시에 3개가 정확히 같은 타이밍에 발사되면 provider가 그 순간만 유독 부하를 크게
-          // 느껴 한꺼번에 이상 응답을 내는 사례가 실측 확인됐다(첫 웨이브 카드 3개가 전부 동일한
-          // 대체 카드로 떨어짐) — 정확한 서버 측 원인은 알 수 없지만, 시작 시점을 살짝 흩뿌리는
-          // 것만으로 값싸게 완화할 수 있어 넣는다(워커 슬롯당 최대 250ms, 속도엔 영향 거의 없음).
+          // 동시 발사 타이밍을 살짝 흩뿌려(워커 슬롯당 최대 250ms) 첫 웨이브 카드가 한꺼번에
+          // 이상 응답을 내는 사례를 값싸게 완화한다(속도엔 영향 거의 없음).
           const stagger = (i % CARD_CONCURRENCY) * 250;
           await new Promise<void>((resolve) => setTimeout(resolve, stagger));
 
-          // <!-- PUBLISH:START/END -->·[IMAGE: ...] 같은 조립용 내부 마커가 구간 텍스트에 섞여
-          // 들어와도 화면에 그대로 노출되지 않도록 한 번 더 걸러낸다(안전장치 — 근본 원인은
-          // 구간 경계 계산에서 고쳤지만, 다른 경로로 마커가 섞일 가능성까지 방어). 폴백 텍스트는
-          // 생성 실패 시에도 image-review REJECT 후 재생성에도 재사용하므로 미리 계산해 둔다.
           const cleanSection = section
             .replace(/<!--[\s\S]*?-->/g, " ")
             .replace(/\[IMAGE:[^\]]*\]/g, " ")
             .replace(/\s+/g, " ").trim();
           const fallbackText = cleanSection.slice(0, 60) || markerDesc || extractDraftTitle(draft) || topic;
 
-          // provider 오류(레이트리밋·네트워크·스키마를 재시도 후에도 못 만족)는 여전히 카드 1개
-          // 단위 문제일 뿐이라 전체를 실패시키지 않는다 — 그 카드만 안전한 요약형 폴백 카드로
-          // 대체하고 나머지는 정상 진행한다. 폴백도 draft 제목 대신 그 카드의 담당 구간 텍스트를
-          // 쓴다 — 여러 카드가 동시에 실패해도 전부 똑같은 문구가 뜨는 대신(실측 확인된 문제)
-          // 최소한 서로 달라진다.
           try {
             const { card } = await callProviderForObject(
               sp, sk, sm, system, user, Math.min(maxTok, 4000), cardGenerationSchema
@@ -741,12 +774,9 @@ export async function runPipeline(
       }
 
       const finalSvgs = [thumbnailSvg, ...bodyResults.map(r => r.svg)];
-      // finalSvgs는 imageMarkers(PUBLISH 블록 안쪽만, 위 355-359행)를 기준으로 만들어졌는데,
-      // spliceImageCardsFromArray는 draft "전체"에서 다시 [IMAGE: ...] 마커를 센다 — PUBLISH
-      // 블록 밖(NOTES 등)에 마커 모양 텍스트가 하나라도 더 있으면 "마커 N개 중 M개만 생성됨"으로
-      // 개수가 어긋나 이 단계가 실패 처리된다(실측 확인: 2026-07-12 naver-blog 생성 실패 사례).
-      // imageMarkers를 스코프한 이유(위 주석)와 똑같은 이유로 스플라이스도 PUBLISH 블록 부분
-      // 문자열에만 적용하고 나머지는 그대로 붙여, 두 마커 집계가 항상 같은 기준을 쓰게 맞춘다.
+      // finalSvgs는 imageMarkers(PUBLISH 블록 안쪽만) 기준으로 만들어졌는데, spliceImageCardsFromArray는
+      // draft "전체"에서 다시 마커를 센다 — 두 집계 기준을 맞추기 위해 스플라이스도 PUBLISH 블록
+      // 부분 문자열에만 적용하고 나머지는 그대로 붙인다.
       let draftAfterSplice: string;
       let finalCards: string[];
       if (publishBlock) {
@@ -761,27 +791,22 @@ export async function runPipeline(
         finalCards = spliced.cards;
       }
       draft = draftAfterSplice;
-      // finalCards: SVG 문자열 배열(이전엔 HTML 문자열이었음)
       console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}/${imageMarkers.length}개 생성`);
 
-      // SVG → PNG 래스터화. 결정적으로 조립한 SVG(임의 LLM CSS 없음)라 브라우저 캡처보다
-      // 실패 가능성이 낮다 — 여기서 실패하면 폴백으로 감추지 않고 그대로 실패를 전파해
-      // (render-worker의 상위 catch가 task를 failed 처리) 배포 문제를 바로 드러낸다.
+      // SVG → PNG 래스터화. 결정적으로 조립한 SVG(임의 LLM CSS 없음)라 실패 가능성이 낮다 —
+      // 실패하면 폴백으로 감추지 않고 그대로 전파해 배포 문제를 바로 드러낸다.
       const { captureCards, renderSvgToPng } = await import("./cardCapture");
       const captured = captureCards(finalCards).cards;
 
-      // ── 시각 검수(image-review, 채널 오버라이드로만 켜짐) ──────────
-      // 지금까지는 카드 JSON이 스키마만 만족하면 무조건 통과였다 — 실제로 렌더링된 이미지를
-      // 아무도 보지 않았다. 카피가 밋밋하거나 레이아웃 타입이 내용과 안 맞아도 잡을 방법이
-      // 없었다는 뜻이다(로컬 image-maker.md 5단계가 매번 하던 "Read로 열어서 눈으로 확인"에
-      // 해당하는 안전망이 여기엔 없었음). 카드 PNG들을 한 번에 묶어 vision 모델에 첨부해
-      // 검수하고, REJECT된 카드만 피드백을 덧붙여 최대 1회 재생성한다(로컬의 "재캡처 1회"
-      // 원칙과 동일 — 완벽함보다 상한을 두는 게 우선). 본문 카드(썸네일 제외)만 대상이다:
-      // 썸네일은 LLM이 카피를 새로 쓰지 않는 결정적 조립이라 검수 대상이 아니다.
-      if (meta.pipeline?.["image-review"]?.enabled && bodyResults.length > 0) {
+      // ── 시각 검수(image-review) ──────────
+      // 카드 PNG들을 vision 모델에 첨부해 검수하고, REJECT된 카드만 피드백을 덧붙여 최대 1회
+      // 재생성한다. 본문 카드(썸네일 제외)만 대상. 채널 오버라이드(meta.pipeline.image-review)나
+      // composition의 비전 리뷰어(stage.reviewer) 중 하나라도 있으면 켜진다(둘 다 없으면 스킵 —
+      // pipeline.json/legacy 팀원 채널은 stage.reviewer가 undefined라 기존 동작 그대로).
+      if ((meta.pipeline?.["image-review"]?.enabled || stage.reviewer) && bodyResults.length > 0) {
         try {
-          const reviewPersona = await loadPersona(channel, "image-reviewer", token);
-          if (!reviewPersona) throw new Error("image-reviewer.md 페르소나 파일을 찾을 수 없습니다.");
+          const reviewPersona = await loadPersona(channel, stage.reviewer ?? "image-reviewer", token);
+          if (!reviewPersona) throw new Error(`비전 리뷰어 '${stage.reviewer ?? "image-reviewer"}' 페르소나 파일을 찾을 수 없습니다.`);
           const reviewAuth = await resolveModelFor({ stageId: "image-review" });
           const reviewCfg = loadPipelineConfig().stages.find(s => s.id === "image-review");
           const bodyCaptured = captured.slice(1); // index 0 = 썸네일
@@ -809,8 +834,7 @@ export async function runPipeline(
                 console.warn(`[engine] ${channel} · image-review 재생성 실패(카드 ${index + 1}) — 폴백 유지: ${e instanceof Error ? e.message : e}`);
                 newSvg = buildFallbackCardSvg(original.fallbackText);
               }
-              // 재검수는 하지 않는다(1회 재생성이 최종) — captured만 갱신, finalCards는 이 시점
-              // 이후 다시 참조되지 않아 갱신 불필요.
+              // 재검수는 하지 않는다(1회 재생성이 최종) — captured만 갱신.
               const rendered = renderSvgToPng(newSvg);
               captured[index + 1] = { svg: newSvg, png: rendered.png, heightPx: rendered.heightPx };
             });
@@ -822,8 +846,7 @@ export async function runPipeline(
         }
       }
 
-      // Supabase 업로드(SVG/PNG 다운로드 기능용) — 순수 부가 기능이라 실패해도 본문 임베딩엔
-      // 영향 없다(best-effort). 실패하면 사용자는 그냥 SVG 다운로드 옵션만 못 받는다.
+      // Supabase 업로드(SVG/PNG 다운로드 기능용) — 순수 부가 기능이라 실패해도 본문 임베딩엔 영향 없다.
       if (onCardAssets) {
         try {
           const { uploadCards } = await import("./cardStorage");
@@ -835,10 +858,7 @@ export async function runPipeline(
         }
       }
 
-      // 본문에는 래스터화된 PNG를 <figure>로 감싸 삽입한다(네이버 에디터엔 SVG를 직접 붙여넣기
-      // 어려움). <figure> 래핑은 resultDownload.ts의 extractCards()가 다른 채널과 동일한 방식으로
-      // naver-blog 카드 경계도 찾을 수 있게 하기 위함 — 예전엔 맨 <div>만 들어가 있어
-      // naver-blog 카드가 항상 0개로 잡히던 문제가 있었다.
+      // 본문에는 래스터화된 PNG를 <figure>로 감싸 삽입한다(네이버 에디터엔 SVG 직접 붙여넣기 어려움).
       replacedCards.push(...captured.map((c) =>
         `<figure style="margin:24px 0;text-align:center;">` +
         `<img src="data:image/png;base64,${c.png.toString("base64")}" style="max-width:100%;height:auto;" alt=""/>` +
@@ -854,11 +874,9 @@ export async function runPipeline(
   // ── 최종 조립 (outputFormat별) ──
   const fmt = meta.outputFormat ?? "text";
   if (fmt === "html") {
-    // 검수 재시도를 다 쓰고도 안 고쳐진 문제가 있으면(위 unresolvedReviewIssues), 눈에 보이는
-    // 본문 어디에도 표시가 안 남으면 아무도 모른 채 그대로 발행된다(실측 확인된 문제) — HTML
-    // 주석은 렌더링에 영향 없이 결과물(DB의 tasks.result)에 그대로 남으므로, 최소한 "이 글은
-    // 검수를 다 통과하지 못했다"는 흔적은 남긴다. text/json 포맷 채널에는 안 붙인다 — 그쪽은
-    // writer 출력이 그대로 최종 콘텐츠라(예: json이면 파싱 가능한 값이어야 함) 주석을 못 붙인다.
+    // 검수 재시도를 다 쓰고도 안 고쳐진 문제가 있으면(unresolvedReviewIssues), HTML 주석으로
+    // 결과물(DB의 tasks.result)에 흔적을 남긴다 — 렌더링엔 영향 없다. text/json은 writer 출력이
+    // 그대로 최종 콘텐츠라 주석을 못 붙인다.
     const qualityNote = unresolvedReviewIssues.length > 0
       ? `<!-- QUALITY_REVIEW_UNRESOLVED: ${unresolvedReviewIssues.length}건 — ${unresolvedReviewIssues.join(" | ").replace(/-->/g, "→")} -->\n`
       : "";

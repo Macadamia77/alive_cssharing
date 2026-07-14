@@ -68,3 +68,18 @@ alter table pipeline_examples add column if not exists summary_json jsonb;
 -- 공유 리서치는 특정 채널에 속하지 않으므로 channel nullable로 완화 + run 연결
 alter table pipeline_research alter column channel drop not null;
 alter table pipeline_research add column if not exists run_id uuid references brainstorm_runs(id) on delete set null;
+
+-- [리서치 3종 A/B 토글] 예전엔 skip_initial_research 하나가 research+research-voice를 함께
+-- 껐다 — 코스트 대비 품질 기여도를 단계별로 비교하기 위해 3개로 분리(skip_initial_research는
+-- 과거 row 보존용으로 남겨두고 코드에서는 더 안 읽음).
+alter table brainstorm_runs add column if not exists skip_research boolean not null default false;
+alter table brainstorm_runs add column if not exists skip_research_voice boolean not null default false;
+alter table brainstorm_runs add column if not exists skip_research_deep boolean not null default false; -- 모드 A 전용(모드 B는 기존 do_research 사용)
+-- [스켈레톤 토글] 모드 A에서 뼈대 설계 단계 on/off. 기본 false=실행(미설정 시 기존 동작 그대로).
+alter table brainstorm_runs add column if not exists skip_skeleton boolean not null default false;
+
+-- [누적 리서치 topic 유사도 필터 토글] 모드 A 브레인스토밍 자체의 누적 참고, 그리고 재개선
+-- "누적 데이터도 참고" 두 경로 각각에 독립적으로 적용(용도가 달라 컬럼도 분리).
+alter table brainstorm_runs add column if not exists topic_filter_accumulated boolean not null default true; -- 모드 A 브레인스토밍용
+alter table brainstorm_runs add column if not exists reimprove_topic_filter boolean not null default true;   -- 재개선(누적 데이터 참고)용
+alter table tasks add column if not exists accumulated_topic_filter boolean not null default true; -- generate task에 승계되는 값

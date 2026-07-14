@@ -58,3 +58,37 @@ alter table pipeline_research enable row level security;
 -- (임시로 익명 접근을 허용해야 한다면 위 두 줄 대신 아래를 사용 — 보안↓)
 -- alter table pipeline_feedback disable row level security;
 -- alter table pipeline_examples disable row level security;
+
+-- [누적 리서치 topic 유사도 필터] 브레인스토밍/재개선이 참고하는 "누적 리서치"가 지금까지는
+-- 최신순으로만 뽑혀서 주제와 무관한 과거 자료가 섞여 들어갈 수 있었다. pg_trgm 문자열 유사도로
+-- 1차 필터한다(임베딩 없이 가장 싼 방식 — 정확한 의미 기반은 아니지만 완전 무관한 주제는 걸러줌).
+create extension if not exists pg_trgm;
+create index if not exists idx_pipeline_research_topic_trgm
+  on pipeline_research using gin (topic gin_trgm_ops);
+
+-- set_config로 이 호출에서만(transaction-local, is_local=true) pg_trgm.similarity_threshold를
+-- 낮춰서 "%" 연산자가 호출자가 넘긴 min_similarity를 쓰게 한다 — similarity() 함수를 WHERE에서
+-- 직접 비교하면 위 GIN 인덱스를 못 타므로, 인덱스가 실제로 먹히려면 "%" 연산자를 써야 한다.
+create or replace function match_research_by_topic(
+  query_topic text,
+  min_similarity float default 0.25,
+  match_limit int default 5,
+  max_age_days int default 30
+)
+returns setof pipeline_research
+language plpgsql
+stable
+as $$
+begin
+  perform set_config('pg_trgm.similarity_threshold', min_similarity::text, true);
+  return query
+    select *
+    from pipeline_research
+    where topic is not null
+      and stage in ('research', 'research-voice')
+      and created_at >= now() - (max_age_days || ' days')::interval
+      and topic % query_topic
+    order by similarity(topic, query_topic) desc
+    limit match_limit;
+end;
+$$;

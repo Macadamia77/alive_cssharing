@@ -119,7 +119,36 @@ export async function addResearch(
 
 /** 생성 시 주입할: 최근 누적 리서치(research/research-voice)를 최신성 필터로 N개.
  *  브레인스토밍이 "지식 베이스 보강 + 주제 중복 회피"에 참고. 오래된 통계는 배제(maxAgeDays). */
-export async function getRecentResearch(limit = 5, maxAgeDays = 30): Promise<ResearchRow[]> {
+// topic 유사도로 좁힐 때의 최소 유사도(pg_trgm similarity(), 0~1). 낮을수록 관대하게 매칭.
+const TOPIC_SIMILARITY_THRESHOLD = 0.25;
+
+/**
+ * 누적 리서치 조회. useTopicFilter=true + topic이 있으면, Supabase RPC(match_research_by_topic,
+ * pg_trgm 유사도)로 지금 주제와 겹치는 것만 가져온다 — 관련 없는 과거 리서치가 "누적 참고"로
+ * 섞여 들어가는 걸 막기 위함(topic 무필터 시 A/B 비교용으로 예전 방식도 유지).
+ * RPC 자체가 실패하면(함수 미배포 등) 기존 최신순 조회로 fail-soft 폴백한다 — 단, 유사도
+ * 매칭이 0건인 건 "관련 자료 없음"이라는 유효한 결과이므로 그 경우엔 폴백하지 않는다.
+ */
+export async function getRecentResearch(
+  limit = 5,
+  maxAgeDays = 30,
+  topic?: string,
+  useTopicFilter = false
+): Promise<ResearchRow[]> {
+  if (useTopicFilter && topic?.trim()) {
+    try {
+      const { data, error } = await supabase.rpc("match_research_by_topic", {
+        query_topic: topic.trim(),
+        min_similarity: TOPIC_SIMILARITY_THRESHOLD,
+        match_limit: limit,
+        max_age_days: maxAgeDays,
+      });
+      if (!error) return (data ?? []) as ResearchRow[];
+      console.warn(`[pipelineMemory] topic 유사도 검색 실패(${error.message}) — 최신순으로 폴백`);
+    } catch (e) {
+      console.warn(`[pipelineMemory] topic 유사도 검색 예외 — 최신순으로 폴백: ${e instanceof Error ? e.message : e}`);
+    }
+  }
   try {
     const since = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
     const { data, error } = await supabase.from("pipeline_research")

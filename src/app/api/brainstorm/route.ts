@@ -13,7 +13,12 @@ import { resolveGithubToken } from "@/lib/resolveToken";
  */
 export async function POST(req: NextRequest) {
   try {
-    const { topic, provider: providerOverride, skipInitialResearch, contextBudget } = (await req.json()) as { topic?: string; provider?: string; skipInitialResearch?: boolean; contextBudget?: string };
+    const { topic, provider: providerOverride, skipResearch, skipResearchVoice, skipResearchDeep, skipSkeleton, topicFilterAccumulated, contextBudget } = (await req.json()) as {
+      topic?: string; provider?: string;
+      skipResearch?: boolean; skipResearchVoice?: boolean; skipResearchDeep?: boolean; skipSkeleton?: boolean;
+      topicFilterAccumulated?: boolean;
+      contextBudget?: string;
+    };
     if (!topic?.trim()) return NextResponse.json({ error: "주제를 입력해주세요." }, { status: 400 });
 
     const token = resolveGithubToken(req) || null;
@@ -41,7 +46,13 @@ export async function POST(req: NextRequest) {
 
     const { data: run, error: runErr } = await supabase
       .from("brainstorm_runs")
-      .insert({ topic_seed: topic.trim(), provider, model, research_provider: researchProvider, skip_initial_research: !!skipInitialResearch, context_budget: contextBudget || null, status: "pending" })
+      .insert({
+        topic_seed: topic.trim(), provider, model, research_provider: researchProvider,
+        skip_research: !!skipResearch, skip_research_voice: !!skipResearchVoice, skip_research_deep: !!skipResearchDeep,
+        skip_skeleton: !!skipSkeleton,
+        topic_filter_accumulated: topicFilterAccumulated ?? true,
+        context_budget: contextBudget || null, status: "pending",
+      })
       .select("id")
       .single();
     if (runErr || !run) throw new Error(runErr?.message ?? "brainstorm_runs 생성 실패");
@@ -65,14 +76,18 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** GET /api/brainstorm?runId=... — 브레인스토밍 진행 상태·후보 폴링. */
+/**
+ * GET /api/brainstorm?runId=... — 브레인스토밍 진행 상태·후보 폴링.
+ * skeleton_content/research_deep_content도 함께 반환 — 후보 폴링 중엔 아직 null이고,
+ * finalize 완료 후 results 화면에서 "근거 보기"가 이 값을 lazy 1회 조회한다(폴링 아님).
+ */
 export async function GET(req: NextRequest) {
   const runId = req.nextUrl.searchParams.get("runId") ?? "";
   if (!runId) return NextResponse.json({ error: "runId가 필요합니다." }, { status: 400 });
   try {
     const { data, error } = await supabase
       .from("brainstorm_runs")
-      .select("status, candidates, error")
+      .select("status, candidates, error, skeleton_content, research_deep_content")
       .eq("id", runId)
       .single();
     if (error || !data) return NextResponse.json({ error: error?.message ?? "run을 찾을 수 없습니다." }, { status: 404 });

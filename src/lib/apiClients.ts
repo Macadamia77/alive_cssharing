@@ -37,6 +37,11 @@ export async function callClaude(
   const anthropic = createAnthropic({ apiKey });
   // extended thinking은 thinking 예산이 max_tokens 안에 포함되므로, 최종 답변용 여유를 더한다.
   const maxOut = thinking ? Math.max(maxTokens, thinking.budgetTokens + 4000) : maxTokens;
+  // Opus 4.7/4.8·Sonnet 5·Fable/Mythos 5는 고정 토큰 예산(type:"enabled"+budget_tokens) 방식이
+  // API에서 완전히 제거되고 adaptive만 지원한다 — 옛 방식으로 보내면 400 에러
+  // ("thinking.type.enabled" is not supported for this model). 반대로 Sonnet 4.6·Haiku 4.5 등
+  // 구형은 지금처럼 budgetTokens 방식이 필요하므로, 모델명으로 반드시 분기해야 한다(통일 불가).
+  const needsAdaptiveThinking = /opus-4-[78]|sonnet-5\b|fable-5|mythos-5/i.test(model);
   const { text, finishReason } = await withTimeout(timeoutMs, (abortSignal) => generateText({
     model: anthropic(model),
     system: systemPrompt,
@@ -44,13 +49,48 @@ export async function callClaude(
     maxOutputTokens: maxOut,
     abortSignal,
     ...(thinking
-      ? { providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: thinking.budgetTokens } } } }
+      ? {
+          providerOptions: {
+            anthropic: needsAdaptiveThinking
+              ? { thinking: { type: "adaptive" } }
+              : { thinking: { type: "enabled", budgetTokens: thinking.budgetTokens } },
+          },
+        }
       : {}),
   }));
   if (finishReason === "length") {
     console.warn(`[apiClients] callClaude: 최대 토큰(${maxOut}) 도달 — 응답이 잘렸습니다.`);
   }
   if (!text) throw new Error("Claude API 응답이 비어 있습니다.");
+  return text;
+}
+
+// 이미지(카드 PNG)를 모델에 실어 "눈으로 검수"시키고 텍스트 판정을 받는다(멀티모달).
+// AI SDK는 messages content-part 형식에서만 이미지를 실을 수 있어(기본 호출의 prompt 문자열론 불가),
+// 이 함수만 messages 배열 형태를 쓴다. Claude/Gemini/OpenAI의 비전 지원 모델에서 동작(image에 Buffer 직접 전달).
+export async function callVision(
+  p: Provider, apiKey: string, model: string,
+  systemPrompt: string, userMessage: string, images: Buffer[], maxTokens = 4096,
+): Promise<string> {
+  const modelInstance =
+    p === "gemini" ? createGoogleGenerativeAI({ apiKey })(model)
+    : p === "openai" ? createOpenAI({ apiKey })(model)
+    : createAnthropic({ apiKey })(model); // claude(기본)
+  const { text, finishReason } = await generateText({
+    model: modelInstance,
+    system: systemPrompt,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: userMessage },
+        ...images.map((png) => ({ type: "image" as const, image: png })),
+      ],
+    }],
+    maxOutputTokens: maxTokens,
+  });
+  if (finishReason === "length") {
+    console.warn(`[apiClients] callVision: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
+  }
   return text;
 }
 
@@ -76,6 +116,36 @@ function extractUrlSources(
     }
   }
   return out;
+}
+// unknown을 안전하게 객체로 좁히는 미니 가드(providerMetadata는 Record<string, JSONValue> 계열이라 캐스팅 대신 방어적으로 접근).
+function asRecord(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : undefined;
+}
+/**
+ * Gemini(Google Search 그라운딩) 전용 — 최상위 `sources`가 비어도 실제 검색 출처는
+ * providerMetadata.google.groundingMetadata.groundingChunks[].web.uri(= vertexaisearch 리다이렉트 URL)에
+ * 담긴다. 이 SDK/모델 조합에서 sources 정규화가 비어 나오는 경우의 폴백 겸, "검색이 실제로 돌았는지"
+ * (webSearchQueries·chunk 수)를 진단 로그로 남기기 위한 추출기. 순수 함수라 다른 provider엔 영향 없음.
+ */
+function extractGeminiGrounding(providerMetadata: unknown): {
+  urls: SearchSource[]; chunkCount: number; queryCount: number;
+} {
+  const gm = asRecord(asRecord(asRecord(providerMetadata)?.google)?.groundingMetadata);
+  const rawChunks = gm?.groundingChunks;
+  const chunks = Array.isArray(rawChunks) ? rawChunks : [];
+  const rawQueries = gm?.webSearchQueries;
+  const queryCount = (Array.isArray(rawQueries) ? rawQueries : []).filter(q => typeof q === "string").length;
+  const seen = new Set<string>();
+  const urls: SearchSource[] = [];
+  for (const c of chunks) {
+    const web = asRecord(asRecord(c)?.web);
+    const uri = typeof web?.uri === "string" ? web.uri : undefined;
+    if (uri && !seen.has(uri)) {
+      seen.add(uri);
+      urls.push({ url: uri, title: typeof web?.title === "string" ? web.title : undefined });
+    }
+  }
+  return { urls, chunkCount: chunks.length, queryCount };
 }
 // 출처 목록을 본문 끝에 명시적으로 덧붙인다 → 아카이브·하류 컨텍스트에 출처가 살아남는다.
 function appendSources(text: string, sources: SearchSource[]): string {
@@ -111,6 +181,8 @@ export async function callClaudeWithNativeSearch(
         prompt: userMessage,
         maxOutputTokens: maxTokens,
         tools: { web_search: anthropic.tools.webSearch_20260209({ maxUses: 5 }) },
+        // 웹서치엔 thinking을 끈다(속도) — sonnet-5 등은 미지정 시 adaptive thinking이 기본이라 명시적으로 disabled.
+        providerOptions: { anthropic: { thinking: { type: "disabled" } } },
         abortSignal: controller.signal,
       });
       const urls = extractUrlSources(sources);
@@ -158,7 +230,7 @@ export async function callGemini(
 ): Promise<string> {
   const google = createGoogleGenerativeAI({ apiKey });
   const providerOptions =
-    disableThinking && model.includes("2.5-flash")
+    disableThinking && /flash/i.test(model)
       ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
       : undefined;
   const { text, finishReason } = await withTimeout(timeoutMs, (abortSignal) => generateText({
@@ -180,23 +252,24 @@ export async function callGemini(
  * Gemini Google Search 그라운딩(AI SDK provider-executed 툴)로 검색 기반 응답 생성.
  * Claude 버전과 동일하게 sources를 추출해 [출처]로 덧붙이고, 소스 수를 로그로 남기며,
  * 실패 시 조용한 no-search 폴백 대신 1회 재시도 후 명시적 에러를 던진다.
- * (예전 구현은 groundingMetadata를 안 읽어 출처를 통째로 버렸음.)
+ * 최상위 sources가 비어도 groundingMetadata.groundingChunks로 폴백해 출처를 살린다.
  */
 export async function callGeminiWithSearch(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, disableThinking = false,
+  apiKey: string, model: string, systemPrompt: string, userMessage: string, _disableThinking = false,
   searchTimeoutMs = SEARCH_TIMEOUT_MS
 ): Promise<string> {
   const google = createGoogleGenerativeAI({ apiKey });
-  const providerOptions =
-    disableThinking && model.includes("2.5-flash")
-      ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
-      : undefined;
+  // 웹서치엔 thinking을 끈다(속도). flash 계열은 thinkingBudget:0으로 사고 비활성(2.5-flash만 걸리던
+  // 과거 조건을 flash 전체로 넓힘 — 3.5-flash 등 누락 수정). disableThinking 인자와 무관하게 검색은 항상 off.
+  const providerOptions = /flash/i.test(model)
+    ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
+    : undefined;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), searchTimeoutMs);
     try {
-      const { text, sources, finishReason } = await generateText({
+      const { text, sources, providerMetadata, finishReason } = await generateText({
         model: google(model),
         system: systemPrompt,
         prompt: userMessage,
@@ -206,10 +279,19 @@ export async function callGeminiWithSearch(
         tools: { google_search: google.tools.googleSearch({}) },
         abortSignal: controller.signal,
       });
-      const urls = extractUrlSources(sources);
+      // 이 SDK/모델 조합에선 최상위 sources가 비어 나오는 일이 있어(그라운딩은 됐는데 정규화 누락),
+      // 그때 groundingMetadata.groundingChunks의 URL로 폴백한다. sources가 있으면 그대로 우선.
+      const sdkUrls = extractUrlSources(sources);
+      const grounding = extractGeminiGrounding(providerMetadata);
+      const urls = sdkUrls.length ? sdkUrls : grounding.urls;
       console.log(
         `[apiClients] Gemini 웹검색 완료 — 소스 ${urls.length}개` +
-        (urls.length === 0 ? " (⚠ 검색 결과 0건 — 근거 없는 응답일 수 있음)" : "")
+        ` (SDK sources ${sdkUrls.length} / groundingChunks ${grounding.chunkCount} / 검색쿼리 ${grounding.queryCount})` +
+        (urls.length === 0
+          ? (grounding.queryCount || grounding.chunkCount
+              ? " (⚠ 출처 URL 추출 0 — 검색은 수행됨, 근거 추적만 실패)"
+              : " (⚠ 검색이 아예 수행되지 않음 — 근거 없는 응답일 수 있음)")
+          : "")
       );
       if (finishReason === "length") {
         console.warn(`[apiClients] callGeminiWithSearch: 최대 토큰(8192) 도달 — 응답이 잘렸습니다.`);

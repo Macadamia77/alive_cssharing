@@ -87,8 +87,11 @@ export async function loadAllGuides(channel: ChannelKey, token?: string): Promis
 //          → ③ (writer 한정) 태그 없는 파일 전부 (기존 호환)
 export function selectGuides(all: GuideFile[], stage: ResolvedStage): GuideFile[] {
   if (stage.guides !== undefined) {
-    // 명시 할당(빈 배열이면 "아무것도 안 붙임"을 의미)
-    return all.filter(g => stage.guides!.includes(g.path));
+    // 명시 할당(빈 배열이면 "아무것도 안 붙임"을 의미). all을 필터하면 all의 순서를 따르므로,
+    // 지정한 목록(stage.guides) 순서대로 매핑해 "명시한 순서 = 주입 순서"가 되게 한다(composition의 position).
+    return stage.guides
+      .map(p => all.find(g => g.path === p))
+      .filter((g): g is GuideFile => g !== undefined);
   }
   return all.filter(g =>
     g.stages.includes(stage.id) || (stage.id === "writer" && g.stages.length === 0)

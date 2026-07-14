@@ -58,7 +58,31 @@ const STAGE_LABELS: Record<string, string> = {
   "tone-review": "AI 톤 검수 중",
   "image-gen": "이미지 생성 중",
   "image-review": "이미지 검수 중",
+  // composition 블록은 단계 id로 에이전트 파일명을 쓰므로, 대표 에이전트명 라벨도 매핑.
+  reviewer: "내용·규칙 검수 중",
+  "tone-reviewer": "AI 톤 검수 중",
+  "image-maker": "이미지 생성 중",
+  "image-reviewer": "이미지 검수 중",
 };
+
+// 단계 기반(마일스톤) 진행도 — 토큰 단위 정밀 %는 불가하므로, "지금 어느 단계까지 왔나"를
+// 대략의 %로 보여준다(단계가 진행될수록 증가). 알 수 없는 단계는 중간값/근사로 폴백.
+// (composition 도입 시 단계가 동적이 되면, 워커가 실제 index/total로 계산해 보내는 방식으로 교체 예정.)
+const STAGE_PROGRESS: Record<string, number> = {
+  pending: 5, processing: 8,
+  research: 15, "research-voice": 22, brainstorm: 32, "research-deep": 40, skeleton: 48,
+  researching: 20, writing: 58, generating: 58, writer: 58,
+  "making-images": 90, "image-gen": 90, "image-maker": 90, assembling: 94, "image-review": 96, "image-reviewer": 96,
+  "content-review": 74, "tone-review": 88,
+  reviewer: 74, "tone-reviewer": 88,
+};
+function stageProgress(stage?: string): number {
+  if (!stage) return 10;
+  if (STAGE_PROGRESS[stage] != null) return STAGE_PROGRESS[stage];
+  if (stage.includes("검색")) return 25;   // "소스 N개 검색 중"(리서치 웹서치 중)
+  if (stage.includes("재작성")) return 82;  // "content-review 반영 재작성" 등 반려 재작성 중
+  return 50;
+}
 
 function SkeletonBlock() {
   return (
@@ -138,7 +162,7 @@ export default function ChannelResultCard({ channel, status, content, stage, car
           {status === "loading" && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               <div className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" aria-hidden="true" />
-              {stage ? (STAGE_LABELS[stage] || stage) : "생성 중"}
+              {stage ? (STAGE_LABELS[stage] || stage) : "생성 중"} · {stageProgress(stage)}%
             </span>
           )}
           {status === "done" && (
@@ -185,6 +209,12 @@ export default function ChannelResultCard({ channel, status, content, stage, car
         </div>
       </div>
 
+      {/* 단계 기반 진행 바 (생성 중일 때만) */}
+      {status === "loading" && (
+        <div className="h-1 w-full bg-slate-100 overflow-hidden" aria-hidden="true">
+          <div className="h-full bg-blue-500 transition-all duration-700 ease-out" style={{ width: `${stageProgress(stage)}%` }} />
+        </div>
+      )}
       {/* 발행 준비 패널 — 본문 텍스트 복사 + 이미지 카드 ZIP 다운로드를 분리 제공 */}
       {status === "done" && showExport && channel === "naver-blog" && content && (
         <PublishPanel channel={channel} content={content} cardAssets={cardAssets} onClose={() => setShowExport(false)} />

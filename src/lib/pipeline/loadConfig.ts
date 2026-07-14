@@ -3,9 +3,10 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { dataRoot } from "../dataRoot";
-import type { PipelineConfig, ResolvedStage } from "./types";
+import type { PipelineConfig, ResolvedStage, Composition } from "./types";
 import type { ChannelMeta } from "../channelFiles";
 import type { ChannelKey } from "../channels";
+import { compileComposition } from "./composition";
 
 const FALLBACK_PIPELINE: PipelineConfig = { stages: [] };
 
@@ -29,8 +30,13 @@ export function loadPipelineConfig(): PipelineConfig {
 export function resolveStages(
   channel: ChannelKey,
   meta: ChannelMeta,
-  ctx: { draftProvided: boolean }
+  ctx: { draftProvided: boolean },
+  // 채널에 composition(조립표)이 있으면 그걸로 단계를 만들고, 없으면(null) 아래 pipeline.json 경로로 폴백.
+  composition?: Composition | null
 ): ResolvedStage[] {
+  if (composition && Array.isArray(composition.blocks) && composition.blocks.length > 0) {
+    return compileComposition(composition, meta);
+  }
   const cfg = loadPipelineConfig();
   const resolved: ResolvedStage[] = [];
   for (const s of cfg.stages) {
@@ -45,6 +51,7 @@ export function resolveStages(
       roles: ov?.roles ?? s.roles ?? [],
       model: ov?.model ?? s.model ?? meta.model,
       modelId: ov?.modelId ?? s.modelId ?? meta.modelId,
+      modelIdByProvider: ov?.modelIdByProvider ?? s.modelIdByProvider,
       maxTokens: ov?.maxTokens ?? s.maxTokens,
       useSearch: s.useSearch ?? false,
       disableThinking: s.disableThinking ?? false,

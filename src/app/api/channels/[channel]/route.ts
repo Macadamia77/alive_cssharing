@@ -73,6 +73,8 @@ export async function PUT(
     if (Array.isArray(body.include)) meta.include = body.include;
     // 통합 파이프라인 엔진 토글
     if (body.engine === "pipeline" || body.engine === "legacy") meta.engine = body.engine;
+    // composition(조립표) 토글 — true면 runPipeline이 composition.json으로 단계를 구성
+    if (typeof body.useComposition === "boolean") meta.useComposition = body.useComposition;
     // 채널 기본 모델(provider) / 모델 ID — 빈 값이면 해제(기본으로)
     if (body.model !== undefined) meta.model = body.model || undefined;
     if (body.modelId !== undefined) meta.modelId = body.modelId || undefined;

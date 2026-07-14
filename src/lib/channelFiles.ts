@@ -6,6 +6,7 @@ import { githubRead, githubReadBase64, githubListDir } from "./githubStorage";
 import {
   sbConfigured, sbReadAllFiles, sbWriteFile, sbDeleteFile, sbDeletePrefix, type SbFile,
 } from "./supabaseChannelFiles";
+import type { StageOverride } from "./pipeline/types";
 
 import { existsSync } from "fs";
 
@@ -51,20 +52,16 @@ export interface ChannelMeta {
   writeOrder?: string[];     // 글쓰기 단계 guide 배치 순서 (뒤일수록 LLM이 더 주목)
   // 통합 파이프라인 엔진용 (선택)
   engine?: "pipeline" | "legacy"; // "pipeline"이면 통합 엔진(runPipeline) 사용. 없으면 기존 경로.
+  /** true면 이 채널은 composition.json(조립표)으로 단계를 구성한다. 이 플래그가 있을 때만
+   *  runPipeline이 composition.json을 조회하므로, 미사용 채널은 불필요한 파일 조회(GitHub 404 등)를 피한다. */
+  useComposition?: boolean;
   outputFormat?: "html" | "text" | "json"; // 최종 결과물 형식 (기본 text)
   model?: string;            // 채널 기본 provider ("claude"|"openai"|"gemini")
   modelId?: string;          // 채널 기본 모델 id
   /** 단계별 토글·오버라이드. 키 = stage id (예: { "writer": { "enabled": true } }) */
-  pipeline?: Record<string, {
-    enabled?: boolean;
-    model?: string;
-    modelId?: string;
-    maxTokens?: number;
-    roles?: string[];
-    guides?: string[];
-    /** reviewer 단계 전용: 반려 시 최대 재작성 횟수 (기본 1) */
-    maxRetries?: number;
-  }>;
+  // types.ts의 StageOverride를 그대로 재사용(중복 정의 금지 — 필드 하나 늘 때 한쪽만 고치고
+  // 잊어버리는 사고가 실제로 있었음: modelIdByProvider가 여기 안 늘어서 조용히 무시됐었다).
+  pipeline?: Record<string, StageOverride>;
 }
 
 export interface FileNode {
@@ -199,6 +196,10 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
 }
 
 /** 텍스트 파일 읽기 */
+// GitHub 404는 "그 티어에 파일이 없다"는 예상된 폴백 신호(상위/공용으로 넘어감)라 에러가 아니다.
+// 스택 없는 한 줄 info(stdout)로 남겨 로그 노이즈(빨간 stderr+스택)를 없앤다. 500/502 등은 진짜 문제라 warn 유지.
+const isGithubNotFound = (e: unknown) => /:\s*404\b/.test(String(e));
+
 export async function readChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
   const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
   if (sbConfigured()) {
@@ -217,7 +218,8 @@ export async function readChannelFile(channel: ChannelKey, filePath: string, tok
   try {
     return await githubRead(`data/channels/${channel}/${safe}`, token);
   } catch (e) {
-    console.warn(`[readChannelFile] ${channel}/${filePath} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
+    if (isGithubNotFound(e)) console.log(`[readChannelFile] ${channel}/${filePath} 채널본 없음(404) → 로컬/공용 폴백`);
+    else console.warn(`[readChannelFile] ${channel}/${filePath} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
   }
   const safeLocal = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const full = path.join(CHANNEL_DIR, channel, safeLocal);
@@ -239,7 +241,8 @@ export async function readChannelFileBase64(channel: ChannelKey, filePath: strin
   try {
     return await githubReadBase64(`data/channels/${channel}/${safe}`, token);
   } catch (e) {
-    console.warn(`[readChannelFileBase64] ${channel}/${filePath} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
+    if (isGithubNotFound(e)) console.log(`[readChannelFileBase64] ${channel}/${filePath} 채널본 없음(404) → 로컬 폴백`);
+    else console.warn(`[readChannelFileBase64] ${channel}/${filePath} GitHub 읽기 실패, 로컬 번들 파일로 폴백:`, e);
   }
   const safeLocal = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const full = path.join(CHANNEL_DIR, channel, safeLocal);

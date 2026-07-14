@@ -9,7 +9,7 @@ import { addResearch } from "../pipelineMemory";
 import type { Provider } from "../aiConfig";
 
 export type StageModelResolver = (opts: {
-  model?: string; modelId?: string; useSearch?: boolean; stageId?: string;
+  model?: string; modelId?: string; modelIdByProvider?: Record<string, string>; useSearch?: boolean; stageId?: string;
 }) => Promise<{ p: Provider; apiKey: string; model: string }>;
 
 /**
@@ -37,13 +37,17 @@ export async function runSharedProducerStage(
     console.warn(`[engine] shared/${def.id}: 페르소나 '${def.persona ?? def.id}' 없음 → 건너뜀`);
     return "";
   }
-  // [결정 #10] 리서치 전용 provider가 지정되면 이 단계만 강제 오버라이드(modelId는 승계 안 함 — 교차-프로바이더 크래시 방지)
+  // [결정 #10] 리서치 전용 provider가 지정되면 이 단계만 강제 오버라이드. modelIdByProvider는
+  // "최종 확정된 provider가 X일 때만 이 modelId" 방식이라 providerOverride 유무와 무관하게 항상
+  // 안전하게 전달한다(예: providerOverride가 gemini여도 맵엔 claude 키만 있으면 그냥 안 걸림 —
+  // 예전 modelId 방식처럼 교차-프로바이더로 잘못 강제될 여지가 없다).
   const auth = await resolveModelFor({
     model: providerOverride ?? def.model,
-    modelId: providerOverride ? undefined : def.modelId,
+    modelIdByProvider: def.modelIdByProvider,
     useSearch: def.useSearch,
     stageId: def.id,
   });
+  console.log(`[engine] shared/${def.id} — 모델 ${auth.p}/${auth.model}`);
   const user = `[주제]\n${topic}\n\n위 정보를 바탕으로 이 단계의 역할을 수행해 결과를 직접 출력하세요.`;
   const out = stripCodeFence(await callProvider(auth.p, auth.apiKey, auth.model, persona, user, def.maxTokens ?? 8192, {
     useSearch: def.useSearch,

@@ -9,11 +9,16 @@ export function extractCards(html: string): string[] {
   return Array.from(doc.querySelectorAll("figure")).map((f) => f.outerHTML);
 }
 
-// HTML 본문을 붙여넣기용 평문 텍스트로 변환 (이미지 카드는 제거 — 카드는 이미지로 따로 받음)
+// HTML 본문을 붙여넣기용 평문 텍스트로 변환 — 이미지 카드는 제거하고 그 자리에 순번 마커를
+// 남긴다(【이미지 01】처럼 다운로드 파일명(_01.png 등)과 동일한 번호). 마커가 없으면 텍스트만
+// 복사·이미지만 따로 다운로드하는 이 구조에서 어느 이미지를 어디에 넣을지 알 방법이 없다.
 export function htmlToText(html: string): string {
   if (typeof window === "undefined" || !html) return html ?? "";
   const doc = new DOMParser().parseFromString(html, "text/html");
-  doc.querySelectorAll("figure").forEach((f) => f.remove());
+  doc.querySelectorAll("figure").forEach((f, i) => {
+    const num = String(i + 1).padStart(2, "0");
+    f.replaceWith(document.createTextNode(`\n\n【이미지 ${num}】\n\n`));
+  });
   doc.querySelectorAll("br").forEach((b) => b.replaceWith("\n"));
   doc
     .querySelectorAll("p,div,h1,h2,h3,h4,h5,li,section,article")

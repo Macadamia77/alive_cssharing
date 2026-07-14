@@ -121,7 +121,7 @@ export default function PublishPanel({ channel, content, cardAssets, onClose }: 
       </div>
 
       <p className="text-[10px] text-slate-400 leading-relaxed">
-        💡 복사한 텍스트를 네이버 에디터에 붙여넣고, 받은 이미지를 <span className="font-medium text-slate-500">[IMAGE]</span> 자리에 순서대로 삽입하세요.
+        💡 복사한 텍스트를 네이버 에디터에 붙여넣으면 이미지 자리에 <span className="font-medium text-slate-500">【이미지 01】</span> 같은 번호 마커가 남아있어요. 그 자리에 같은 번호의 다운로드 이미지를 넣고 마커 텍스트는 지워주세요.
       </p>
     </div>
   );

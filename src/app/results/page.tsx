@@ -9,6 +9,7 @@ import {
 import Navbar from "@/components/Navbar";
 import { CHANNEL_LABELS, CHANNEL_COLORS, CHANNELS, type ChannelKey } from "@/lib/channels";
 import InstagramCardPreview, { tryParseInstagramJson } from "@/components/InstagramCardPreview";
+import { PublishToggleButton } from "@/components/PublishPanel";
 import {
   copyToClipboard, htmlToText, splitHashtags, extractCards, downloadCardPng, downloadCardsZip,
   downloadPngFromUrl, downloadPngUrlsZip, downloadSvgFromUrl, downloadSvgUrlsZip,
@@ -101,6 +102,7 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
   const [showFb, setShowFb] = useState(false);
   const [fbText, setFbText] = useState("");
   const [fbState, setFbState] = useState<"" | "saving" | "ok">("");
+  const [showExport, setShowExport] = useState(false);
   const isDirty = text !== saved;
 
   // 우수작 저장 → 다음 생성 퓨샷 / 피드백 → 다음 생성 반영
@@ -180,6 +182,9 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
           {isNaver && (
             <CopyBtn active={copiedLabel === "text"} onClick={() => doCopy(htmlToText(text), "text")} icon={<Copy className="w-3 h-3" />} label="텍스트 복사" />
           )}
+          {isNaver && !editing && (
+            <PublishToggleButton show={showExport} onToggle={() => setShowExport(v => !v)} />
+          )}
           {isSocial && (
             <>
               <CopyBtn active={copiedLabel === "caption"} onClick={() => doCopy(splitHashtags(text).body, "caption")} icon={<Copy className="w-3 h-3" />} label="캡션 복사" />
@@ -243,7 +248,7 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
       {/* 게시 안내 */}
       <div className="px-4 pt-2 text-[11px] text-slate-400">
         {isMagazine && "HTML 복사 → 홈페이지 편집기에 붙여넣기 (텍스트·이미지 한 번에 완성)"}
-        {isNaver && "텍스트 복사 → 본문에 붙여넣기 + 아래 이미지 카드를 사진으로 첨부"}
+        {isNaver && "위 \"발행 준비\" 버튼으로 본문 텍스트·이미지 카드를 한 번에 받아 네이버 블로그에 붙여넣기"}
         {isSocial && "캡션·해시태그 복사 → 글/첫 댓글에 붙여넣기 + 아래 이미지 다운로드해 업로드"}
       </div>
 
@@ -276,8 +281,8 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
         )}
       </div>
 
-      {/* 이미지 카드 (네이버 / 인스타 / 페북 / 링크드인) */}
-      {showImages && (
+      {/* 네이버는 본문 iframe에 이미지가 이미 포함돼 있어 "발행 준비"를 눌렀을 때만 이 그리드를 노출(중복 방지) */}
+      {showImages && (!isNaver || showExport) && (
         <div className="border-t border-slate-100 bg-slate-50/60 p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">

@@ -150,6 +150,74 @@ function checkForbiddenPhrases(scope: string): string[] {
   return hits;
 }
 
+// ── 메인 키워드 과다 반복(스터핑) 탐지 ─────────────────────────────
+// 실측 확인(2026-07-14): 리뷰어 자기채점표가 "메인 키워드 6회 PASS"라고 보고했는데 실제로는
+// 37회였다 — 문맥 판단이 아니라 순수 집계인데 LLM이 긴 원고를 눈으로 훑어 세면 부정확하다.
+// "메인 키워드 제목 맨 앞"(01-writing-guide.md §2) 규칙을 그대로 이용해 제목 첫 단어를 메인
+// 키워드로 간주하고 본문 전체 등장 횟수를 코드로 정확히 센다. 제목 구성이 특이해 첫 단어가
+// 진짜 메인 키워드가 아닌 경우도 있을 수 있으나, 그런 경우는 카운트가 애초에 낮게 나와 걸리지
+// 않으므로 오탐 비용이 낮다.
+function checkKeywordDensity(draft: string, scope: string): string | null {
+  const title = extractDraftTitle(draft);
+  let firstToken = title.trim().split(/\s+/)[0]?.replace(/^[^\w가-힣]+|[^\w가-힣]+$/g, "");
+  // 라틴 약어 뒤에 조사가 공백 없이 바로 붙는 경우(예: "AHT를", "VOC가") 조사를 포함해 통째로
+  // 검색하면 매칭이 거의 안 돼 카운트가 0에 가깝게 나온다 — 라틴/숫자 접두부만 키워드로 취급한다.
+  const latinPrefix = firstToken?.match(/^[A-Za-z0-9]+/)?.[0];
+  if (latinPrefix && latinPrefix.length < (firstToken?.length ?? 0)) {
+    firstToken = latinPrefix;
+  }
+  if (!firstToken || firstToken.length < 2) return null;
+  const re = new RegExp(`(?<![가-힣A-Za-z0-9])${escapeRegExp(firstToken)}(?![A-Za-z0-9])`, "g");
+  const count = (scope.match(re) ?? []).length;
+  if (count > 10) {
+    return (
+      `메인 키워드로 보이는 "${firstToken}"(제목 맨 앞 단어)가 본문에 ${count}회 등장합니다. ` +
+      `가이드 기준(5~8회, 10회+=스터핑)을 크게 초과했습니다. "${firstToken}"가 다시 나오는 자리 중 ` +
+      `일부를 "이 데이터/이 문제/해당 지표"처럼 지시어나 문맥에 맞는 동의어로 바꾸세요. 제목·도입부· ` +
+      `소제목의 첫 등장은 그대로 두고, 같은 단락 안에서 반복되는 자리 위주로 바꾸세요.`
+    );
+  }
+  return null;
+}
+
+// ── 톤 균형(격식·친근 비율) 탐지 ────────────────────────────────────
+// 실측 확인(2026-07-14): 자기채점표가 "격식73%/친근27% PASS"라고 보고했는데 실제로는 친근체가
+// 1.4%였다. 문장 종결어미를 코드로 직접 분류해 정확한 비율을 센다.
+// **핵심 제약**: 통계·수치를 직접 인용하는 문장은 문어체를 유지하는 게 가이드 원칙이다(§4,
+// 2026-07-08 PM 피드백 원문 반영 — "모으고 있는 셈입니다"류를 "~하고 있습니다"로 고쳐 달라는
+// 실제 요청이 있었다). 그래서 숫자가 포함된 문장은 톤 판단 대상에서 아예 제외한다 — 안 그러면
+// 패치가 데이터 서술 문장까지 캐주얼하게 바꿔버려 오히려 다른 규칙을 위반하게 된다.
+const FORMAL_ENDING_RE = /(?:습니다|ㅂ니다|입니다)[.!]?["'」』]?$/;
+const CASUAL_ENDING_RE = /(?:거든요|니까요|을까요|ㄹ까요|더라고요|잖아요|네요|해요|이에요|예요|아요|어요|죠)[.!?]?["'」』]?$/;
+
+function splitSentences(scope: string): string[] {
+  return scope
+    .split(/\n+/)
+    .flatMap(line => line.split(/(?<=[.!?])\s+/))
+    .map(s => s.trim())
+    .filter(s => s.length > 5 && !/^[|#\-*]/.test(s) && !s.startsWith("["));
+}
+
+function checkToneBalance(scope: string): string | null {
+  const sentences = splitSentences(scope);
+  const nonDataSentences = sentences.filter(s => !/[0-9]/.test(s));
+  const casual = nonDataSentences.filter(s => CASUAL_ENDING_RE.test(s));
+  const formal = nonDataSentences.filter(s => FORMAL_ENDING_RE.test(s));
+  const classified = casual.length + formal.length;
+  if (classified < 6) return null; // 표본이 적으면 판단 보류(오탐 방지)
+  const casualRatio = casual.length / classified;
+  if (casualRatio < 0.12) {
+    const examples = formal.slice(0, 3).map(s => `"${s.slice(0, 40)}${s.length > 40 ? "…" : ""}"`);
+    return (
+      `친근체 어미(~죠/~해요/~거든요/~네요 등) 비율이 ${(casualRatio * 100).toFixed(0)}%로 가이드 ` +
+      `기준(15~35%)보다 크게 낮습니다. **수치·통계를 직접 인용하는 문장은 절대 건드리지 말고**, ` +
+      `그 외 문장(장면 묘사·질문·글 소개·인과 설명 등 통계 인용이 아닌 문장) 중 2~3곳만 골라 ` +
+      `친근체 어미로 바꾸세요. 예: ${examples.join(", ")}`
+    );
+  }
+  return null;
+}
+
 function checkMechanicalRules(draft: string): string[] | null {
   const publishBlock = draft.match(/<!-- PUBLISH:START -->([\s\S]*?)<!-- PUBLISH:END -->/);
   const scope = publishBlock ? publishBlock[1] : draft;
@@ -173,6 +241,12 @@ function checkMechanicalRules(draft: string): string[] | null {
   }
 
   issues.push(...checkForbiddenPhrases(scope));
+
+  const keywordIssue = checkKeywordDensity(draft, scope);
+  if (keywordIssue) issues.push(keywordIssue);
+
+  const toneIssue = checkToneBalance(scope);
+  if (toneIssue) issues.push(toneIssue);
 
   return issues.length > 0 ? issues : null;
 }

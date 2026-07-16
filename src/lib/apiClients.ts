@@ -255,7 +255,7 @@ export async function callGemini(
  * 최상위 sources가 비어도 groundingMetadata.groundingChunks로 폴백해 출처를 살린다.
  */
 export async function callGeminiWithSearch(
-  apiKey: string, model: string, systemPrompt: string, userMessage: string, _disableThinking = false,
+  apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens = 8192, _disableThinking = false,
   searchTimeoutMs = SEARCH_TIMEOUT_MS
 ): Promise<string> {
   const google = createGoogleGenerativeAI({ apiKey });
@@ -273,7 +273,7 @@ export async function callGeminiWithSearch(
         model: google(model),
         system: systemPrompt,
         prompt: userMessage,
-        maxOutputTokens: 8192,
+        maxOutputTokens: maxTokens,
         providerOptions,
         // 툴 키는 "google_search"여야 한다(@ai-sdk/google 계약).
         tools: { google_search: google.tools.googleSearch({}) },
@@ -294,7 +294,7 @@ export async function callGeminiWithSearch(
           : "")
       );
       if (finishReason === "length") {
-        console.warn(`[apiClients] callGeminiWithSearch: 최대 토큰(8192) 도달 — 응답이 잘렸습니다.`);
+        console.warn(`[apiClients] callGeminiWithSearch: 최대 토큰(${maxTokens}) 도달 — 응답이 잘렸습니다.`);
       }
       if (!text.trim()) throw new Error("Gemini 웹검색 응답이 비어 있습니다.");
       return appendSources(text, urls);
@@ -336,7 +336,7 @@ export async function callProvider(
 ): Promise<string> {
   if (p === "gemini") {
     return opts?.useSearch
-      ? callGeminiWithSearch(apiKey, model, system, user, opts?.disableThinking, opts?.searchTimeoutMs)
+      ? callGeminiWithSearch(apiKey, model, system, user, maxTokens, opts?.disableThinking, opts?.searchTimeoutMs)
       : callGemini(apiKey, model, system, user, maxTokens, opts?.disableThinking, opts?.timeoutMs);
   }
   if (p === "claude") {

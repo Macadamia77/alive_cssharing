@@ -78,6 +78,27 @@ export function compileComposition(comp: Composition, meta: ChannelMeta): Resolv
           thinking: block.thinking,
         });
       }
+    } else if (block.type === "reviewer") {
+      // ★원자 리뷰어 블록 → reviewer 스테이지 1개. review-loop이 내부 반복으로 만들던 것과 동일하게,
+      // runPipeline이 flat 스테이지로 소비한다(여러 reviewer 블록 = 순서대로 각각 현재 draft 검수).
+      if (block.agent?.trim()) {
+        out.push({
+          id: block.agent,
+          scope: "channel",
+          kind: "reviewer",
+          persona: block.agent,
+          roles: [],
+          ...modelFields(block, meta, DEFAULT_MAX_TOKENS.reviewer),
+          useSearch: false,
+          disableThinking: false,
+          guides: block.guides ?? [],
+          maxRetries: block.maxRetries,
+          rewriteMode: block.rewriteMode,
+          // 내용 리뷰어만 검수 시 리서치를 함께 받아 인용을 대조한다(톤 리뷰어는 제외 — 인용 대조 불필요).
+          injectContext: !/tone/i.test(block.agent),
+          thinking: block.thinking,
+        });
+      }
     } else if (block.type === "image-loop") {
       out.push({
         id: block.generateAgent,
@@ -121,19 +142,28 @@ export function validateComposition(comp: Composition, availableFiles?: {
     for (const g of guides) if (!guideSet.has(g)) errors.push(`${label}: 가이드 파일 '${g}'을 찾을 수 없습니다.`);
   };
 
+  // 순서 검증용: reviewer/image 블록은 앞에 draft(검수·이미지 대상 본문)를 만드는 블록이 있어야 한다.
+  // draft 생성원 = generate(output:"draft") 또는 review-loop(내부 writer가 draft를 만듦).
+  let sawDraft = false;
   comp.blocks.forEach((block: CompositionBlock, i) => {
     const at = `블록 ${i + 1}(${block.type})`;
     if (block.type === "generate") {
       checkAgent(at, block.agent); checkGuides(at, block.guides);
+      if (block.output === "draft") sawDraft = true;
+    } else if (block.type === "reviewer") {
+      checkAgent(at, block.agent); checkGuides(at, block.guides);
+      if (!sawDraft) errors.push(`${at}: 검수할 draft가 없습니다 — 앞에 draft를 만드는 생성자(generate·output:draft) 블록이 있어야 합니다.`);
     } else if (block.type === "review-loop") {
       checkAgent(`${at} 생성`, block.generateAgent); checkGuides(`${at} 생성`, block.guides);
       const active = (block.reviewers ?? []).filter(r => r.agent?.trim());
       if (active.length === 0) errors.push(`${at}: 검수 에이전트가 하나도 없습니다(사실상 generate 블록).`);
       active.forEach((r, j) => { checkAgent(`${at} 리뷰어 ${j + 1}`, r.agent); checkGuides(`${at} 리뷰어 ${j + 1}`, r.guides); });
+      sawDraft = true; // 내부 writer가 draft를 만든다
     } else if (block.type === "image-loop") {
       checkAgent(`${at} 생성`, block.generateAgent);
       if (block.reviewer) checkAgent(`${at} 리뷰어`, block.reviewer);
       checkGuides(at, block.guides);
+      if (!sawDraft) errors.push(`${at}: 이미지 대상 draft가 없습니다 — 앞에 [IMAGE:] 마커를 담은 본문을 만드는 writer 블록이 있어야 합니다.`);
     }
   });
   return errors;

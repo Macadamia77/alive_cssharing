@@ -174,22 +174,38 @@ async function processBrainstormJob(task: any) {
     const skipResearch = !!run.skip_research;
     const skipResearchVoice = !!run.skip_research_voice;
     const bud = contextBudget(run.context_budget); // [M8 ④] 참조 예산(주입 건수·길이)
-    const [researchOut, voiceOut, recentResearch, recentSummaries, recentFeedback] = await Promise.all([
-      (!skipResearch && researchDef)
-        ? runSharedProducerStage(researchDef, topic, resolveModelFor, token, runId, (n) => void statusCallback(`소스 ${n}개 검색 중`), researchProviderOverride)
-        : Promise.resolve(""),
-      (!skipResearchVoice && voiceDef)
-        ? runSharedProducerStage(voiceDef, topic, resolveModelFor, token, runId, (n) => void statusCallback(`소스 ${n}개 검색 중`), researchProviderOverride)
-        : Promise.resolve(""),
-      getRecentResearch(bud.research, bud.researchDays, topic, run.topic_filter_accumulated ?? true).catch(() => []),
+
+    // [Q4] 웹검색 전에 관련 누적 리서치를 먼저 조회(DB pg_trgm, 수 ms) → 켜져 있고 임계값 이상이면
+    // 새 웹검색(research/voice)을 자동 스킵하고 누적만 쓴다(시간·비용 절약). 기본 OFF(팀원 무영향).
+    // 개수 게이트가 임계값만큼 셀 수 있게 조회 limit을 max(예산, 임계값)으로 잡고, 주입은 예산만큼만 자른다.
+    const autoSkipEnabled = !!run.auto_skip_if_accumulated;
+    const configThreshold = run.auto_skip_threshold ?? 10;
+    // 스킵 기준 = max(설정 임계값, 참조 예산). 임계값이 예산보다 낮아도 "주입 예산을 채울 만큼"
+    // 누적이 있을 때만 검색을 생략한다 — 예산 미만인데 스킵해서 덜 주입되는 함정(under-fill) 방지.
+    const skipThreshold = Math.max(configThreshold, bud.research);
+    const fetchLimit = autoSkipEnabled ? skipThreshold : bud.research;
+    const [recentAll, recentSummaries, recentFeedback] = await Promise.all([
+      getRecentResearch(fetchLimit, bud.researchDays, topic, run.topic_filter_accumulated ?? true).catch(() => []),
       getRecentExampleSummariesAny(bud.examples).catch(() => []),
       getRecentFeedbackAny(bud.feedback).catch(() => []),
+    ]);
+    const autoSkip = autoSkipEnabled && recentAll.length >= skipThreshold;
+    if (autoSkip) console.log(`[Worker] brainstorm run ${runId}: 관련 누적 리서치 ${recentAll.length}개(≥${skipThreshold} = max(설정 ${configThreshold}, 예산 ${bud.research})) → 웹검색 자동 스킵(누적만 사용)`);
+    const recentResearch = recentAll.slice(0, bud.research); // 주입은 참조 예산만큼만(컨텍스트 팽창 방지)
+
+    const [researchOut, voiceOut] = await Promise.all([
+      (!skipResearch && !autoSkip && researchDef)
+        ? runSharedProducerStage(researchDef, topic, resolveModelFor, token, runId, (n) => void statusCallback(`소스 ${n}개 검색 중`), researchProviderOverride)
+        : Promise.resolve(""),
+      (!skipResearchVoice && !autoSkip && voiceDef)
+        ? runSharedProducerStage(voiceDef, topic, resolveModelFor, token, runId, (n) => void statusCallback(`소스 ${n}개 검색 중`), researchProviderOverride)
+        : Promise.resolve(""),
     ]);
     if (skipResearch && skipResearchVoice && recentResearch.length === 0) {
       console.warn(`[Worker] brainstorm run ${runId}: research/research-voice 둘 다 생략인데 누적 리서치도 없음 — 근거 없이 진행(후보 품질↓ 가능)`);
     }
-    const skipLabel = [skipResearch && "research", skipResearchVoice && "research-voice"].filter(Boolean).join("+");
-    console.log(`[Worker] brainstorm run ${runId}: research ${researchOut.length}자 / research-voice ${voiceOut.length}자${skipLabel ? ` (${skipLabel} 생략)` : ""}`);
+    const skipLabel = autoSkip ? "자동 스킵" : [skipResearch && "research", skipResearchVoice && "research-voice"].filter(Boolean).join("+");
+    console.log(`[Worker] brainstorm run ${runId}: research ${researchOut.length}자 / research-voice ${voiceOut.length}자${skipLabel ? ` (${skipLabel})` : ""}`);
 
     const contextParts = [
       researchOut && `[research 산출물]\n${researchOut}`,

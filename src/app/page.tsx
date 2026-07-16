@@ -203,6 +203,9 @@ export default function HomePage() {
   const [runSkeleton, setRunSkeleton] = useState(true);
   // 누적 리서치를 topic 유사도로 걸러 가져올지(기본) 최신순 그대로 가져올지 A/B 토글.
   const [topicFilterAccumulated, setTopicFilterAccumulated] = useState(true);
+  // [Q4] 관련 누적 리서치가 임계값 이상이면 웹검색(research/voice) 자동 스킵(기본 OFF).
+  const [autoSkipAccum, setAutoSkipAccum] = useState(false);
+  const [autoSkipThreshold, setAutoSkipThreshold] = useState(10);
   // [M8 ④] 컨텍스트 참조 예산 — 카테고리별 개별 제어
   const [ctxBudget, setCtxBudget] = useState<CtxBudget>(DEFAULT_BUDGET);
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -344,6 +347,7 @@ export default function HomePage() {
           topic: topic.trim(), provider: selectedProvider,
           // UI는 "실행" 기준(run) → API 계약은 skip 기준이라 경계에서 반전
           skipResearch: !runResearch, skipResearchVoice: !runResearchVoice, skipResearchDeep: !runResearchDeep, skipSkeleton: !runSkeleton, topicFilterAccumulated,
+          autoSkipIfAccumulated: autoSkipAccum, autoSkipThreshold,
           contextBudget: JSON.stringify(ctxBudget),
         }),
       });
@@ -355,7 +359,7 @@ export default function HomePage() {
       setBsError(e instanceof Error ? e.message : "브레인스토밍 시작에 실패했습니다.");
       setBsLoading(false);
     }
-  }, [topic, bsLoading, selectedProvider, runResearch, runResearchVoice, runResearchDeep, runSkeleton, topicFilterAccumulated, ctxBudget, pollBrainstorm]);
+  }, [topic, bsLoading, selectedProvider, runResearch, runResearchVoice, runResearchDeep, runSkeleton, topicFilterAccumulated, autoSkipAccum, autoSkipThreshold, ctxBudget, pollBrainstorm]);
 
   // ── Step 3: 채널 생성 + finalize/결과 폴링 ──────────────────
   const pollResults = useCallback((id: string, targeted: ChannelKey[]) => {
@@ -554,7 +558,7 @@ export default function HomePage() {
     setSelectedIdx(null); setPageOffset(0); setSelectedChannels([]);
     setUserDraft(""); setDoResearch(true);
     setRunResearch(true); setRunResearchVoice(true); setRunResearchDeep(true); setRunSkeleton(true);
-    setTopicFilterAccumulated(true);
+    setTopicFilterAccumulated(true); setAutoSkipAccum(false); setAutoSkipThreshold(10);
     setCtxBudget(DEFAULT_BUDGET);
     setImproveDir(""); setResearchMode("reuse"); setAccTopicFilter(true); setReimproveSel([]);
     setBsError(null); setGenError(null); setFinalizeStage(""); setResultChannels([]);
@@ -745,6 +749,21 @@ export default function HomePage() {
                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                     누적 리서치 참고 시 주제 유사도로 필터링(끄면 관련성 무관 최신순)
                   </label>
+
+                  {/* [Q4] 관련 누적 리서치가 임계값 이상이면 웹검색 자동 스킵(누적만 사용) — 시간·비용 절약 */}
+                  <div className="mb-4 flex items-center gap-2 flex-wrap text-[11px] text-slate-500">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" checked={autoSkipAccum} onChange={e => setAutoSkipAccum(e.target.checked)}
+                        disabled={bsLoading}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      관련 누적 리서치가
+                    </label>
+                    <input type="number" min={1} value={autoSkipThreshold}
+                      onChange={e => setAutoSkipThreshold(Math.max(1, Number(e.target.value) || 10))}
+                      disabled={bsLoading || !autoSkipAccum}
+                      className="w-14 border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs disabled:opacity-50" />
+                    개 이상이면 웹검색 생략(누적만 사용)
+                  </div>
 
                   {bsError && (
                     <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">

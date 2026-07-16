@@ -19,7 +19,7 @@ import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentRe
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray } from "./imageCards";
 import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
-import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema, imageReviewSchema } from "./cardTemplateBuilder";
+import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema, imageReviewSchema, THEMES } from "./cardTemplateBuilder";
 import type { CardAsset } from "./cardStorage";
 // 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
 import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
@@ -441,6 +441,10 @@ export async function runPipeline(
   let writerCall: { p: Provider; apiKey: string; model: string } =
     { p: provider, apiKey: baseAuth.apiKey, model: baseAuth.model }; // 재작성은 writer 모델로
   let replacedCards: string[] = []; // image 단계에서 만든 카드 HTML (플레이스홀더 → 최종 치환용)
+  // text/json 출력 채널(링크드인 등)은 카드를 본문에 인라인 삽입하지 않고 다운로드 자산으로 내보낸다
+  // (플랫폼이 인라인 HTML을 못 렌더). 그때 본문의 <!-- HTML_CARD_N --> 플레이스홀더를 사람이 읽는
+  // "[이미지 N: 설명]" 참조로 되돌리기 위해, 스플라이스 전에 마커 설명을 문서 순서대로 보관한다.
+  const imageMarkerDescs: string[] = [];
   // 검수 재시도(maxRetries)를 다 쓴 뒤에도 마지막 패치가 실제로 문제를 해결했는지 재검수해서
   // 안 고쳐졌으면 여기 쌓는다 — 예전엔 마지막 라운드 패치를 재검수 없이 그냥 통과 처리해서,
   // "발행됐는데 사실 못 고친 문제가 남아있다"를 아무도 모르는 채 넘어갔다(실측 확인된 문제).
@@ -684,6 +688,10 @@ export async function runPipeline(
       }
 
     } else if (kind === "image") {
+      // 색 테마·커버 썸네일 여부는 _meta.json이 정한다(코드에 채널명 하드코딩 금지 → 새 채널은
+      // 데이터만 추가). 둘 다 없으면 네이버 기존 동작(naver 테마 + 커버 썸네일) → 팀원 무영향.
+      const cardTheme = THEMES[meta.imageTheme ?? "naver"] ?? THEMES.naver;
+      const useCoverThumbnail = meta.imageCoverThumbnail ?? true;
       const allImageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
       // naver-blog(html) 최종 조립은 <!-- PUBLISH:START/END --> 블록 안쪽만 채택하고 나머지는
       // 버린다(assembleNaverBlogHtml). 마커를 draft 전체에서 세면 PUBLISH 블록 밖(NOTES 등)에
@@ -698,25 +706,35 @@ export async function runPipeline(
         console.log(`[engine] ${channel} · ${stage.id}: [IMAGE:...] 마커 없음 → 건너뜀`);
         continue;
       }
+      // text/json 참조 복원용: 스플라이스가 마커를 <!-- HTML_CARD_N -->로 지우기 전에, 문서 순서대로
+      // 마커 설명(m[1])을 보관해둔다. HTML_CARD_N ↔ imageMarkerDescs[N] (둘 다 문서 순서).
+      imageMarkers.forEach(m => imageMarkerDescs.push((m[1] ?? "").trim()));
 
-      // 대표 썸네일(마커 인덱스 0)은 LLM이 손으로 그리지 않는다 — buildThumbnailSvg()가 제목·부제·
-      // 마스코트 세 값만으로 결정적으로 SVG를 조립한다(디자인 값 자체가 그 함수 안에 있다).
-      let mascotDataUri: string | null = null;
-      try {
-        const mascotB64 = await readChannelFileBase64(channel, "assets/mascot.png", token);
-        mascotDataUri = `data:image/png;base64,${mascotB64}`;
-      } catch (e) {
-        console.warn(`[engine] ${channel} · ${stage.id} 마스코트 로드 실패(마스코트 없이 썸네일 진행): ${e instanceof Error ? e.message : e}`);
+      // 대표 커버 썸네일(720×720, 마스코트) — useCoverThumbnail일 때만. buildThumbnailSvg()가 제목·
+      // 부제·마스코트 세 값만으로 결정적으로 SVG를 조립한다. 링크드인 등(imageCoverThumbnail:false)은
+      // null → 첫 마커도 일반 본문 카드로 취급(마스코트 커버는 네이버 블로그 관습).
+      let thumbnailSvg: string | null = null;
+      if (useCoverThumbnail) {
+        let mascotDataUri: string | null = null;
+        try {
+          const mascotB64 = await readChannelFileBase64(channel, "assets/mascot.png", token);
+          mascotDataUri = `data:image/png;base64,${mascotB64}`;
+        } catch (e) {
+          console.warn(`[engine] ${channel} · ${stage.id} 마스코트 로드 실패(마스코트 없이 썸네일 진행): ${e instanceof Error ? e.message : e}`);
+        }
+        // 실패해도 빈 문자열이 아니라 항상 유효한 SVG를 반환한다 — 마커 인덱스 정렬 유지를 위해
+        // 아래에서 이 값을 걸러내지(filter) 않고 그대로 배열에 포함시킨다.
+        thumbnailSvg = buildThumbnailSvg(
+          extractDraftTitle(draft),
+          extractThumbnailSubtitle(draft),
+          mascotDataUri,
+          cardTheme
+        );
       }
-      // 실패해도 빈 문자열이 아니라 항상 유효한 SVG를 반환한다 — 마커 인덱스 정렬 유지를 위해
-      // 아래에서 이 값을 걸러내지(filter) 않고 그대로 배열에 포함시킨다.
-      const thumbnailSvg = buildThumbnailSvg(
-        extractDraftTitle(draft),
-        extractThumbnailSubtitle(draft),
-        mascotDataUri
-      );
 
-      const bodyMarkerCount = imageMarkers.length - 1;
+      // 본문 카드 대상 마커: 커버를 쓰면 첫 마커(커버)를 제외, 아니면 전부.
+      const bodyMarkers = useCoverThumbnail ? imageMarkers.slice(1) : imageMarkers;
+      const bodyMarkerCount = bodyMarkers.length;
       const system = persona + stageGuides;
       // svg 외에 user/fallbackText도 들고 있는 이유: image-review 단계(있으면)가 REJECT한 카드를
       // 재생성할 때 이 프롬프트를 그대로(피드백만 덧붙여) 재사용한다.
@@ -726,15 +744,15 @@ export async function runPipeline(
         // 카드 1개당 호출 1개로 병렬 실행 — 카드별로 나누면 그 카드 슬롯만 buildFallbackCardSvg로
         // 채워 개수가 항상 마커 수와 일치하고, 응답도 병렬이라 더 빠르다.
         const CARD_CONCURRENCY = 3;
-        const bodyMarkers = imageMarkers.slice(1); // 인덱스 0(썸네일) 제외 — 본문 카드에 대응하는 마커들
         const cardIndexes = Array.from({ length: bodyMarkerCount }, (_, i) => i);
         // callProviderForObject(스키마 강제 구조화 출력)로 파싱 실패 경로 자체를 없앤다 —
         // provider가 cardGenerationSchema를 만족하는 응답만 반환하도록 AI SDK가 보장한다.
         bodyResults = await mapWithConcurrency(cardIndexes, CARD_CONCURRENCY, async (i) => {
           const marker = bodyMarkers[i];
-          // 항상 "바로 앞 마커" 기준으로 잘라야 안전하다(첫 본문 카드의 앞 마커는 썸네일 마커).
-          const prevMarker = i === 0 ? imageMarkers[0] : bodyMarkers[i - 1];
-          const sectionStart = prevMarker.index! + prevMarker[0].length;
+          // 담당 구간 시작 = 바로 앞 마커의 끝. 첫 본문 카드는, 커버가 있으면 커버 마커(imageMarkers[0])
+          // 뒤부터, 커버가 없으면(링크드인) 앞 마커가 없으므로 draft 시작(0)부터 잡는다.
+          const prevMarker = i > 0 ? bodyMarkers[i - 1] : (useCoverThumbnail ? imageMarkers[0] : null);
+          const sectionStart = prevMarker ? prevMarker.index! + prevMarker[0].length : 0;
           const sectionEnd = marker.index! + marker[0].length;
           const section = draft.slice(sectionStart, sectionEnd).trim();
           const markerDesc = marker[1]?.trim() ?? "";
@@ -765,15 +783,17 @@ export async function runPipeline(
             const { card } = await callProviderForObject(
               sp, sk, sm, system, user, Math.min(maxTok, 4000), cardGenerationSchema
             );
-            return { svg: buildCardSvg(card), user, fallbackText };
+            return { svg: buildCardSvg(card, cardTheme), user, fallbackText };
           } catch (e) {
             console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 구조화 생성 실패 — 대체 카드로 진행: ${e instanceof Error ? e.message : e}`);
-            return { svg: buildFallbackCardSvg(fallbackText), user, fallbackText };
+            return { svg: buildFallbackCardSvg(fallbackText, cardTheme), user, fallbackText };
           }
         });
       }
 
-      const finalSvgs = [thumbnailSvg, ...bodyResults.map(r => r.svg)];
+      const finalSvgs = thumbnailSvg
+        ? [thumbnailSvg, ...bodyResults.map(r => r.svg)]
+        : bodyResults.map(r => r.svg);
       // finalSvgs는 imageMarkers(PUBLISH 블록 안쪽만) 기준으로 만들어졌는데, spliceImageCardsFromArray는
       // draft "전체"에서 다시 마커를 센다 — 두 집계 기준을 맞추기 위해 스플라이스도 PUBLISH 블록
       // 부분 문자열에만 적용하고 나머지는 그대로 붙인다.
@@ -809,7 +829,9 @@ export async function runPipeline(
           if (!reviewPersona) throw new Error(`비전 리뷰어 '${stage.reviewer ?? "image-reviewer"}' 페르소나 파일을 찾을 수 없습니다.`);
           const reviewAuth = await resolveModelFor({ stageId: "image-review" });
           const reviewCfg = loadPipelineConfig().stages.find(s => s.id === "image-review");
-          const bodyCaptured = captured.slice(1); // index 0 = 썸네일
+          // 커버 썸네일이 있으면 captured[0]=썸네일이라 본문 카드는 slice(1). 없으면(링크드인) 전부 본문.
+          const captureOffset = useCoverThumbnail ? 1 : 0;
+          const bodyCaptured = useCoverThumbnail ? captured.slice(1) : captured;
           const reviewText =
             `아래 카드 이미지 ${bodyCaptured.length}장을 첨부 순서(0부터) 그대로 검수하세요. ` +
             `각 이미지마다 반드시 하나의 결과를 반환하세요.`;
@@ -829,14 +851,14 @@ export async function runPipeline(
                 const { card } = await callProviderForObject(
                   sp, sk, sm, system, revisedUser, Math.min(maxTok, 4000), cardGenerationSchema
                 );
-                newSvg = buildCardSvg(card);
+                newSvg = buildCardSvg(card, cardTheme);
               } catch (e) {
                 console.warn(`[engine] ${channel} · image-review 재생성 실패(카드 ${index + 1}) — 폴백 유지: ${e instanceof Error ? e.message : e}`);
-                newSvg = buildFallbackCardSvg(original.fallbackText);
+                newSvg = buildFallbackCardSvg(original.fallbackText, cardTheme);
               }
               // 재검수는 하지 않는다(1회 재생성이 최종) — captured만 갱신.
               const rendered = renderSvgToPng(newSvg);
-              captured[index + 1] = { svg: newSvg, png: rendered.png, heightPx: rendered.heightPx };
+              captured[index + captureOffset] = { svg: newSvg, png: rendered.png, heightPx: rendered.heightPx };
             });
           } else {
             console.log(`[engine] ${channel} · image-review — 전부 승인`);
@@ -892,6 +914,14 @@ export async function runPipeline(
     });
     return qualityNote + finalHtml;
   }
-  // json / text: writer가 이미 형식대로 출력 → 그대로 반환
-  return draft;
+  // json / text: 인라인 카드 삽입(<!-- HTML_CARD_N --> 치환)은 html 전용이라, text/json 본문엔
+  // 플레이스홀더가 그대로 남는다. 카드 자체는 card_assets(Supabase 다운로드)로 나가므로, 본문에는
+  // 사람이 읽는 "[이미지 N: 설명]" 참조만 남긴다(사용자가 어느 위치에 어떤 카드를 붙일지 알 수 있게).
+  // 이미지 단계가 없거나 마커가 없으면 치환 대상이 없어 no-op → 기존 text 채널·네이버(html) 무영향.
+  const withImageRefs = draft.replace(/<!--\s*HTML_CARD_(\d+)\s*-->/g, (_m, n) => {
+    const idx = Number(n);
+    const desc = imageMarkerDescs[idx];
+    return desc ? `[이미지 ${idx + 1}: ${desc}]` : `[이미지 ${idx + 1}]`;
+  });
+  return withImageRefs;
 }

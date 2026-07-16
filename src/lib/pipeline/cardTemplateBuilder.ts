@@ -13,26 +13,76 @@
 
 import { z } from "zod";
 
-// ─── 디자인 토큰 (guide 2-1절 고정값 이식) ─────────────────────────
+// ─── 레이아웃·폰트 토큰 (테마 무관, 모든 채널 공유) ─────────────────
 const CARD_WIDTH = 800;
 const PAD_X = 44;
 const PAD_TOP = 44;
 const PAD_BOTTOM = 36;
 const CONTENT_WIDTH = CARD_WIDTH - PAD_X * 2; // 712
-
-const BG_FROM = "#f1f3f7";
-const BG_TO = "#e3e8ee";
-const NAVY = "#234b73";
-const INK = "#141d29";
-const LABEL_GRAY = "#7d8792";
-const SUBTEXT_GRAY = "#626d78";
-const WATERMARK_GRAY = "#9aa2ad";
-const CTA_FROM = "#4a80ab";
-const CTA_TO = "#16324f";
 const FONT_FAMILY = "'Pretendard','Malgun Gothic','맑은 고딕',sans-serif";
-
 const THUMBNAIL_SIZE = 720;
-const THUMBNAIL_BG = "#18A0E8";
+
+// textLine의 color 인자는 실호출부에서 항상 명시적으로 넘어온다(아래 렌더 함수들이 theme.*를
+// 직접 전달). 이 상수는 그 인자가 누락됐을 때만 쓰이는 방어적 폴백일 뿐이라 테마에 넣지 않는다.
+const DEFAULT_INK = "#141d29";
+
+// ─── 채널 테마 (브랜드 색만 담는다 — 중립 그레이·레이아웃은 위 공유 상수) ────────────────
+// 예전엔 색이 모듈 전역 상수(NAVY 등)로 하드코딩돼 네이버 전용이었다. 링크드인 등 다른 채널이
+// 같은 SVG 조립 로직을 그대로 쓰되 브랜드 색만 바꿀 수 있도록, 색만 뽑아 theme 객체로 주입한다.
+// buildCardSvg/buildThumbnailSvg/buildFallbackCardSvg·렌더 5종이 이 값을 인자로 받고, 기본값은
+// NAVER_THEME(현 상수 그대로)이라 기존 네이버 호출부는 바이트 단위로 결과가 동일하다(무영향).
+// 카드 내부 중립색(#f0f0f0 말풍선·#eef1f5 요약박스·#888 표 수치 등)은 브랜드색이 아니라 채널
+// 공용이므로 각 렌더 함수에 리터럴로 남긴다 — 테마 표면을 브랜드 색으로만 최소화한다.
+export interface CardTheme {
+  accent: string;        // 강조색(구 NAVY) — 헤드라인 2행·표 헤더·번호·CTA 텍스트 강조 등
+  ink: string;           // 본문 잉크(구 INK)
+  labelGray: string;     // 상단 컨텍스트 라벨(구 LABEL_GRAY)
+  subtextGray: string;   // 보조 설명(구 SUBTEXT_GRAY)
+  watermarkGray: string; // 하단 워터마크(구 WATERMARK_GRAY)
+  bgFrom: string;        // 카드 배경 그라디언트 시작(구 BG_FROM)
+  bgTo: string;          // 카드 배경 그라디언트 끝(구 BG_TO)
+  ctaFrom: string;       // CTA 그라디언트 시작(구 CTA_FROM)
+  ctaTo: string;         // CTA 그라디언트 끝(구 CTA_TO)
+  thumbnailBg: string;   // 썸네일 배경(구 THUMBNAIL_BG)
+  watermarkText: string; // 워터마크 문구
+}
+
+// 현재 네이버 값 그대로 — 기본 테마. 이 값이 예전 전역 상수와 1:1 동일해야 무영향 보장이 성립한다.
+const NAVER_THEME: CardTheme = {
+  accent: "#234b73",
+  ink: "#141d29",
+  labelGray: "#7d8792",
+  subtextGray: "#626d78",
+  watermarkGray: "#9aa2ad",
+  bgFrom: "#f1f3f7",
+  bgTo: "#e3e8ee",
+  ctaFrom: "#4a80ab",
+  ctaTo: "#16324f",
+  thumbnailBg: "#18A0E8",
+  watermarkText: "CS쉐어링",
+};
+
+// 링크드인 — image-card-guide.md의 강조 #1e90d6 계열. 배경은 거의 흰색(가이드 카드 bg:#fff)에
+// 살짝 파란 틴트, CTA는 파랑 그라디언트, 썸네일 배경도 동일 파랑.
+const LINKEDIN_THEME: CardTheme = {
+  accent: "#1e90d6",
+  ink: "#1a1a1a",
+  labelGray: "#94a3b8",
+  subtextGray: "#64748b",
+  watermarkGray: "#cbd5e1",
+  bgFrom: "#ffffff",
+  bgTo: "#eef4fb",
+  ctaFrom: "#1e90d6",
+  ctaTo: "#166bb0",
+  thumbnailBg: "#1e90d6",
+  watermarkText: "CS쉐어링",
+};
+
+// runPipeline이 _meta.json의 imageTheme로 골라 쓴다(없으면 "naver"). 미지의 키는 상위에서 naver 폴백.
+export const THEMES: Record<string, CardTheme> = {
+  naver: NAVER_THEME,
+  linkedin: LINKEDIN_THEME,
+};
 
 // ─── 공통 유틸 ──────────────────────────────────────────────────
 function escapeXml(s: string): string {
@@ -131,7 +181,7 @@ interface TextOpts {
 function textLine(x: number, y: number, s: string, o: TextOpts): string {
   const ls = o.letterSpacing ? ` letter-spacing="${o.letterSpacing}"` : "";
   return `<text x="${x}" y="${y}" font-family="${FONT_FAMILY}" font-size="${o.size}" ` +
-    `font-weight="${o.weight ?? 400}" fill="${o.color ?? INK}" text-anchor="${o.anchor ?? "start"}"${ls}>` +
+    `font-weight="${o.weight ?? 400}" fill="${o.color ?? DEFAULT_INK}" text-anchor="${o.anchor ?? "start"}"${ls}>` +
     `${escapeXml(s)}</text>`;
 }
 
@@ -242,7 +292,7 @@ function speechBubblePath(x: number, y: number, w: number, h: number, r: number,
   );
 }
 
-function renderChat(c: Extract<CardContent, { layout: "chat" }>, y0: number): Rendered {
+function renderChat(c: Extract<CardContent, { layout: "chat" }>, y0: number, theme: CardTheme): Rendered {
   let y = y0;
   const parts: string[] = [];
   const bubbleMaxW = Math.round(CONTENT_WIDTH * 0.75);
@@ -257,19 +307,19 @@ function renderChat(c: Extract<CardContent, { layout: "chat" }>, y0: number): Re
     y += bh + 10;
   }
   y += 6;
-  parts.push(textLine(CONTENT_WIDTH / 2, y + 18, "»", { size: 22, color: NAVY, anchor: "middle" }));
+  parts.push(textLine(CONTENT_WIDTH / 2, y + 18, "»", { size: 22, color: theme.accent, anchor: "middle" }));
   y += 34;
   const conclLines = wrapText(c.conclusion, CONTENT_WIDTH - 16 * 2, 14, 2); // 원본 CSS padding:14px 16px
   const conclH = 28 + conclLines.length * 20;
   parts.push(`<rect x="0" y="${y}" width="${CONTENT_WIDTH}" height="${conclH}" rx="8" fill="#eef1f5"/>`);
   conclLines.forEach((ln, i) => {
-    parts.push(textLine(CONTENT_WIDTH / 2, y + 24 + i * 20, ln, { size: 14, weight: 600, color: NAVY, anchor: "middle" }));
+    parts.push(textLine(CONTENT_WIDTH / 2, y + 24 + i * 20, ln, { size: 14, weight: 600, color: theme.accent, anchor: "middle" }));
   });
   y += conclH;
   return { svg: parts.join(""), height: y - y0 };
 }
 
-function renderNumbered(c: Extract<CardContent, { layout: "numbered" }>, y0: number): Rendered {
+function renderNumbered(c: Extract<CardContent, { layout: "numbered" }>, y0: number, theme: CardTheme): Rendered {
   let y = y0;
   const parts: string[] = [];
   const textX = 46 + 18; // 고스트 넘버 폭(46) + gap(18)
@@ -280,9 +330,9 @@ function renderNumbered(c: Extract<CardContent, { layout: "numbered" }>, y0: num
     const descLines = wrapText(item.desc, CONTENT_WIDTH - textX, 14, 2);
     parts.push(
       `<text x="0" y="${y + padTop + 32}" font-family="${FONT_FAMILY}" font-size="40" font-weight="700" ` +
-      `fill="${NAVY}" fill-opacity="0.18">${escapeXml(num)}</text>`
+      `fill="${theme.accent}" fill-opacity="0.18">${escapeXml(num)}</text>`
     );
-    parts.push(textLine(textX, y + padTop + 14, clamp(item.title, 14), { size: 14.5, weight: 700, color: NAVY }));
+    parts.push(textLine(textX, y + padTop + 14, clamp(item.title, 14), { size: 14.5, weight: 700, color: theme.accent }));
     descLines.forEach((ln, li) => {
       parts.push(textLine(textX, y + padTop + 14 + 22 + li * 20, ln, { size: 14, color: "#414b56" }));
     });
@@ -292,7 +342,7 @@ function renderNumbered(c: Extract<CardContent, { layout: "numbered" }>, y0: num
   return { svg: parts.join(""), height: y - y0 };
 }
 
-function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number): Rendered {
+function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number, theme: CardTheme): Rendered {
   let y = y0;
   const parts: string[] = [];
   let tx = 0;
@@ -302,9 +352,9 @@ function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number)
     const w = Math.round(textWidth(tag, 13)) + 26; // 원본 CSS padding:0 13px(좌우) + 실측 글자 폭
     parts.push(
       `<rect x="${tx}" y="${tagY}" width="${w}" height="26" rx="13" fill="#eef1f5" ` +
-      `stroke="${NAVY}" stroke-opacity="0.18"/>`
+      `stroke="${theme.accent}" stroke-opacity="0.18"/>`
     );
-    parts.push(textLine(tx + w / 2, tagY + 18, tag, { size: 13, weight: 600, color: NAVY, anchor: "middle" }));
+    parts.push(textLine(tx + w / 2, tagY + 18, tag, { size: 13, weight: 600, color: theme.accent, anchor: "middle" }));
     tx += w + 8;
   }
   y += 26 + 16;
@@ -315,7 +365,7 @@ function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number)
   c.gridItems.forEach((item, i) => {
     const bx = i * (colW + gap);
     parts.push(`<rect x="${bx}" y="${y}" width="${colW}" height="${boxH}" rx="8" fill="#f7f9fc"/>`);
-    parts.push(textLine(bx + 14, y + 26, clamp(item.title, 12), { size: 13, weight: 700, color: NAVY }));
+    parts.push(textLine(bx + 14, y + 26, clamp(item.title, 12), { size: 13, weight: 700, color: theme.accent }));
     const descLines = wrapText(item.desc, colW - 14 * 2, 12, 2); // 원본 CSS padding:14px
     descLines.forEach((ln, li) => {
       parts.push(textLine(bx + 14, y + 46 + li * 16, ln, { size: 12, color: "#555" }));
@@ -325,14 +375,14 @@ function renderBadges(c: Extract<CardContent, { layout: "badges" }>, y0: number)
   return { svg: parts.join(""), height: y - y0 };
 }
 
-function renderTable(c: Extract<CardContent, { layout: "table" }>, y0: number): Rendered {
+function renderTable(c: Extract<CardContent, { layout: "table" }>, y0: number, theme: CardTheme): Rendered {
   let y = y0;
   const parts: string[] = [];
   const colLabelW = Math.round(CONTENT_WIDTH * 0.34);
   const colValW = Math.round((CONTENT_WIDTH - colLabelW) / 2);
   const rowH = 40;
 
-  parts.push(`<rect x="0" y="${y}" width="${CONTENT_WIDTH}" height="${rowH}" fill="${NAVY}"/>`);
+  parts.push(`<rect x="0" y="${y}" width="${CONTENT_WIDTH}" height="${rowH}" fill="${theme.accent}"/>`);
   parts.push(`<line x1="${colLabelW}" y1="${y}" x2="${colLabelW}" y2="${y + rowH}" stroke="#1a3a58"/>`);
   parts.push(`<line x1="${colLabelW + colValW}" y1="${y}" x2="${colLabelW + colValW}" y2="${y + rowH}" stroke="#1a3a58"/>`);
   parts.push(textLine(12, y + 25, "구분", { size: 13, color: "#fff" }));
@@ -344,45 +394,45 @@ function renderTable(c: Extract<CardContent, { layout: "table" }>, y0: number): 
     parts.push(`<rect x="0" y="${y}" width="${CONTENT_WIDTH}" height="${rowH}" fill="none" stroke="#e0e0e0"/>`);
     parts.push(`<line x1="${colLabelW}" y1="${y}" x2="${colLabelW}" y2="${y + rowH}" stroke="#e0e0e0"/>`);
     parts.push(`<line x1="${colLabelW + colValW}" y1="${y}" x2="${colLabelW + colValW}" y2="${y + rowH}" stroke="#e0e0e0"/>`);
-    parts.push(textLine(12, y + 25, clamp(row.label, 14), { size: 13, color: INK }));
+    parts.push(textLine(12, y + 25, clamp(row.label, 14), { size: 13, color: theme.ink }));
     parts.push(textLine(colLabelW + colValW / 2, y + 25, clamp(row.values[0], 10), { size: 13, color: "#888", anchor: "middle" }));
-    parts.push(textLine(colLabelW + colValW + colValW / 2, y + 25, clamp(row.values[1], 10), { size: 13, weight: 700, color: NAVY, anchor: "middle" }));
+    parts.push(textLine(colLabelW + colValW + colValW / 2, y + 25, clamp(row.values[1], 10), { size: 13, weight: 700, color: theme.accent, anchor: "middle" }));
     y += rowH;
   }
   return { svg: parts.join(""), height: y - y0 };
 }
 
-function renderSummary(c: Extract<CardContent, { layout: "summary" }>, y0: number): Rendered {
+function renderSummary(c: Extract<CardContent, { layout: "summary" }>, y0: number, theme: CardTheme): Rendered {
   const lines = wrapText(c.body, CONTENT_WIDTH - 20 * 2, 15, 3); // 원본 CSS padding:16px 20px
   const padY = 16;
   const h = padY * 2 + lines.length * 24;
   const parts = [
     `<rect x="0" y="${y0}" width="${CONTENT_WIDTH}" height="${h}" rx="8" fill="#eef1f5"/>`,
-    `<rect x="0" y="${y0}" width="4" height="${h}" fill="${NAVY}"/>`,
+    `<rect x="0" y="${y0}" width="4" height="${h}" fill="${theme.accent}"/>`,
     ...lines.map((ln, i) => textLine(20, y0 + padY + 15 + i * 24, ln, { size: 15, color: "#1a1a1a" })),
   ];
   return { svg: parts.join(""), height: h };
 }
 
 // ─── 본문 카드 전체 조립 ────────────────────────────────────────
-export function buildCardSvg(content: CardContent): string {
+export function buildCardSvg(content: CardContent, theme: CardTheme = NAVER_THEME): string {
   let y = PAD_TOP;
   const parts: string[] = [];
 
   // 상단 컨텍스트 바
-  parts.push(`<rect x="0" y="${y}" width="3" height="13" fill="${NAVY}"/>`);
-  parts.push(textLine(12, y + 11, clamp(content.contextLabel, 20), { size: 12, color: LABEL_GRAY, letterSpacing: 0.4 }));
+  parts.push(`<rect x="0" y="${y}" width="3" height="13" fill="${theme.accent}"/>`);
+  parts.push(textLine(12, y + 11, clamp(content.contextLabel, 20), { size: 12, color: theme.labelGray, letterSpacing: 0.4 }));
   y += 13 + 24;
 
   // 메인 헤드라인 2행
-  parts.push(textLine(0, y + 23, clamp(content.headline[0], 16), { size: 29, weight: 700, color: INK }));
+  parts.push(textLine(0, y + 23, clamp(content.headline[0], 16), { size: 29, weight: 700, color: theme.ink }));
   y += 29 * 1.32;
-  parts.push(textLine(0, y + 23, clamp(content.headline[1], 16), { size: 29, weight: 700, color: NAVY }));
+  parts.push(textLine(0, y + 23, clamp(content.headline[1], 16), { size: 29, weight: 700, color: theme.accent }));
   y += 29 * 1.32 + 10;
 
   // 보조 설명(선택)
   if (content.subtext) {
-    parts.push(textLine(0, y + 15, clamp(content.subtext, 50), { size: 14.5, color: SUBTEXT_GRAY }));
+    parts.push(textLine(0, y + 15, clamp(content.subtext, 50), { size: 14.5, color: theme.subtextGray }));
     y += 14.5 * 1.6 + 34;
   } else {
     y += 10;
@@ -393,11 +443,11 @@ export function buildCardSvg(content: CardContent): string {
   parts.push(`<g transform="translate(0, ${contentTop})">`);
   let rendered: Rendered;
   switch (content.layout) {
-    case "chat": rendered = renderChat(content, 0); break;
-    case "numbered": rendered = renderNumbered(content, 0); break;
-    case "badges": rendered = renderBadges(content, 0); break;
-    case "table": rendered = renderTable(content, 0); break;
-    case "summary": rendered = renderSummary(content, 0); break;
+    case "chat": rendered = renderChat(content, 0, theme); break;
+    case "numbered": rendered = renderNumbered(content, 0, theme); break;
+    case "badges": rendered = renderBadges(content, 0, theme); break;
+    case "table": rendered = renderTable(content, 0, theme); break;
+    case "summary": rendered = renderSummary(content, 0, theme); break;
   }
   parts.push(rendered.svg);
   parts.push(`</g>`);
@@ -413,7 +463,7 @@ export function buildCardSvg(content: CardContent): string {
 
   // 워터마크
   y += 16;
-  parts.push(textLine(CONTENT_WIDTH, y, "CS쉐어링", { size: 11.5, weight: 600, color: WATERMARK_GRAY, anchor: "end", letterSpacing: 0.6 }));
+  parts.push(textLine(CONTENT_WIDTH, y, theme.watermarkText, { size: 11.5, weight: 600, color: theme.watermarkGray, anchor: "end", letterSpacing: 0.6 }));
 
   const cardHeight = y + PAD_BOTTOM;
 
@@ -430,12 +480,12 @@ export function buildCardSvg(content: CardContent): string {
     // 기운 각도였는데, 이식 과정에서 (0.15,0)→(0.85,1)의 뚜렷한 대각선으로 바뀌어 있었다.
     // 175deg에 가깝게 거의 수직으로 되돌린다.
     `<linearGradient id="bgGrad" x1="0.5" y1="0" x2="0.42" y2="1">` +
-    `<stop offset="0%" stop-color="${BG_FROM}"/><stop offset="100%" stop-color="${BG_TO}"/>` +
+    `<stop offset="0%" stop-color="${theme.bgFrom}"/><stop offset="100%" stop-color="${theme.bgTo}"/>` +
     `</linearGradient>` +
     // CTA 원본은 linear-gradient(160deg, ...) — bgGrad보다는 기울었지만 여전히 수직이 우세한
     // 각도다. 기존 (0.2,0)→(0.8,1)은 그보다 더 강한 대각선이라 완만하게 좁혔다.
     `<linearGradient id="ctaGrad" x1="0.32" y1="0" x2="0.68" y2="1">` +
-    `<stop offset="0%" stop-color="${CTA_FROM}"/><stop offset="100%" stop-color="${CTA_TO}"/>` +
+    `<stop offset="0%" stop-color="${theme.ctaFrom}"/><stop offset="100%" stop-color="${theme.ctaTo}"/>` +
     `</linearGradient>` +
     // 원본 CSS box-shadow:0 1px 2px rgba(20,32,46,.06), 0 20px 48px rgba(20,32,46,.11) —
     // 붙는 그림자(밀착)와 뜨는 그림자(넓게 퍼짐) 2겹이 합쳐져 입체감을 만들었다. 단일
@@ -461,7 +511,7 @@ export function buildCardSvg(content: CardContent): string {
 
 // ─── 안전망: JSON 파싱 실패 등으로 카드를 못 만들 때 쓰는 최소 대체 카드 ──
 // 파이프라인 전체를 죽이는 대신, 헤드라인만 담은 단순 요약 카드로 대체한다.
-export function buildFallbackCardSvg(headline: string): string {
+export function buildFallbackCardSvg(headline: string, theme: CardTheme = NAVER_THEME): string {
   return buildCardSvg({
     layout: "summary",
     contextLabel: "CS쉐어링",
@@ -469,7 +519,7 @@ export function buildFallbackCardSvg(headline: string): string {
     subtext: null,
     cta: ["자세히 알아보기", "CS쉐어링과 상담하기"],
     body: headline,
-  });
+  }, theme);
 }
 
 // 이모지(📞 등)는 쓰지 않는다 — resvg는 Pretendard 폰트 파일만 로드하므로(이모지 글리프 없음)
@@ -494,7 +544,7 @@ function phoneIcon(cx: number, cy: number, badgeR: number): string {
 // mascotDataUri가 null이면(자산 로드 실패 등) 마스코트 이미지 없이 나머지 요소만으로 조립한다 —
 // 항상 유효한 SVG를 반환해야 호출부가 마커 인덱스 정렬을 안 깨고(빈 문자열을 걸러내지 않고)
 // 그대로 스플라이스할 수 있다.
-export function buildThumbnailSvg(title: string, subtitleRaw: string, mascotDataUri: string | null): string {
+export function buildThumbnailSvg(title: string, subtitleRaw: string, mascotDataUri: string | null, theme: CardTheme = NAVER_THEME): string {
   const titleLines = wrapText(title, THUMBNAIL_SIZE - 120, 36, 2);
   const subtitle = clamp(subtitleRaw, 26);
   const badgeW = Math.min(600, 60 + subtitle.length * 17);
@@ -512,12 +562,12 @@ export function buildThumbnailSvg(title: string, subtitleRaw: string, mascotData
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<svg width="${THUMBNAIL_SIZE}" height="${THUMBNAIL_SIZE}" viewBox="0 0 ${THUMBNAIL_SIZE} ${THUMBNAIL_SIZE}" ` +
     `xmlns="http://www.w3.org/2000/svg">` +
-    `<rect x="4" y="4" width="${THUMBNAIL_SIZE - 8}" height="${THUMBNAIL_SIZE - 8}" fill="${THUMBNAIL_BG}" ` +
+    `<rect x="4" y="4" width="${THUMBNAIL_SIZE - 8}" height="${THUMBNAIL_SIZE - 8}" fill="${theme.thumbnailBg}" ` +
     `stroke="#ffffff" stroke-width="8"/>` +
     `<path d="M40 80 L40 40 L80 40" fill="none" stroke="#fff" stroke-width="4"/>` +
     textLine(THUMBNAIL_SIZE - 40, 58, "CS Sharing", { size: 18, weight: 700, color: "#fff", anchor: "end", letterSpacing: 1 }) +
     `<rect x="${THUMBNAIL_SIZE / 2 - badgeW / 2}" y="292" width="${badgeW}" height="38" rx="19" fill="#fff"/>` +
-    textLine(THUMBNAIL_SIZE / 2, 317, subtitle, { size: 16, weight: 700, color: THUMBNAIL_BG, anchor: "middle" }) +
+    textLine(THUMBNAIL_SIZE / 2, 317, subtitle, { size: 16, weight: 700, color: theme.thumbnailBg, anchor: "middle" }) +
     titleBlock +
     phoneIcon(THUMBNAIL_SIZE / 2, 495, 42) +
     mascot +

@@ -2,21 +2,38 @@
   "version": 1,
   "blocks": [
     {
-      "type": "review-loop",
-      "generateAgent": "writer",
+      "type": "generate",
+      "agent": "writer",
+      "output": "draft",
       "guides": [
         "guide/00-tone.md",
         "guide/01-examples.md",
         "guide/02-personas.md",
         "guide/04-structure.md",
         "guide/03-content-rules.md"
-      ],
-      "reviewers": [
-        { "agent": "reviewer", "guides": ["guide/02-personas.md", "guide/04-structure.md", "guide/03-content-rules.md"] },
-        { "agent": "tone-reviewer", "guides": [] }
-      ],
+      ]
+    },
+    {
+      "type": "reviewer",
+      "agent": "reviewer",
+      "guides": ["guide/02-personas.md", "guide/04-structure.md", "guide/03-content-rules.md", "guide/05-image-preserve.md"],
+      "maxRetries": 1,
+      "rewriteMode": "full",
+      "thinking": { "budgetTokens": 2000 }
+    },
+    {
+      "type": "reviewer",
+      "agent": "tone-reviewer",
+      "guides": ["guide/05-image-preserve.md"],
       "maxRetries": 1,
       "rewriteMode": "full"
+    },
+    {
+      "type": "image-loop",
+      "generateAgent": "image-maker",
+      "guides": ["guide/image-card-guide.md"],
+      "reviewer": "image-reviewer",
+      "maxRetries": 1
     }
   ]
 }

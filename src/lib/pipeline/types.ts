@@ -115,6 +115,19 @@ export type CompositionBlock =
       maxTokens?: number; disableThinking?: boolean; thinking?: { budgetTokens: number };
     }
   | {
+      // ★원자 리뷰어(1블록=리뷰어 1명). 바로 앞 어딘가의 draft 생성자가 만든 본문(draft)을 검수한다.
+      // 여러 개면 순서대로 각각 현재 draft를 검수(runPipeline이 flat 스테이지로 그대로 반복).
+      type: "reviewer";
+      agent: string;
+      guides?: string[];
+      maxRetries?: number;
+      rewriteMode?: "full" | "patch";
+      model?: string; modelId?: string; modelIdByProvider?: Record<string, string>;
+      maxTokens?: number; thinking?: { budgetTokens: number };
+    }
+  | {
+      // (구) 하위호환 — writer + 리뷰어들을 묶은 번들 블록. 원자화 이전에 저장된 composition.json이
+      // 계속 컴파일되도록 유지한다. 새 빌더는 generate(draft)+reviewer 원자 블록으로 저장한다.
       type: "review-loop";  // 생성(writer) + 리뷰어(들) + 반려 재작성 루프
       generateAgent: string;
       guides?: string[];    // writer 쪽 가이드

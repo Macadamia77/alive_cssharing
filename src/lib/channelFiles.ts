@@ -56,6 +56,11 @@ export interface ChannelMeta {
    *  runPipeline이 composition.json을 조회하므로, 미사용 채널은 불필요한 파일 조회(GitHub 404 등)를 피한다. */
   useComposition?: boolean;
   outputFormat?: "html" | "text" | "json"; // 최종 결과물 형식 (기본 text)
+  /** 이미지 카드 색 테마 키(cardTemplateBuilder의 THEMES). 없으면 "naver"(네이버 무영향). */
+  imageTheme?: "naver" | "linkedin";
+  /** 첫 [IMAGE:] 마커를 720×720 커버 썸네일로 만들지. 없으면 true(네이버 기존 동작). false면
+   *  모든 마커를 일반 본문 카드로 취급(링크드인 — 마스코트 커버는 네이버 블로그 관습). */
+  imageCoverThumbnail?: boolean;
   model?: string;            // 채널 기본 provider ("claude"|"openai"|"gemini")
   modelId?: string;          // 채널 기본 모델 id
   /** 단계별 토글·오버라이드. 키 = stage id (예: { "writer": { "enabled": true } }) */

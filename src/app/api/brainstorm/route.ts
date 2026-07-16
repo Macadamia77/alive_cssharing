@@ -13,10 +13,11 @@ import { resolveGithubToken } from "@/lib/resolveToken";
  */
 export async function POST(req: NextRequest) {
   try {
-    const { topic, provider: providerOverride, skipResearch, skipResearchVoice, skipResearchDeep, skipSkeleton, topicFilterAccumulated, contextBudget } = (await req.json()) as {
+    const { topic, provider: providerOverride, skipResearch, skipResearchVoice, skipResearchDeep, skipSkeleton, topicFilterAccumulated, autoSkipIfAccumulated, autoSkipThreshold, contextBudget } = (await req.json()) as {
       topic?: string; provider?: string;
       skipResearch?: boolean; skipResearchVoice?: boolean; skipResearchDeep?: boolean; skipSkeleton?: boolean;
       topicFilterAccumulated?: boolean;
+      autoSkipIfAccumulated?: boolean; autoSkipThreshold?: number;
       contextBudget?: string;
     };
     if (!topic?.trim()) return NextResponse.json({ error: "주제를 입력해주세요." }, { status: 400 });
@@ -51,6 +52,8 @@ export async function POST(req: NextRequest) {
         skip_research: !!skipResearch, skip_research_voice: !!skipResearchVoice, skip_research_deep: !!skipResearchDeep,
         skip_skeleton: !!skipSkeleton,
         topic_filter_accumulated: topicFilterAccumulated ?? true,
+        auto_skip_if_accumulated: !!autoSkipIfAccumulated,
+        auto_skip_threshold: autoSkipThreshold ?? 10,
         context_budget: contextBudget || null, status: "pending",
       })
       .select("id")

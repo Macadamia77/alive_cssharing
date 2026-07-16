@@ -83,3 +83,9 @@ alter table brainstorm_runs add column if not exists skip_skeleton boolean not n
 alter table brainstorm_runs add column if not exists topic_filter_accumulated boolean not null default true; -- 모드 A 브레인스토밍용
 alter table brainstorm_runs add column if not exists reimprove_topic_filter boolean not null default true;   -- 재개선(누적 데이터 참고)용
 alter table tasks add column if not exists accumulated_topic_filter boolean not null default true; -- generate task에 승계되는 값
+
+-- [Q4 누적 충분 시 웹검색 자동 스킵] 웹검색(research/research-voice) 전에 pg_trgm으로 관련 누적
+-- 리서치 개수를 세서, 임계값 이상이면 새 웹검색을 건너뛰고 누적만 쓴다(시간·비용 절약).
+-- 기본 OFF(미설정 시 기존 동작 그대로 — 팀원 무영향). match_research_by_topic RPC에 의존.
+alter table brainstorm_runs add column if not exists auto_skip_if_accumulated boolean not null default false;
+alter table brainstorm_runs add column if not exists auto_skip_threshold int not null default 10;

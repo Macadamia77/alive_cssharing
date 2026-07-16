@@ -684,7 +684,7 @@ export async function runAgentPipeline(
   ): Promise<string> => {
     if (provider === "gemini") {
       return useSearch
-        ? callGeminiWithSearch(pc.apiKey, pc.model, system, user, disableThinking)
+        ? callGeminiWithSearch(pc.apiKey, pc.model, system, user, maxTokens, disableThinking)
         : callGemini(pc.apiKey, pc.model, system, user, maxTokens, disableThinking);
     }
     if (provider === "claude") return callClaude(pc.apiKey, pc.model, system, user, maxTokens);

@@ -10,5 +10,7 @@
   ],
   "engine": "pipeline",
   "useComposition": true,
-  "outputFormat": "text"
+  "outputFormat": "text",
+  "imageTheme": "linkedin",
+  "imageCoverThumbnail": false
 }

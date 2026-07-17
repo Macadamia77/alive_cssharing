@@ -88,9 +88,15 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
   // 서버가 실제 Chromium으로 캡처해 Storage에 올린 PNG가 있으면 그걸 그대로 쓴다
   // (html2canvas 재렌더링보다 품질이 높고 매번 다시 그릴 필요도 없음). 개수가 안 맞으면
   // (예: 오래된 결과물) 기존 html2canvas 방식으로 안전하게 폴백.
-  const hasCapturedPng = !!cardAssets && cardAssets.length === allCards.length;
-  // 네이버 블로그 카드만 진짜 벡터 SVG 원본을 갖는다(cardTemplateBuilder.ts) — 다른 채널의
-  // CardAsset은 svgUrl이 없으므로 자연히 이 버튼들이 숨겨진다.
+  // 서버가 캡처·업로드한 PNG(card_assets)가 있으면 그걸 쓴다. 예전엔 allCards(본문에서 추출한 HTML
+  // 카드) 개수와 정확히 같을 때만 썼는데, 링크드인처럼 본문이 플레인 텍스트라 HTML 카드가 없는
+  // 채널은 allCards=0이 되어 card_assets가 있어도 카드가 안 보였다 — "개수 일치" 대신 "card_assets
+  // 존재"로 판단한다(naver는 여전히 개수가 맞으므로 동작 동일).
+  const hasCapturedPng = !!cardAssets && cardAssets.length > 0;
+  // 표시할 카드 수: 서버 PNG가 있으면 그 개수, 없으면 본문 추출 HTML 카드 수(구 결과물 폴백).
+  const cardCount = hasCapturedPng ? cardAssets!.length : allCards.length;
+  // SVG 원본(Figma 편집용)이 모든 카드에 있으면 SVG 버튼 노출. 이제 링크드인 카드도
+  // cardTemplateBuilder로 만든 진짜 벡터라 svgUrl을 갖는다(uploadCards가 SVG도 업로드).
   const hasSvg = hasCapturedPng && cardAssets!.every(c => !!c.svgUrl);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(initialContent);
@@ -139,7 +145,7 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
   const isNaver = channel === "naver-blog";
   const isSocial = channel === "instagram" || channel === "facebook" || channel === "linkedin";
   const tags = splitHashtags(text).tags;
-  const showImages = (isNaver || isSocial) && allCards.length > 0;
+  const showImages = (isNaver || isSocial) && cardCount > 0;
 
   const flash = (label: string) => { setCopiedLabel(label); setTimeout(() => setCopiedLabel(null), 1800); };
 
@@ -286,7 +292,7 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
         <div className="border-t border-slate-100 bg-slate-50/60 p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-              <Images className="w-3.5 h-3.5" />이미지 카드 {allCards.length}장
+              <Images className="w-3.5 h-3.5" />이미지 카드 {cardCount}장
             </div>
             <div className="flex items-center gap-1.5">
               <button
@@ -311,7 +317,7 @@ function ChannelEditor({ resultId, channel, initialContent, allCards, cardAssets
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {allCards.map((card, i) => (
+            {Array.from({ length: cardCount }, (_, i) => allCards[i] ?? "").map((card, i) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                 <div className="h-[110px] overflow-hidden bg-white border-b border-slate-100">
                   {hasCapturedPng ? (
@@ -493,7 +499,7 @@ function ResultCard({ result, onDelete }: {
                 channel={activeChannel}
                 initialContent={channels[activeChannel]!}
                 allCards={sharedCards}
-                cardAssets={sharedCardAssets}
+                cardAssets={result.cardAssets?.[activeChannel] ?? sharedCardAssets}
                 onSaved={newContent => setChannels(prev => ({ ...prev, [activeChannel]: newContent }))}
               />
             </div>

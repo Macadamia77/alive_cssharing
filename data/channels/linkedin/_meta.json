@@ -12,5 +12,7 @@
   "useComposition": true,
   "outputFormat": "text",
   "imageTheme": "linkedin",
-  "imageCoverThumbnail": false
+  "imageCoverThumbnail": false,
+  "imageAutoGenerate": true,
+  "imageAutoCount": 2
 }

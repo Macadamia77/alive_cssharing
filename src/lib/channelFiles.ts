@@ -61,6 +61,12 @@ export interface ChannelMeta {
   /** 첫 [IMAGE:] 마커를 720×720 커버 썸네일로 만들지. 없으면 true(네이버 기존 동작). false면
    *  모든 마커를 일반 본문 카드로 취급(링크드인 — 마스코트 커버는 네이버 블로그 관습). */
   imageCoverThumbnail?: boolean;
+  /** [IMAGE:] 마커가 0개일 때, 완성된 draft에서 image-maker가 직접 카드를 생성할지. 없으면 false
+   *  (마커 없으면 건너뜀 = 네이버 기존 동작). true면 마커 부재 시 draft 전체 기반으로 카드 자동 생성
+   *  (링크드인 — writer가 마커를 안 찍거나 리뷰어가 지워도 카드가 나오게 하는 폴백). */
+  imageAutoGenerate?: boolean;
+  /** imageAutoGenerate 시 만들 카드 장수. 없으면 2. */
+  imageAutoCount?: number;
   model?: string;            // 채널 기본 provider ("claude"|"openai"|"gemini")
   modelId?: string;          // 채널 기본 모델 id
   /** 단계별 토글·오버라이드. 키 = stage id (예: { "writer": { "enabled": true } }) */

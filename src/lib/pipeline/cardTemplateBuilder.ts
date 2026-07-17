@@ -168,6 +168,17 @@ function clamp(text: string, maxChars: number): string {
   return t.length > maxChars ? `${t.slice(0, maxChars - 1)}…` : t;
 }
 
+// clamp(글자수 절단)의 대안 — 한 줄 필드에서 텍스트를 "자르지 않고" 박스 폭(maxWidthPx)에 맞게
+// 폰트 크기를 줄여 넣는다. baseSize에서 시작해 넘치면 minSize까지 0.5씩 축소(그래도 넘치면 minSize).
+// resvg는 CSS overflow가 없어 폭을 코드가 직접 맞춰야 하는데, 글자수 clamp는 한글/영문 폭 차이를
+// 무시해 멀쩡한 문구도 잘렸다(예: "💡 CSsharing Insight"→"CSsharing Ins"). 실제 픽셀 폭으로 판단한다.
+function fitSize(text: string, maxWidthPx: number, baseSize: number, minSize: number): number {
+  let size = baseSize;
+  const t = text.trim();
+  while (size > minSize && textWidth(t, size) > maxWidthPx) size -= 0.5;
+  return size;
+}
+
 interface TextOpts {
   size: number;
   weight?: number;
@@ -275,6 +286,16 @@ export type ImageReviewResult = z.infer<typeof imageReviewSchema>;
 // union은 그 밑(중첩 위치)으로 내려가 정상 동작한다. 호출부는 결과에서 `.card`만 꺼내 쓴다.
 export const cardGenerationSchema = z.object({ card: cardContentSchema });
 
+// 계획-주도(planFromDraft) 카드 생성용 — image-maker가 완성 draft를 보고 카드 수(2~6, 내용에 따라
+// 유동)와 각 카드의 focus(담을 핵심 한 문장)·layout(5종 중)을 정한다. 이 계획대로 장별로 실제 카드를
+// cardContentSchema로 생성한다. 계획 스키마는 단순(문자열+enum 배열)이라 구조화 출력이 안정적이다.
+export const cardPlanSchema = z.object({
+  cards: z.array(z.object({
+    focus: z.string(),
+    layout: z.enum(["summary", "numbered", "chat", "badges", "table"]),
+  })).min(2).max(6),
+});
+
 // ─── 콘텐츠 영역 렌더러 (5종) — 각자 자기 높이를 반환한다(코드가 결정 → 편차 문제 구조적 해소) ──
 interface Rendered { svg: string; height: number; }
 
@@ -332,7 +353,7 @@ function renderNumbered(c: Extract<CardContent, { layout: "numbered" }>, y0: num
       `<text x="0" y="${y + padTop + 32}" font-family="${FONT_FAMILY}" font-size="40" font-weight="700" ` +
       `fill="${theme.accent}" fill-opacity="0.18">${escapeXml(num)}</text>`
     );
-    parts.push(textLine(textX, y + padTop + 14, clamp(item.title, 14), { size: 14.5, weight: 700, color: theme.accent }));
+    parts.push(textLine(textX, y + padTop + 14, item.title.trim(), { size: fitSize(item.title, CONTENT_WIDTH - textX, 14.5, 11), weight: 700, color: theme.accent }));
     descLines.forEach((ln, li) => {
       parts.push(textLine(textX, y + padTop + 14 + 22 + li * 20, ln, { size: 14, color: "#414b56" }));
     });
@@ -386,17 +407,17 @@ function renderTable(c: Extract<CardContent, { layout: "table" }>, y0: number, t
   parts.push(`<line x1="${colLabelW}" y1="${y}" x2="${colLabelW}" y2="${y + rowH}" stroke="#1a3a58"/>`);
   parts.push(`<line x1="${colLabelW + colValW}" y1="${y}" x2="${colLabelW + colValW}" y2="${y + rowH}" stroke="#1a3a58"/>`);
   parts.push(textLine(12, y + 25, "구분", { size: 13, color: "#fff" }));
-  parts.push(textLine(colLabelW + colValW / 2, y + 25, clamp(c.columns[0], 10), { size: 13, color: "#fff", anchor: "middle" }));
-  parts.push(textLine(colLabelW + colValW + colValW / 2, y + 25, clamp(c.columns[1], 10), { size: 13, color: "#fff", anchor: "middle" }));
+  parts.push(textLine(colLabelW + colValW / 2, y + 25, c.columns[0].trim(), { size: fitSize(c.columns[0], colValW - 12, 13, 9), color: "#fff", anchor: "middle" }));
+  parts.push(textLine(colLabelW + colValW + colValW / 2, y + 25, c.columns[1].trim(), { size: fitSize(c.columns[1], colValW - 12, 13, 9), color: "#fff", anchor: "middle" }));
   y += rowH;
 
   for (const row of c.rows) {
     parts.push(`<rect x="0" y="${y}" width="${CONTENT_WIDTH}" height="${rowH}" fill="none" stroke="#e0e0e0"/>`);
     parts.push(`<line x1="${colLabelW}" y1="${y}" x2="${colLabelW}" y2="${y + rowH}" stroke="#e0e0e0"/>`);
     parts.push(`<line x1="${colLabelW + colValW}" y1="${y}" x2="${colLabelW + colValW}" y2="${y + rowH}" stroke="#e0e0e0"/>`);
-    parts.push(textLine(12, y + 25, clamp(row.label, 14), { size: 13, color: theme.ink }));
-    parts.push(textLine(colLabelW + colValW / 2, y + 25, clamp(row.values[0], 10), { size: 13, color: "#888", anchor: "middle" }));
-    parts.push(textLine(colLabelW + colValW + colValW / 2, y + 25, clamp(row.values[1], 10), { size: 13, weight: 700, color: theme.accent, anchor: "middle" }));
+    parts.push(textLine(12, y + 25, row.label.trim(), { size: fitSize(row.label, colLabelW - 20, 13, 9), color: theme.ink }));
+    parts.push(textLine(colLabelW + colValW / 2, y + 25, row.values[0].trim(), { size: fitSize(row.values[0], colValW - 12, 13, 9), color: "#888", anchor: "middle" }));
+    parts.push(textLine(colLabelW + colValW + colValW / 2, y + 25, row.values[1].trim(), { size: fitSize(row.values[1], colValW - 12, 13, 9), weight: 700, color: theme.accent, anchor: "middle" }));
     y += rowH;
   }
   return { svg: parts.join(""), height: y - y0 };
@@ -419,20 +440,20 @@ export function buildCardSvg(content: CardContent, theme: CardTheme = NAVER_THEM
   let y = PAD_TOP;
   const parts: string[] = [];
 
-  // 상단 컨텍스트 바
+  // 상단 컨텍스트 바 — 자르지 않고 폭에 맞게 폰트 축소
   parts.push(`<rect x="0" y="${y}" width="3" height="13" fill="${theme.accent}"/>`);
-  parts.push(textLine(12, y + 11, clamp(content.contextLabel, 20), { size: 12, color: theme.labelGray, letterSpacing: 0.4 }));
+  parts.push(textLine(12, y + 11, content.contextLabel.trim(), { size: fitSize(content.contextLabel, CONTENT_WIDTH - 16, 12, 9), color: theme.labelGray, letterSpacing: 0.4 }));
   y += 13 + 24;
 
-  // 메인 헤드라인 2행
-  parts.push(textLine(0, y + 23, clamp(content.headline[0], 16), { size: 29, weight: 700, color: theme.ink }));
+  // 메인 헤드라인 2행 — 글자수로 자르지 않고 폭(712px)에 맞게 폰트 축소(잘림 방지)
+  parts.push(textLine(0, y + 23, content.headline[0].trim(), { size: fitSize(content.headline[0], CONTENT_WIDTH, 29, 17), weight: 700, color: theme.ink }));
   y += 29 * 1.32;
-  parts.push(textLine(0, y + 23, clamp(content.headline[1], 16), { size: 29, weight: 700, color: theme.accent }));
+  parts.push(textLine(0, y + 23, content.headline[1].trim(), { size: fitSize(content.headline[1], CONTENT_WIDTH, 29, 17), weight: 700, color: theme.accent }));
   y += 29 * 1.32 + 10;
 
-  // 보조 설명(선택)
+  // 보조 설명(선택) — 폭에 맞게 축소
   if (content.subtext) {
-    parts.push(textLine(0, y + 15, clamp(content.subtext, 50), { size: 14.5, color: theme.subtextGray }));
+    parts.push(textLine(0, y + 15, content.subtext.trim(), { size: fitSize(content.subtext, CONTENT_WIDTH, 14.5, 11), color: theme.subtextGray }));
     y += 14.5 * 1.6 + 34;
   } else {
     y += 10;
@@ -457,8 +478,8 @@ export function buildCardSvg(content: CardContent, theme: CardTheme = NAVER_THEM
   const ctaY = y + 30;
   const ctaH = 17 * 2 + 15 * 1.5 * 2; // padding 위아래(17*2) + 2줄(각 15px*1.5줄간격)
   parts.push(`<rect x="0" y="${ctaY}" width="${CONTENT_WIDTH}" height="${ctaH}" rx="11" fill="url(#ctaGrad)"/>`);
-  parts.push(textLine(CONTENT_WIDTH / 2, ctaY + ctaH / 2 - 6, clamp(content.cta[0], 26), { size: 15, weight: 600, color: "#fff", anchor: "middle" }));
-  parts.push(textLine(CONTENT_WIDTH / 2, ctaY + ctaH / 2 + 16, clamp(content.cta[1], 26), { size: 15, weight: 700, color: "#fff", anchor: "middle" }));
+  parts.push(textLine(CONTENT_WIDTH / 2, ctaY + ctaH / 2 - 6, content.cta[0].trim(), { size: fitSize(content.cta[0], CONTENT_WIDTH - 48, 15, 11), weight: 600, color: "#fff", anchor: "middle" }));
+  parts.push(textLine(CONTENT_WIDTH / 2, ctaY + ctaH / 2 + 16, content.cta[1].trim(), { size: fitSize(content.cta[1], CONTENT_WIDTH - 48, 15, 11), weight: 700, color: "#fff", anchor: "middle" }));
   y = ctaY + ctaH;
 
   // 워터마크
@@ -512,10 +533,12 @@ export function buildCardSvg(content: CardContent, theme: CardTheme = NAVER_THEM
 // ─── 안전망: JSON 파싱 실패 등으로 카드를 못 만들 때 쓰는 최소 대체 카드 ──
 // 파이프라인 전체를 죽이는 대신, 헤드라인만 담은 단순 요약 카드로 대체한다.
 export function buildFallbackCardSvg(headline: string, theme: CardTheme = NAVER_THEME): string {
+  // headline은 이제 buildCardSvg에서 글자수로 안 자르고 폭에 맞게 폰트를 줄인다(fitSize) — 예전
+  // slice(0,16)이 "💡 CSsharing Insight"를 "CSsharing Ins"로 잘라 폴백 카드가 특히 흉했던 문제 해소.
   return buildCardSvg({
     layout: "summary",
     contextLabel: "CS쉐어링",
-    headline: [headline.slice(0, 16), ""],
+    headline: [headline, ""],
     subtext: null,
     cta: ["자세히 알아보기", "CS쉐어링과 상담하기"],
     body: headline,

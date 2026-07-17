@@ -19,7 +19,7 @@ import { getRecentFeedback, getRecentExamples, getRecentBadExamples, getRecentRe
 import { assembleNaverBlogHtml } from "../htmlAssembler";
 import { spliceImageCardsFromArray } from "./imageCards";
 import { extractDraftTitle, extractThumbnailSubtitle } from "./thumbnailBuilder";
-import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema, imageReviewSchema, THEMES } from "./cardTemplateBuilder";
+import { buildCardSvg, buildFallbackCardSvg, buildThumbnailSvg, cardGenerationSchema, cardPlanSchema, imageReviewSchema, THEMES } from "./cardTemplateBuilder";
 import type { CardAsset } from "./cardStorage";
 // 페르소나·가이드 로딩/코드펜스 제거는 promptAssembly로 추출(M0 리팩터, 동작 무변화).
 import { stripCodeFence, loadPersona, loadAllGuides, selectGuides, guidesText } from "./promptAssembly";
@@ -692,6 +692,13 @@ export async function runPipeline(
       // 데이터만 추가). 둘 다 없으면 네이버 기존 동작(naver 테마 + 커버 썸네일) → 팀원 무영향.
       const cardTheme = THEMES[meta.imageTheme ?? "naver"] ?? THEMES.naver;
       const useCoverThumbnail = meta.imageCoverThumbnail ?? true;
+      // writer(특히 flash)가 영어 [IMAGE:] 지시를 무시하고 한글 [이미지 N:]로 쓰는 경우가 잦다 —
+      // 그러면 아래 영어 정규식이 0개로 세어 카드가 안 나온다. composition 채널(링크드인)에서만
+      // 한글 마커를 영어로 정규화해 감지·스플라이스가 그대로 잡게 한다(전각 콜론·번호·앞뒤 공백 허용).
+      // 공유 정규식 자체는 안 건드려 naver 등 비-composition 채널의 "[이미지 N]" 캡션 오인식을 막는다.
+      if (meta.useComposition) {
+        draft = draft.replace(/\[\s*이미지\s*\d*\s*[:：]\s*([^\]]+)\]/g, "[IMAGE: $1]");
+      }
       const allImageMarkers = [...draft.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
       // naver-blog(html) 최종 조립은 <!-- PUBLISH:START/END --> 블록 안쪽만 채택하고 나머지는
       // 버린다(assembleNaverBlogHtml). 마커를 draft 전체에서 세면 PUBLISH 블록 밖(NOTES 등)에
@@ -702,7 +709,12 @@ export async function runPipeline(
         ? allImageMarkers.filter(m =>
             m.index! >= publishBlock.index! && m.index! < publishBlock.index! + publishBlock[0].length)
         : allImageMarkers;
-      if (imageMarkers.length === 0) {
+      // imageAutoGenerate 채널(링크드인)은 마커에 의존하지 않고 항상 "계획-주도"로 간다 — image-maker가
+      // 완성 draft를 보고 카드 수(2~6, 내용 따라 유동)와 각 focus·layout을 스스로 정한다. writer가 마커를
+      // 몇 개 찍든(0개든) 무관해 flash의 마커 변덕에 안 휘둘린다. 그 외 채널(naver)은 기존 마커-주도이고
+      // 마커가 0개면 스킵.
+      const draftDriven = !!meta.imageAutoGenerate || imageMarkers.length === 0;
+      if (draftDriven && !(meta.imageAutoGenerate ?? false)) {
         console.log(`[engine] ${channel} · ${stage.id}: [IMAGE:...] 마커 없음 → 건너뜀`);
         continue;
       }
@@ -740,7 +752,7 @@ export async function runPipeline(
       // 재생성할 때 이 프롬프트를 그대로(피드백만 덧붙여) 재사용한다.
       let bodyResults: { svg: string; user: string; fallbackText: string }[] = [];
 
-      if (bodyMarkerCount > 0) {
+      if (!draftDriven && bodyMarkerCount > 0) {
         // 카드 1개당 호출 1개로 병렬 실행 — 카드별로 나누면 그 카드 슬롯만 buildFallbackCardSvg로
         // 채워 개수가 항상 마커 수와 일치하고, 응답도 병렬이라 더 빠르다.
         const CARD_CONCURRENCY = 3;
@@ -791,6 +803,52 @@ export async function runPipeline(
         });
       }
 
+      if (draftDriven) {
+        // ── 계획-주도 ──
+        // 1) 계획 호출: image-maker가 완성 draft를 보고 카드 수(2~6, 내용·분량 따라 유동)와 각 카드의
+        //    focus·layout을 스스로 정한다(단순 스키마라 구조화 출력이 안정적).
+        // 2) 장별 생성: 계획의 각 focus를 cardContentSchema로 실제 카드화(병렬).
+        // 마커는 카드 위치용이 아니므로 본문에서 제거 — 깨끗한 텍스트 + 카드는 다운로드 자산으로만.
+        draft = draft
+          .replace(/\[\s*이미지\s*\d*\s*[:：]\s*[^\]]+\]\n?/g, "")
+          .replace(/\[IMAGE:\s*[^\]]+\]\n?/g, "");
+        const planUser =
+          `[주제]\n${topic}\n\n[전체 글]\n${draft}\n\n` +
+          `이 글을 링크드인 카드뉴스로 만든다. 글의 내용과 분량에 맞게 적절한 카드 수(2~6장)를 스스로 정하고, ` +
+          `각 카드의 focus(담을 핵심 한 문장)와 어울리는 layout(summary/numbered/chat/badges/table)을 정해라. ` +
+          `주요 블록(문제·원인·해법·비교·요약 등)을 서로 겹치지 않게 커버해라.`;
+        let plan: { focus: string; layout: string }[] = [];
+        try {
+          const { cards } = await callProviderForObject(sp, sk, sm, system, planUser, Math.min(maxTok, 2000), cardPlanSchema);
+          plan = cards;
+        } catch (e) {
+          console.warn(`[engine] ${channel} · ${stage.id} 카드 계획 실패 — 기본 구성으로: ${e instanceof Error ? e.message : e}`);
+        }
+        if (plan.length === 0) {
+          plan = [
+            { focus: "이 글이 지적하는 핵심 문제·원인", layout: "numbered" },
+            { focus: "그에 대한 해법·접근 방식", layout: "numbered" },
+          ];
+        }
+        bodyResults = await mapWithConcurrency(plan.map((_, i) => i), 3, async (i) => {
+          const p = plan[i];
+          const user =
+            `[주제]\n${topic}\n\n[전체 글]\n${draft}\n\n` +
+            `이 글로 만드는 카드뉴스 ${plan.length}장 중 ${i + 1}번째 카드다. 이 카드의 focus: "${p.focus}". ` +
+            `가능하면 "${p.layout}" 레이아웃으로. 다른 카드와 내용이 겹치지 않게 이 focus만 담아라.\n` +
+            `레이아웃 타입 선택과 필드별 글자수는 함께 제공되는 이미지 가이드를 그대로 따라라.`;
+          const fallbackText = p.focus || extractDraftTitle(draft) || topic;
+          await new Promise<void>((r) => setTimeout(r, (i % 3) * 250));
+          try {
+            const { card } = await callProviderForObject(sp, sk, sm, system, user, Math.min(maxTok, 4000), cardGenerationSchema);
+            return { svg: buildCardSvg(card, cardTheme), user, fallbackText };
+          } catch (e) {
+            console.warn(`[engine] ${channel} · ${stage.id} 카드 ${i + 1} 생성 실패 — 대체 카드: ${e instanceof Error ? e.message : e}`);
+            return { svg: buildFallbackCardSvg(fallbackText, cardTheme), user, fallbackText };
+          }
+        });
+      }
+
       const finalSvgs = thumbnailSvg
         ? [thumbnailSvg, ...bodyResults.map(r => r.svg)]
         : bodyResults.map(r => r.svg);
@@ -799,7 +857,12 @@ export async function runPipeline(
       // 부분 문자열에만 적용하고 나머지는 그대로 붙인다.
       let draftAfterSplice: string;
       let finalCards: string[];
-      if (publishBlock) {
+      if (draftDriven) {
+        // 마커가 없으니 본문 스플라이스 없음 — 카드는 그대로 캡처해 다운로드 자산(card_assets)으로만
+        // 내보낸다(본문은 그대로, 인라인 삽입 안 함).
+        draftAfterSplice = draft;
+        finalCards = finalSvgs;
+      } else if (publishBlock) {
         const splicedPub = spliceImageCardsFromArray(publishBlock[0], finalSvgs);
         draftAfterSplice =
           draft.slice(0, publishBlock.index!) + splicedPub.draft +
@@ -811,7 +874,7 @@ export async function runPipeline(
         finalCards = spliced.cards;
       }
       draft = draftAfterSplice;
-      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}/${imageMarkers.length}개 생성`);
+      console.log(`[engine] ${channel} · ${stage.id} 완료 — 카드 ${finalCards.length}${draftDriven ? "장(draft 자동)" : `/${imageMarkers.length}개`} 생성`);
 
       // SVG → PNG 래스터화. 결정적으로 조립한 SVG(임의 LLM CSS 없음)라 실패 가능성이 낮다 —
       // 실패하면 폴백으로 감추지 않고 그대로 전파해 배포 문제를 바로 드러낸다.

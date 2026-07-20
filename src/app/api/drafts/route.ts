@@ -6,6 +6,7 @@ import { callClaude, callOpenAI, callGemini } from "@/lib/apiClients";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { dataRoot } from "@/lib/dataRoot";
+import { guard } from "@/lib/authGate";
 
 const DRAFTS_SYSTEM = readFileSync(join(dataRoot(), "data/prompts/drafts.md"), "utf-8");
 
@@ -83,6 +84,8 @@ function parseDrafts(raw: string, topic: string): DraftItem[] {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const { topic, provider: providerOverride } = await req.json() as { topic: string; provider?: string };
     if (!topic?.trim()) return NextResponse.json({ error: "주제를 입력해주세요." }, { status: 400 });

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSharedAgentFile, writeSharedAgentFile, isTextFile } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { guard } from "@/lib/authGate";
 
 type RouteContext = { params: Promise<{ filepath: string[] }> };
 
 /** GET — 공용 에이전트 텍스트 읽기 (Supabase _shared → GitHub → 로컬) */
 export async function GET(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { filepath } = await params;
   const filePath = filepath.join("/");
   const fileName = filePath.split("/").pop() ?? "";
@@ -23,6 +26,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
 /** PUT — 공용 에이전트 저장 (Supabase _shared, 미설정 시 로컬) */
 export async function PUT(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { filepath } = await params;
   const filePath = filepath.join("/");
   const fileName = filePath.split("/").pop() ?? "";

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { guard } from "@/lib/authGate";
 
 /**
  * GET /api/generate/trace — 파이프라인 트레이스 조회(관측).
@@ -22,6 +23,8 @@ function summarize(row: { id: string; seq: number; stage: string; kind: string |
 }
 
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const sp = req.nextUrl.searchParams;
   const eventId = sp.get("eventId");
   const taskId = sp.get("taskId");

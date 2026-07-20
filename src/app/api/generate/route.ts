@@ -12,6 +12,7 @@ import {
 } from "@/lib/agentRunner";
 import { hasAgentPipeline, buildSystemPrompt } from "@/lib/channelFiles";
 import { buildGenerateTaskRow } from "@/lib/pipeline/generateTasks";
+import { guard } from "@/lib/authGate";
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -54,6 +55,8 @@ export const maxDuration = 300;
 
 // ─── POST /api/generate ───────────────────────────────────────
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const {
       topic = "",
@@ -357,6 +360,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const { searchParams } = new URL(req.url);
 

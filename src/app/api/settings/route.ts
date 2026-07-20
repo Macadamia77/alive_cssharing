@@ -3,6 +3,7 @@ import { resolveGithubToken } from "@/lib/resolveToken";
 import { loadAIConfig, saveAIConfig, type AIConfig, type ProviderKey } from "@/lib/aiConfig";
 import { resolveProvider, resolveActiveProvider, resolveResearchProvider, DEFAULT_MODELS, COOKIE_OPTS } from "@/lib/resolveProvider";
 import { supabase } from "@/lib/supabaseClient";
+import { guard } from "@/lib/authGate";
 
 export type { AIConfig };
 
@@ -15,6 +16,8 @@ function maskKey(key: string): string {
 
 /** GET — 현재 설정 반환 (쿠키/환경변수 우선, GitHub 폴백) */
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   // GH 토큰을 사용해 프라이빗 레포에서도 설정 읽기
   const ghToken = resolveGithubToken(req);
   const ghConfig = await loadAIConfig(ghToken).catch(() => null);
@@ -66,6 +69,8 @@ export async function GET(req: NextRequest) {
 
 /** PUT — 설정 저장 (쿠키에 직접 저장, GitHub는 선택적 백업) */
 export async function PUT(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const body = await req.json() as {
       provider?: string;
@@ -134,6 +139,8 @@ export async function PUT(req: NextRequest) {
 
 /** DELETE — API 키 삭제 */
 export async function DELETE(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const body = await req.json() as { provider?: string };
     const p = body.provider as ProviderKey | undefined;
@@ -181,6 +188,8 @@ export async function DELETE(req: NextRequest) {
 
 /** POST — API 연결 테스트 */
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const body = await req.json().catch(() => ({})) as { provider?: string; apiKey?: string };
   const provider = (body.provider ?? "mock") as string;
 

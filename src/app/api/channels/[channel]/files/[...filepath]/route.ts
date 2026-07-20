@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { type ChannelKey } from "@/lib/channels";
 import { readChannelFile, readChannelFileBase64, writeChannelFile, deleteChannelFile, deleteChannelFolder, moveChannelFile, isTextFile } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { guard } from "@/lib/authGate";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "linkedin", "magazine"];
 
@@ -13,6 +14,8 @@ type RouteContext = { params: Promise<{ channel: string; filepath: string[] }> }
 
 /** GET — 파일 내용 읽기 (텍스트는 그대로, 바이너리는 base64+mimeType 반환) */
 export async function GET(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel, filepath } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -48,6 +51,8 @@ function getMimeType(fileName: string): string {
 
 /** PUT — 파일 내용 저장 */
 export async function PUT(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel, filepath } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -64,6 +69,8 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
 
 /** POST — 새 파일 생성 (encoding: "base64" 이면 바이너리로 저장) */
 export async function POST(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel, filepath } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -80,6 +87,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
 /** PATCH — 파일 이동 (드래그 앤 드롭) */
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel, filepath } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -96,6 +105,8 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 
 /** DELETE — 파일 또는 폴더 삭제 */
 export async function DELETE(req: NextRequest, { params }: RouteContext) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel, filepath } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

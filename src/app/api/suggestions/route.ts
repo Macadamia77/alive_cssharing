@@ -6,6 +6,7 @@ import { callClaude, callOpenAI, callGemini } from "@/lib/apiClients";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { dataRoot } from "@/lib/dataRoot";
+import { guard } from "@/lib/authGate";
 
 const MOCK_SUGGESTIONS = [
   "비용 절감 효과 비교",
@@ -46,6 +47,8 @@ function parseJsonArray(raw: string): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const { topic, provider: providerOverride } = (await req.json()) as {
       topic: string;

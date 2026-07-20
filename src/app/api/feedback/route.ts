@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { type ChannelKey } from "@/lib/channels";
 import { listFeedback, addFeedback, deleteFeedback } from "@/lib/pipelineMemory";
+import { guard } from "@/lib/authGate";
 
 const VALID: ChannelKey[] = ["naver-blog", "instagram", "linkedin", "magazine"];
 const isValid = (c: string): c is ChannelKey => VALID.includes(c as ChannelKey);
 
 /** GET /api/feedback?channel=linkedin — 채널 피드백 목록 */
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const channel = req.nextUrl.searchParams.get("channel") ?? "";
   if (!isValid(channel)) return NextResponse.json({ error: "invalid channel" }, { status: 400 });
   try {
@@ -18,6 +21,8 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/feedback { channel, text } — 피드백 추가 */
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const { channel, text } = await req.json();
     if (!isValid(channel)) return NextResponse.json({ error: "invalid channel" }, { status: 400 });
@@ -31,6 +36,8 @@ export async function POST(req: NextRequest) {
 
 /** DELETE /api/feedback?id=... — 피드백 삭제 */
 export async function DELETE(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const id = req.nextUrl.searchParams.get("id") ?? "";
   if (!id) return NextResponse.json({ error: "no id" }, { status: 400 });
   try {

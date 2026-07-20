@@ -11,6 +11,7 @@ import {
 import { loadPipelineConfig } from "@/lib/pipeline/loadConfig";
 import { parseFrontmatter } from "@/lib/pipeline/frontmatter";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { guard } from "@/lib/authGate";
 
 /** 채널 조각(가이드) 파일 목록 + frontmatter stages 태그 (조각 할당 UI용) */
 async function listChannelGuides(channel: ChannelKey, token?: string) {
@@ -40,6 +41,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ channel: string }> }
 ) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -63,6 +66,8 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ channel: string }> }
 ) {
+  const denied = await guard();
+  if (denied) return denied;
   const { channel } = await params;
   if (!isValid(channel)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

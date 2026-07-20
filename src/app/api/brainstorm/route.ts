@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { resolveProvider, resolveActiveProvider, resolveResearchProvider } from "@/lib/resolveProvider";
 import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { guard } from "@/lib/authGate";
 
 /**
  * POST /api/brainstorm { topic } — 리서치 기반 브레인스토밍 작업 등록(워커 비동기).
@@ -12,6 +13,8 @@ import { resolveGithubToken } from "@/lib/resolveToken";
  * Vercel 서버리스에서 동기로 붙들면 타임아웃 위험 — 기존 /api/generate 큐 패턴 재사용).
  */
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const { topic, provider: providerOverride, skipResearch, skipResearchVoice, skipResearchDeep, skipSkeleton, topicFilterAccumulated, autoSkipIfAccumulated, autoSkipThreshold, contextBudget } = (await req.json()) as {
       topic?: string; provider?: string;
@@ -85,6 +88,8 @@ export async function POST(req: NextRequest) {
  * finalize 완료 후 results 화면에서 "근거 보기"가 이 값을 lazy 1회 조회한다(폴링 아님).
  */
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const runId = req.nextUrl.searchParams.get("runId") ?? "";
   if (!runId) return NextResponse.json({ error: "runId가 필요합니다." }, { status: 400 });
   try {

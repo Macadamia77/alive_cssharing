@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSharedDataFile, writeSharedDataFile } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { guard } from "@/lib/authGate";
 
 const FALLBACK: Record<string, string[]> = {
   claude: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
@@ -21,6 +22,8 @@ function parseModels(raw: string): Record<string, string[]> {
 
 /** GET /api/models — provider별 모델 ID 목록. Supabase(_shared) → 로컬 → 폴백. */
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const token = resolveGithubToken(req);
     const raw = await readSharedDataFile("models.json", token);
@@ -33,6 +36,8 @@ export async function GET(req: NextRequest) {
 
 /** PUT /api/models — 모델 목록 저장(구조화 검증 후 라이브 반영). */
 export async function PUT(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   try {
     const body = await req.json();
     const input = (body?.models ?? body) as unknown;

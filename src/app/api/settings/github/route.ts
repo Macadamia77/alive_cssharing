@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAIConfig, saveAIConfig } from "@/lib/aiConfig";
+import { guard } from "@/lib/authGate";
 
 /** GET — 토큰 설정 여부 확인 */
 export async function GET(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const cookieToken = req.cookies.get("gh_token")?.value;
   const envToken = process.env.GITHUB_TOKEN;
   const hasToken = !!(cookieToken || envToken);
@@ -12,6 +15,8 @@ export async function GET(req: NextRequest) {
 
 /** POST — GitHub 토큰 쿠키에 저장 */
 export async function POST(req: NextRequest) {
+  const denied = await guard();
+  if (denied) return denied;
   const { token } = await req.json();
   if (!token?.trim()) {
     return NextResponse.json({ error: "토큰을 입력해주세요." }, { status: 400 });
@@ -72,6 +77,8 @@ export async function POST(req: NextRequest) {
 
 /** DELETE — 저장된 토큰 삭제 */
 export async function DELETE() {
+  const denied = await guard();
+  if (denied) return denied;
   const response = NextResponse.json({ ok: true });
   response.cookies.delete("gh_token");
   return response;

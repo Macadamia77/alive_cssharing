@@ -16,6 +16,7 @@
     "@ai-sdk/google": "^4.0.8",
     "@ai-sdk/openai": "^4.0.7",
     "@resvg/resvg-js": "^2.6.2",
+    "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.108.2",
     "@types/file-saver": "^2.0.7",
     "ai": "^7.0.15",

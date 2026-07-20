@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getResult, updateResult, deleteResult, resolveToken } from "@/lib/resultStorage";
+import { guard } from "@/lib/authGate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, { params }: Ctx) {
+  const denied = await guard();
+  if (denied) return denied;
   const { id } = await params;
   try {
     const token = resolveToken(req);
@@ -16,6 +19,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
 }
 
 export async function PUT(req: NextRequest, { params }: Ctx) {
+  const denied = await guard();
+  if (denied) return denied;
   const { id } = await params;
   try {
     const patch = await req.json();
@@ -28,6 +33,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(req: NextRequest, { params }: Ctx) {
+  const denied = await guard();
+  if (denied) return denied;
   const { id } = await params;
   try {
     const token = resolveToken(req);

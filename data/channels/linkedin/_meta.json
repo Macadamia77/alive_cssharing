@@ -9,10 +9,8 @@
     "guide/03-content-rules.md"
   ],
   "engine": "pipeline",
-  "useComposition": true,
   "outputFormat": "text",
+  "useComposition": true,
   "imageTheme": "linkedin",
-  "imageCoverThumbnail": false,
-  "imageAutoGenerate": true,
-  "imageAutoCount": 2
+  "imageCoverThumbnail": true
 }

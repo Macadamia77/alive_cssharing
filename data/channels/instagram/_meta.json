@@ -16,5 +16,6 @@
   ],
   "maxTokens": 16000,
   "disableThinking": true,
-  "imageCards": false
+  "imageCards": false,
+  "engine": "pipeline"
 }

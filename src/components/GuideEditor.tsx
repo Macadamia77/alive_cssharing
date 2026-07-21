@@ -378,7 +378,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const [showAdd, setShowAdd] = useState(false); const [showFolder, setShowFolder] = useState(false);
   const [folderName, setFolderName] = useState(""); const [folderErr, setFolderErr] = useState("");
   const [globalErr, setGlobalErr] = useState<string | null>(null);
-  const [ghOk, setGhOk] = useState<boolean | null>(null);
 
   // 드래그 시각 상태
   const [dragging, setDragging] = useState<string | null>(null);
@@ -419,9 +418,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => { if (selected) void loadFile(selected); }, [selected, loadFile]);
-  useEffect(() => {
-    fetch("/api/health").then(r => r.json()).then(d => setGhOk(!!d.ok)).catch(() => setGhOk(true));
-  }, []);
 
   // ─── 저장 ────────────────────────────────────────────────
   const handleSave = async () => {
@@ -615,16 +611,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         </div>
       </div>
 
-      {/* 배너 */}
-      {ghOk === false && (
-        <div className="mb-4 flex items-start justify-between gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3">
-          <div className="flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div><p className="font-semibold">GitHub 연동 미설정 — 파일 저장/이동/삭제 불가</p>
-              <p className="text-xs mt-1">API 설정 → GitHub 연동에서 토큰을 입력하세요.</p></div>
-          </div>
-          <Link href="/settings" className="text-xs font-semibold underline whitespace-nowrap cursor-pointer">설정 →</Link>
-        </div>
-      )}
       {globalErr && (
         <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
           <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{globalErr}</span>

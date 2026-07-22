@@ -57,6 +57,8 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null); // 조각 패널 펼친 단계
+  // 단계 목록 접기. null=미설정(=composition 켜지면 자동 접힘, 꺼지면 펼침). 사용자가 토글하면 그 값 고정.
+  const [stagesOpen, setStagesOpen] = useState<boolean | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "ok" | "err">("idle");
   // 학습 데이터(피드백·우수작) 관리
@@ -204,6 +206,8 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
   }
 
   const activeCount = stages.filter(s => effectiveEnabled(s)).length;
+  // 단계 목록 표시 여부: 사용자가 토글했으면 그 값, 아니면 composition on이면 접힘(무시되는 목록이라)/off면 펼침.
+  const stagesVisible = stagesOpen ?? !compositionOn;
 
   return (
     <div className="max-w-7xl mx-auto glass-card rounded-2xl mb-4 overflow-hidden">
@@ -285,6 +289,16 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                 <span className="text-[10px] text-slate-400 w-full">이 채널 전 단계의 기본 모델. 단계별 "조각 N"의 모델이 있으면 그게 우선합니다.</span>
               </div>
 
+              {/* 단계 목록 — 접기 토글. composition 사용 시 이 목록은 무시되므로 기본 접힘. */}
+              <button onClick={() => setStagesOpen(!stagesVisible)}
+                className="w-full flex items-center gap-2 mb-1.5 px-1 py-2 text-sm text-slate-600 hover:text-blue-600 cursor-pointer">
+                {stagesVisible ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+                <span className="font-semibold">단계 목록</span>
+                <span className="text-xs text-slate-400 font-normal">
+                  · 활성 {activeCount}개{compositionOn ? " · composition 사용 중이라 무시됨" : ""}
+                </span>
+              </button>
+              {stagesVisible && (
               <div className="space-y-1.5">
                 {stages.map(s => {
                   const on = effectiveEnabled(s);
@@ -391,6 +405,7 @@ export default function PipelineToggles({ channel }: { channel: ChannelKey }) {
                   );
                 })}
               </div>
+              )}
               {/* 학습 데이터 (누적 피드백 · 우수작) */}
               <div className="mt-3 rounded-xl border border-slate-100 overflow-hidden">
                 <button onClick={() => setMemOpen(v => !v)}

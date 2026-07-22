@@ -129,29 +129,29 @@ export default function CompositionBuilder({ channel }: { channel: ChannelKey })
   }
 
   return (
-    <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50/20 p-3">
+    <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50/20 p-4">
       {/* 헤더: 제목 + 저장 */}
       <div className="flex items-center gap-2 mb-2">
-        <p className="text-xs font-semibold text-slate-700 flex-1">조립표 편집 (composition.json)</p>
+        <p className="text-sm font-semibold text-slate-700 flex-1">조립표 편집 (composition.json)</p>
         {status === "ok" && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
         {status === "err" && <AlertCircle className="w-3.5 h-3.5 text-red-500" />}
         <button onClick={() => void save()} disabled={saving || errors.length > 0}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-semibold disabled:opacity-40 cursor-pointer hover:bg-blue-700">
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-40 cursor-pointer hover:bg-blue-700">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}저장
         </button>
       </div>
 
       {/* 컴파일 미리보기 */}
-      <div className="mb-2 rounded-lg bg-white/70 border border-slate-100 px-2.5 py-1.5">
-        <span className="text-[10px] text-slate-400">실행 순서 미리보기: </span>
-        <span className="text-[11px] text-slate-600">{preview || "(블록 없음)"}</span>
+      <div className="mb-2 rounded-lg bg-white/70 border border-slate-100 px-3 py-2.5">
+        <span className="text-xs text-slate-400">실행 순서 미리보기: </span>
+        <span className="text-sm text-slate-600">{preview || "(블록 없음)"}</span>
       </div>
 
       {/* 검증 경고 */}
       {errors.length > 0 && (
-        <div className="mb-2 rounded-lg bg-red-50 border border-red-100 px-2.5 py-1.5">
-          <p className="text-[10px] font-semibold text-red-600 mb-0.5">저장 전 해결 필요:</p>
-          <ul className="text-[10px] text-red-500 list-disc pl-4 space-y-0.5">
+        <div className="mb-2 rounded-lg bg-red-50 border border-red-100 px-3 py-2.5">
+          <p className="text-xs font-semibold text-red-600 mb-0.5">저장 전 해결 필요:</p>
+          <ul className="text-xs text-red-500 list-disc pl-4 space-y-0.5">
             {errors.map((e, i) => <li key={i}>{e}</li>)}
           </ul>
         </div>
@@ -168,20 +168,20 @@ export default function CompositionBuilder({ channel }: { channel: ChannelKey })
             <div draggable
               onDragStart={() => setDragIdx(i)}
               onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-100 cursor-grab active:cursor-grabbing">
+              className="flex items-center gap-1.5 px-3 py-2.5 border-b border-slate-100 cursor-grab active:cursor-grabbing">
               <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-              <span className="text-[11px] font-semibold text-blue-700 flex-1">{i + 1}. {TYPE_LABEL[block.type]}</span>
+              <span className="text-sm font-semibold text-blue-700 flex-1">{i + 1}. {TYPE_LABEL[block.type]}</span>
               <button onClick={() => moveBlock(i, -1)} disabled={i === 0} className="p-0.5 disabled:opacity-30 cursor-pointer" title="위로"><ArrowUp className="w-3 h-3 text-slate-400" /></button>
               <button onClick={() => moveBlock(i, 1)} disabled={i === comp.blocks.length - 1} className="p-0.5 disabled:opacity-30 cursor-pointer" title="아래로"><ArrowDown className="w-3 h-3 text-slate-400" /></button>
               <button onClick={() => removeBlock(i)} className="p-0.5 cursor-pointer" title="블록 삭제"><Trash2 className="w-3 h-3 text-red-400" /></button>
             </div>
             {/* 블록 본문 */}
-            <div className="px-2.5 py-2">
+            <div className="px-3 py-3">
               <BlockBody block={block} agents={agents} guides={guides} onChange={next => setBlock(i, next)} />
             </div>
           </div>
         ))}
-        {comp.blocks.length === 0 && <p className="text-[11px] text-slate-400 px-1 py-2">블록이 없습니다. 아래에서 추가하세요.</p>}
+        {comp.blocks.length === 0 && <p className="text-sm text-slate-400 px-1 py-2">블록이 없습니다. 아래에서 추가하세요.</p>}
       </div>
 
       {/* 블록 추가 — 원자 단위로 쌓는다. "텍스트 루프"는 생성자(draft)+검수자를 한 번에 넣는 프리셋. */}
@@ -193,8 +193,8 @@ export default function CompositionBuilder({ channel }: { channel: ChannelKey })
           { label: "이미지 루프", onClick: () => addBlock("image-loop") },
         ]).map(({ label, onClick }) => (
           <button key={label} onClick={onClick}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white text-[10px] text-slate-500 hover:border-blue-300 hover:text-blue-600 cursor-pointer">
-            <Plus className="w-2.5 h-2.5" />{label}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600 cursor-pointer">
+            <Plus className="w-3 h-3" />{label}
           </button>
         ))}
       </div>
@@ -216,7 +216,7 @@ function BlockBody({ block, agents, guides, onChange }: {
             <option value="draft">draft (검수받을 본문)</option>
           </select>
         </Row>
-        <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer">
+        <label className="flex items-center gap-1.5 text-sm text-slate-500 cursor-pointer">
           <input type="checkbox" checked={!!block.useSearch} onChange={e => onChange({ ...block, useSearch: e.target.checked })} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />웹서치 사용
         </label>
         <GuideSlot label="가이드" selected={block.guides ?? []} available={guides} onChange={g => onChange({ ...block, guides: g })} />
@@ -230,7 +230,7 @@ function BlockBody({ block, agents, guides, onChange }: {
         <Row label="검수 에이전트"><AgentSelect value={block.agent} agents={agents} onChange={v => onChange({ ...block, agent: v })} /></Row>
         <GuideSlot label="가이드" selected={block.guides ?? []} available={guides} onChange={g => onChange({ ...block, guides: g })} />
         <div className="flex items-center gap-3 flex-wrap">
-          <Row label="최대 재작성"><input type="number" min={1} value={block.maxRetries ?? 1} onChange={e => onChange({ ...block, maxRetries: Math.max(1, Number(e.target.value) || 1) })} className="w-14 border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs" /></Row>
+          <Row label="최대 재작성"><input type="number" min={1} value={block.maxRetries ?? 1} onChange={e => onChange({ ...block, maxRetries: Math.max(1, Number(e.target.value) || 1) })} className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-xs" /></Row>
           <Row label="재작성 방식">
             <select value={block.rewriteMode ?? "full"} onChange={e => onChange({ ...block, rewriteMode: e.target.value as "full" | "patch" })} className={selectCls}>
               <option value="full">full (전체 재작성)</option>
@@ -239,7 +239,7 @@ function BlockBody({ block, agents, guides, onChange }: {
           </Row>
         </div>
         <ThinkingRow value={block.thinking} onChange={t => onChange({ ...block, thinking: t })} />
-        <p className="text-[10px] text-slate-400">앞 단계의 draft를 검수합니다. tone 계열이 아니면 리서치([참고 자료])를 함께 받아 인용을 대조합니다.</p>
+        <p className="text-xs text-slate-400">앞 단계의 draft를 검수합니다. tone 계열이 아니면 리서치([참고 자료])를 함께 받아 인용을 대조합니다.</p>
       </div>
     );
   }
@@ -253,7 +253,7 @@ function BlockBody({ block, agents, guides, onChange }: {
         <Row label="생성 에이전트"><AgentSelect value={block.generateAgent} agents={agents} onChange={v => onChange({ ...block, generateAgent: v })} /></Row>
         <GuideSlot label="생성 가이드" selected={block.guides ?? []} available={guides} onChange={g => onChange({ ...block, guides: g })} />
         <div className="rounded-lg bg-slate-50/70 border border-slate-100 p-2">
-          <p className="text-[10px] font-semibold text-slate-500 mb-1">검수자 (순서대로 실행)</p>
+          <p className="text-xs font-semibold text-slate-500 mb-1">검수자 (순서대로 실행)</p>
           {reviewers.map((r, j) => (
             <div key={j} className="mb-1.5 rounded-lg bg-white border border-slate-100 p-1.5">
               <div className="flex items-center gap-1 mb-1">
@@ -266,10 +266,10 @@ function BlockBody({ block, agents, guides, onChange }: {
             </div>
           ))}
           <button onClick={() => onChange({ ...block, reviewers: [...reviewers, { agent: "", guides: [] }] })}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] text-slate-500 hover:border-blue-300 cursor-pointer"><Plus className="w-2.5 h-2.5" />검수자 추가</button>
+            className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 bg-white text-xs text-slate-500 hover:border-blue-300 cursor-pointer"><Plus className="w-3 h-3" />검수자 추가</button>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <Row label="최대 재작성"><input type="number" min={1} value={block.maxRetries ?? 1} onChange={e => onChange({ ...block, maxRetries: Math.max(1, Number(e.target.value) || 1) })} className="w-14 border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs" /></Row>
+          <Row label="최대 재작성"><input type="number" min={1} value={block.maxRetries ?? 1} onChange={e => onChange({ ...block, maxRetries: Math.max(1, Number(e.target.value) || 1) })} className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-xs" /></Row>
           <Row label="재작성 방식">
             <select value={block.rewriteMode ?? "full"} onChange={e => onChange({ ...block, rewriteMode: e.target.value as "full" | "patch" })} className={selectCls}>
               <option value="full">full (전체 재작성)</option>
@@ -288,16 +288,16 @@ function BlockBody({ block, agents, guides, onChange }: {
         <Row label="비전 검수자">
           <AgentSelect value={block.reviewer ?? ""} agents={agents} placeholder="검수 안 함(선택)" onChange={v => onChange({ ...block, reviewer: v || null })} />
         </Row>
-        <p className="text-[10px] text-slate-400">검수자를 지정하면 생성된 카드 이미지를 그 에이전트가 "눈으로" 검수하고, 반려 시 카드를 재생성합니다(최대 재작성 횟수만큼).</p>
-        <Row label="최대 재작성"><input type="number" min={1} value={block.maxRetries ?? 1} onChange={e => onChange({ ...block, maxRetries: Math.max(1, Number(e.target.value) || 1) })} className="w-14 border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs" /></Row>
+        <p className="text-xs text-slate-400">검수자를 지정하면 생성된 카드 이미지를 그 에이전트가 "눈으로" 검수하고, 반려 시 카드를 재생성합니다(최대 재작성 횟수만큼).</p>
+        <Row label="최대 재작성"><input type="number" min={1} value={block.maxRetries ?? 1} onChange={e => onChange({ ...block, maxRetries: Math.max(1, Number(e.target.value) || 1) })} className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-xs" /></Row>
       </div>
     );
   }
   // 알 수 없는 블록 타입(향후 추가 시) — image-loop로 오인 렌더하지 않고 명시적으로 표시.
-  return <p className="text-[10px] text-amber-600">알 수 없는 블록 타입입니다.</p>;
+  return <p className="text-xs text-amber-600">알 수 없는 블록 타입입니다.</p>;
 }
 
-const selectCls = "border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs bg-white cursor-pointer";
+const selectCls = "border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white cursor-pointer";
 
 // thinking(사고) 토글 + 예산 입력 — 켜면 { budgetTokens } 세팅, 끄면 undefined(=JSON에서 필드 제거).
 // budgetTokens는 claude 네이티브 extended thinking 예산이라 claude 경로에서만 실효(gemini는 자체 설정).
@@ -305,20 +305,20 @@ function ThinkingRow({ value, onChange }: { value?: { budgetTokens: number }; on
   const on = !!value;
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer">
+      <label className="flex items-center gap-1.5 text-sm text-slate-500 cursor-pointer">
         <input type="checkbox" checked={on}
           onChange={e => onChange(e.target.checked ? { budgetTokens: value?.budgetTokens || 2000 } : undefined)}
           className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
         thinking(사고)
       </label>
       {on && (
-        <label className="flex items-center gap-1 text-[10px] text-slate-400">예산
+        <label className="flex items-center gap-1 text-xs text-slate-400">예산
           <input type="number" min={1024} step={512} value={value!.budgetTokens}
             onChange={e => onChange({ budgetTokens: Math.max(1024, Number(e.target.value) || 2000) })}
-            className="w-20 border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs" />
+            className="w-20 border border-slate-200 rounded-lg px-2 py-1 text-xs" />
         </label>
       )}
-      <span className="text-[10px] text-slate-300">claude 경로에서만 실효</span>
+      <span className="text-xs text-slate-300">claude 경로에서만 실효</span>
     </div>
   );
 }
@@ -326,7 +326,7 @@ function ThinkingRow({ value, onChange }: { value?: { budgetTokens: number }; on
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[10px] text-slate-400 w-16 shrink-0">{label}</span>
+      <span className="text-xs text-slate-500 w-20 shrink-0">{label}</span>
       {children}
     </div>
   );
@@ -334,7 +334,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function AgentSelect({ value, agents, onChange, placeholder }: { value: string; agents: string[]; onChange: (v: string) => void; placeholder?: string }) {
   return (
-    <select value={value} onChange={e => onChange(e.target.value)} className={`${selectCls} flex-1 min-w-[120px]`}>
+    <select value={value} onChange={e => onChange(e.target.value)} className={`${selectCls} flex-1 min-w-[140px]`}>
       <option value="">{placeholder ?? "에이전트 선택"}</option>
       {agents.map(a => <option key={a} value={a}>{a}</option>)}
       {value && !agents.includes(value) && <option value={value}>{value} (목록 외)</option>}
@@ -361,24 +361,24 @@ function GuideSlot({ label, selected, available, onChange }: { label: string; se
   };
   return (
     <div>
-      <p className="text-[10px] text-slate-400 mb-1">{label} <span className="text-slate-300">(순서 = 주입 순서 · 그립 드래그로 변경)</span></p>
-      {selected.length === 0 && <p className="text-[10px] text-slate-300 mb-1">배정된 가이드 없음</p>}
+      <p className="text-xs text-slate-400 mb-1">{label} <span className="text-slate-300">(순서 = 주입 순서 · 그립 드래그로 변경)</span></p>
+      {selected.length === 0 && <p className="text-xs text-slate-300 mb-1">배정된 가이드 없음</p>}
       <div className="space-y-0.5">
         {selected.map((g, i) => (
           <div key={`${g}__${i}`}
             onDragOver={e => { e.preventDefault(); e.stopPropagation(); setOverIdx(i); }}
             onDrop={e => { e.stopPropagation(); if (dragIdx !== null) reorder(dragIdx, i); setDragIdx(null); setOverIdx(null); }}
-            className={`flex items-center gap-1 rounded border px-1.5 py-0.5 ${overIdx === i && dragIdx !== null && dragIdx !== i ? "border-blue-300 bg-blue-50" : "bg-slate-50 border-slate-100"} ${dragIdx === i ? "opacity-40" : ""}`}>
+            className={`flex items-center gap-1 rounded border px-2 py-1 ${overIdx === i && dragIdx !== null && dragIdx !== i ? "border-blue-300 bg-blue-50" : "bg-slate-50 border-slate-100"} ${dragIdx === i ? "opacity-40" : ""}`}>
             <span draggable
               onDragStart={e => { e.stopPropagation(); setDragIdx(i); }}
               onDragEnd={e => { e.stopPropagation(); setDragIdx(null); setOverIdx(null); }}
               className="cursor-move shrink-0" title="드래그해서 순서 변경">
-              <GripVertical className="w-2.5 h-2.5 text-slate-300" />
+              <GripVertical className="w-3 h-3 text-slate-300" />
             </span>
-            <span className="text-[10px] text-slate-600 flex-1 truncate">{g}</span>
-            <button onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 disabled:opacity-30 cursor-pointer"><ArrowUp className="w-2.5 h-2.5 text-slate-400" /></button>
-            <button onClick={() => move(i, 1)} disabled={i === selected.length - 1} className="p-0.5 disabled:opacity-30 cursor-pointer"><ArrowDown className="w-2.5 h-2.5 text-slate-400" /></button>
-            <button onClick={() => onChange(selected.filter(x => x !== g))} className="p-0.5 cursor-pointer"><Trash2 className="w-2.5 h-2.5 text-red-400" /></button>
+            <span className="text-xs text-slate-600 flex-1 truncate">{g}</span>
+            <button onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 disabled:opacity-30 cursor-pointer"><ArrowUp className="w-3 h-3 text-slate-400" /></button>
+            <button onClick={() => move(i, 1)} disabled={i === selected.length - 1} className="p-0.5 disabled:opacity-30 cursor-pointer"><ArrowDown className="w-3 h-3 text-slate-400" /></button>
+            <button onClick={() => onChange(selected.filter(x => x !== g))} className="p-0.5 cursor-pointer"><Trash2 className="w-3 h-3 text-red-400" /></button>
           </div>
         ))}
       </div>
